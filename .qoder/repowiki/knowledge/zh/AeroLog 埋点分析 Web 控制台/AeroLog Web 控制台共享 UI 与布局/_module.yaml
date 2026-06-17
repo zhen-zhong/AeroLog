@@ -1,0 +1,10 @@
+schema_version: 1
+module_path: web_console/shared_ui
+title: AeroLog Web 控制台共享 UI 与布局
+scope:
+    - web/src/components/
+    - web/src/features/
+    - web/src/lib/
+source_files: []
+depends_on: []
+related_to: []

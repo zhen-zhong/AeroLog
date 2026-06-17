@@ -1,0 +1,8 @@
+schema_version: 1
+module_path: web_console/console/debugger
+title: SDK 调试与 Schema 校验控制台
+scope:
+    - web/src/app/console/debugger/
+source_files: []
+depends_on: []
+related_to: []

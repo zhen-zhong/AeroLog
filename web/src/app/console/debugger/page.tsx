@@ -347,7 +347,9 @@ function DebugEventsTable({ rows, loading }: { rows: DebugEvent[]; loading: bool
               <TableCell className="font-medium">{item.event || item.event_type}</TableCell>
               <TableCell><ResultBadge result={item.result} /></TableCell>
               <TableCell className="max-w-52 truncate text-xs text-muted-foreground">{item.distinct_id || item.user_id || item.anonymous_id || "-"}</TableCell>
-              <TableCell className="max-w-72 truncate text-xs text-muted-foreground">{propsSummary(item.payload)}</TableCell>
+              <TableCell className="max-w-72 text-xs text-muted-foreground">
+                <ParamsPreview payload={item.payload} />
+              </TableCell>
               <TableCell className="text-xs text-muted-foreground">{item.reason || "-"}</TableCell>
             </TableRow>
           ))}
@@ -384,7 +386,9 @@ function SchemaIssuesTable({ rows, loading }: { rows: SchemaIssue[]; loading: bo
               <TableCell><Badge variant={item.severity === "error" ? "danger" : "warning"}>{item.severity}</Badge></TableCell>
               <TableCell className="text-xs text-muted-foreground">{item.expected_type || "-"} / {item.actual_type || "-"}</TableCell>
               <TableCell className="text-xs text-muted-foreground">{item.message}</TableCell>
-              <TableCell className="max-w-80 truncate text-xs text-muted-foreground">{propsSummary(item.payload)}</TableCell>
+              <TableCell className="max-w-80 text-xs text-muted-foreground">
+                <ParamsPreview payload={item.payload} />
+              </TableCell>
             </TableRow>
           ))}
         </TableBody>
@@ -404,12 +408,51 @@ function formatTime(value?: string) {
   return new Date(value).toLocaleString("zh-CN", { hour12: false });
 }
 
-function propsSummary(payload: Record<string, unknown>) {
+function ParamsPreview({ payload }: { payload: Record<string, unknown> }) {
+  const [open, setOpen] = useState(false);
+  const summary = propsSummary(payload, 6);
+  const fullText = propsSummary(payload);
+
+  if (summary === "-") {
+    return <span>-</span>;
+  }
+
+  return (
+    <div className="group max-w-full">
+      <button
+        type="button"
+        title={fullText}
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+        className="block max-w-full text-left transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <span className="block truncate">{summary}</span>
+        <span className="mt-1 block text-[11px] text-primary md:hidden">
+          {open ? "收起全部参数" : "点击查看全部参数"}
+        </span>
+      </button>
+      <div
+        className={cn(
+          "mt-2 rounded-md border bg-secondary/40 p-2 text-foreground",
+          open ? "block" : "hidden md:group-hover:block",
+        )}
+      >
+        <pre className="max-h-56 overflow-auto whitespace-pre-wrap break-all font-mono text-[11px] leading-5">
+          {fullText}
+        </pre>
+      </div>
+    </div>
+  );
+}
+
+function propsSummary(payload: Record<string, unknown>, limit?: number) {
   const event = payload?.event as { properties?: Record<string, unknown> } | undefined;
   const props = event?.properties || {};
-  const entries = Object.entries(props).slice(0, 6);
+  const entries = Object.entries(props);
   if (!entries.length) return "-";
-  return entries.map(([key, value]) => `${key}=${stringifyValue(value)}`).join(" · ");
+  const visible = typeof limit === "number" ? entries.slice(0, limit) : entries;
+  const suffix = typeof limit === "number" && entries.length > limit ? ` · +${entries.length - limit}` : "";
+  return visible.map(([key, value]) => `${key}=${stringifyValue(value)}`).join(" · ") + suffix;
 }
 
 function stringifyValue(value: unknown) {

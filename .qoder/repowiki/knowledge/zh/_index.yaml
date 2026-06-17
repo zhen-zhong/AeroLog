@@ -2,7 +2,7 @@
 schema_version: 1
 locale: zh-CN
 branch: main
-exported_at: "2026-06-17T09:48:35Z"
+exported_at: "2026-06-17T10:16:20Z"
 modules:
     "":
         dir_name: AeroLog 实时事件分析平台
@@ -19,10 +19,10 @@ modules:
             - server/
         source_files: []
         children:
+            - backend_services/collector_service
             - backend_services/consumer_service
             - backend_services/api_service
             - backend_services/shared_pkg
-            - backend_services/collector_service
         depends_on: []
         related_to:
             - path: infra_deploy
@@ -42,18 +42,7 @@ modules:
         source_files: []
         children: []
         depends_on: []
-        related_to:
-            - path: web_console/console
-            - path: backend_services/consumer_service
-            - path: backend_services/shared_pkg
-            - path: infra_deploy
-            - path: web_console/admin
-            - path: web_console
-            - path: docs
-            - path: web_console/shared_ui
-            - path: sdk_multi_platform/ios_sdk
-            - path: sdk_multi_platform/android_sdk
-            - path: sdk_multi_platform/web_sdk
+        related_to: []
     backend_services/collector_service:
         dir_name: 事件采集与分发服务
         title: 事件采集与分发服务
@@ -71,26 +60,14 @@ modules:
             - path: sdk_multi_platform/ios_sdk
             - path: sdk_multi_platform
     backend_services/consumer_service:
-        dir_name: Kafka 事件消费与 ClickHouse 写入服务
-        title: Kafka 事件消费与 ClickHouse 写入服务
+        dir_name: Kafka 事件消费与数据管道
+        title: Kafka 事件消费与数据管道
         scope:
             - server/consumer/
         source_files: []
         children: []
         depends_on: []
-        related_to:
-            - path: backend_services/collector_service
-            - path: backend_services/shared_pkg
-            - path: backend_services/api_service
-            - path: infra_deploy
-            - path: docs
-            - path: web_console/admin
-            - path: sdk_multi_platform
-            - path: sdk_multi_platform/web_sdk
-            - path: sdk_multi_platform/ios_sdk
-            - path: sdk_multi_platform/android_sdk
-            - path: web_console/console
-            - path: web_console/shared_ui
+        related_to: []
     backend_services/shared_pkg:
         dir_name: 共享基础设施与数据模型
         title: 共享基础设施与数据模型
@@ -116,40 +93,16 @@ modules:
         source_files: []
         children: []
         depends_on: []
-        related_to:
-            - path: sdk_multi_platform
-            - path: sdk_multi_platform/ios_sdk
-            - path: backend_services/collector_service
-            - path: backend_services/shared_pkg
-            - path: backend_services/consumer_service
-            - path: backend_services
-            - path: sdk_multi_platform/web_sdk
-            - path: web_console
-            - path: backend_services/api_service
-            - path: sdk_multi_platform/android_sdk
-            - path: web_console/console
-            - path: web_console/shared_ui
-            - path: web_console/admin
+        related_to: []
     infra_deploy:
-        dir_name: AeroLog 基础设施部署与数据初始化
-        title: AeroLog 基础设施部署与数据初始化
+        dir_name: AeroLog 基础设施部署与可观测性配置
+        title: AeroLog 基础设施部署与可观测性配置
         scope:
             - deploy/
         source_files: []
         children: []
         depends_on: []
-        related_to:
-            - path: backend_services
-            - path: backend_services/api_service
-            - path: backend_services/consumer_service
-            - path: backend_services/shared_pkg
-            - path: web_console/admin
-            - path: sdk_multi_platform/ios_sdk
-            - path: web_console
-            - path: sdk_multi_platform/android_sdk
-            - path: sdk_multi_platform/web_sdk
-            - path: web_console/console
-            - path: web_console/shared_ui
+        related_to: []
     sdk_multi_platform:
         dir_name: AeroLog 多端埋点 SDK
         title: AeroLog 多端埋点 SDK
@@ -233,25 +186,17 @@ modules:
             - path: backend_services
             - path: web_console
     web_console:
-        dir_name: AeroLog Web Console
-        title: AeroLog Web Console
+        dir_name: AeroLog 埋点分析 Web 控制台
+        title: AeroLog 埋点分析 Web 控制台
         scope:
             - web/
         source_files: []
         children:
             - web_console/console
-            - web_console/shared_ui
             - web_console/admin
+            - web_console/shared_ui
         depends_on: []
-        related_to:
-            - path: backend_services
-            - path: sdk_multi_platform
-            - path: backend_services/api_service
-            - path: docs
-            - path: infra_deploy
-            - path: sdk_multi_platform/web_sdk
-            - path: sdk_multi_platform/android_sdk
-            - path: sdk_multi_platform/ios_sdk
+        related_to: []
     web_console/admin:
         dir_name: 管理后台功能模块
         title: 管理后台功能模块
@@ -272,27 +217,27 @@ modules:
             - path: docs
             - path: backend_services
     web_console/console:
-        dir_name: 数据分析控制台
-        title: 数据分析控制台
+        dir_name: AeroLog 数据分析控制台
+        title: AeroLog 数据分析控制台
         scope:
             - web/src/app/console/
         source_files: []
+        children:
+            - web_console/console/debugger
+        depends_on: []
+        related_to: []
+    web_console/console/debugger:
+        dir_name: SDK 调试与 Schema 校验控制台
+        title: SDK 调试与 Schema 校验控制台
+        scope:
+            - web/src/app/console/debugger/
+        source_files: []
         children: []
         depends_on: []
-        related_to:
-            - path: backend_services/api_service
-            - path: web_console/admin
-            - path: web_console/shared_ui
-            - path: backend_services
-            - path: sdk_multi_platform/android_sdk
-            - path: sdk_multi_platform/ios_sdk
-            - path: sdk_multi_platform/web_sdk
-            - path: docs
-            - path: backend_services/consumer_service
-            - path: infra_deploy
+        related_to: []
     web_console/shared_ui:
-        dir_name: AeroLog 前端共享 UI 与布局模块
-        title: AeroLog 前端共享 UI 与布局模块
+        dir_name: AeroLog Web 控制台共享 UI 与布局
+        title: AeroLog Web 控制台共享 UI 与布局
         scope:
             - web/src/components/
             - web/src/features/
@@ -300,14 +245,4 @@ modules:
         source_files: []
         children: []
         depends_on: []
-        related_to:
-            - path: web_console/admin
-            - path: web_console/console
-            - path: backend_services
-            - path: backend_services/api_service
-            - path: sdk_multi_platform/ios_sdk
-            - path: backend_services/consumer_service
-            - path: docs
-            - path: infra_deploy
-            - path: sdk_multi_platform/web_sdk
-            - path: sdk_multi_platform/android_sdk
+        related_to: []

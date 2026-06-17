@@ -5,15 +5,4 @@ scope:
     - server/api/
 source_files: []
 depends_on: []
-related_to:
-    - path: web_console/console
-    - path: backend_services/consumer_service
-    - path: backend_services/shared_pkg
-    - path: infra_deploy
-    - path: web_console/admin
-    - path: web_console
-    - path: docs
-    - path: web_console/shared_ui
-    - path: sdk_multi_platform/ios_sdk
-    - path: sdk_multi_platform/android_sdk
-    - path: sdk_multi_platform/web_sdk
+related_to: []

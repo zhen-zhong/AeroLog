@@ -1,0 +1,8 @@
+schema_version: 1
+module_path: backend_services/consumer_service
+title: Kafka 事件消费与数据管道
+scope:
+    - server/consumer/
+source_files: []
+depends_on: []
+related_to: []

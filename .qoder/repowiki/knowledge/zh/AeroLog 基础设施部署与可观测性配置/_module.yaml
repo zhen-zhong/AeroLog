@@ -1,0 +1,8 @@
+schema_version: 1
+module_path: infra_deploy
+title: AeroLog 基础设施部署与可观测性配置
+scope:
+    - deploy/
+source_files: []
+depends_on: []
+related_to: []
