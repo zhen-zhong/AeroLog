@@ -116,99 +116,105 @@ export default function FunnelPage() {
         description="按用户行为顺序计算转化链路，适合观察搜索、浏览、加购、支付等关键路径的流失。"
       />
 
-      <ToolbarPanel>
-        <div className="grid gap-4 xl:grid-cols-[220px_minmax(360px,1fr)_180px] xl:items-end">
-          <div className="grid gap-1.5">
-            <span className="text-sm font-medium">项目</span>
-            <ProjectPicker projects={projects?.data || []} value={projectId} onChange={setProjectId} className="sm:w-full" />
-          </div>
-          <DateTimeRange value={range} onChange={setRange} />
-          <NumberField
-            label="转化窗口（秒）"
-            min={60}
-            max={30 * 24 * 3600}
-            step={3600}
-            value={windowSeconds}
-            onChange={setWindowSeconds}
-          />
-        </div>
-
-        <div className="mt-5">
-          <div className="mb-2 text-sm font-medium">漏斗步骤</div>
-          <EventStepSelector options={top?.data || []} value={events} onChange={setEvents} />
-        </div>
-
-        <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:items-center">
-          <Button
-            type="button"
-            disabled={!projectId || events.length < 2 || runMut.isPending}
-            onClick={() => runMut.mutate()}
-          >
-            <Play className="h-4 w-4" />
-            {runMut.isPending ? "计算中" : "计算漏斗"}
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => {
-              setEvents([]);
-              setResult([]);
-              setError("");
-            }}
-          >
-            <RotateCcw className="h-4 w-4" />
-            重置
-          </Button>
-          {error ? <Badge variant="danger" className="h-8 items-center">{error}</Badge> : null}
-        </div>
-      </ToolbarPanel>
-
-      <div className="mb-5 grid gap-3 sm:grid-cols-3">
-        <MetricTile label="步骤数" value={events.length} loading={topLoading} />
-        <MetricTile label="起始用户" value={firstUsers} loading={runMut.isPending} />
-        <MetricTile label="最终转化率" value={finalRate} hint="百分比" loading={runMut.isPending} />
-      </div>
-
-      {result.length === 0 ? (
-        <EmptyAnalysis title="选择步骤并点击计算" description="建议先选择 search、view_product、add_to_cart、pay_success 这类连续事件。" />
-      ) : (
-        <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_420px]">
-          <ChartPanel title="漏斗形态" description="宽度代表达到该步骤的用户规模">
-            <ReactECharts option={option} style={{ height: 388 }} />
-          </ChartPanel>
-          <ChartPanel title="步骤明细" description="整体转化率以首步用户数为基准">
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>步骤</TableHead>
-                    <TableHead className="text-right">用户数</TableHead>
-                    <TableHead className="text-right">转化率</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {result.map((step, index) => (
-                    <TableRow key={step.event}>
-                      <TableCell>
-                        <div className="flex items-center gap-2">
-                          <span className="flex h-7 w-7 items-center justify-center rounded-md bg-primary text-xs font-semibold text-primary-foreground">
-                            {index + 1}
-                          </span>
-                          <span className="font-medium">{step.event}</span>
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-right font-mono">{step.users.toLocaleString()}</TableCell>
-                      <TableCell className="text-right">
-                        <span className="font-mono">{(step.conversion * 100).toFixed(2)}%</span>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+      <div className="grid gap-5 xl:grid-cols-[390px_minmax(0,1fr)]">
+        <div className="space-y-5">
+          <ToolbarPanel className="mb-0">
+            <div className="space-y-4">
+              <div className="grid gap-1.5">
+                <span className="text-sm font-medium">项目</span>
+                <ProjectPicker projects={projects?.data || []} value={projectId} onChange={setProjectId} className="sm:w-full" />
+              </div>
+              <DateTimeRange value={range} onChange={setRange} />
+              <NumberField
+                label="转化窗口（秒）"
+                min={60}
+                max={30 * 24 * 3600}
+                step={3600}
+                value={windowSeconds}
+                onChange={setWindowSeconds}
+              />
             </div>
-          </ChartPanel>
+
+            <div className="mt-5">
+              <div className="mb-2 text-sm font-medium">漏斗步骤</div>
+              <EventStepSelector options={top?.data || []} value={events} onChange={setEvents} />
+            </div>
+
+            <div className="mt-5 flex flex-col gap-2">
+              <Button
+                type="button"
+                disabled={!projectId || events.length < 2 || runMut.isPending}
+                onClick={() => runMut.mutate()}
+              >
+                <Play className="h-4 w-4" />
+                {runMut.isPending ? "计算中" : "计算漏斗"}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setEvents([]);
+                  setResult([]);
+                  setError("");
+                }}
+              >
+                <RotateCcw className="h-4 w-4" />
+                重置
+              </Button>
+              {error ? <Badge variant="danger" className="items-center">{error}</Badge> : null}
+            </div>
+          </ToolbarPanel>
+
+          <div className="grid gap-3">
+            <MetricTile label="步骤数" value={events.length} loading={topLoading} />
+            <MetricTile label="起始用户" value={firstUsers} loading={runMut.isPending} />
+            <MetricTile label="最终转化率" value={finalRate} hint="百分比" loading={runMut.isPending} />
+          </div>
         </div>
-      )}
+
+        <div className="space-y-5">
+          {result.length === 0 ? (
+            <EmptyAnalysis title="选择步骤并点击计算" description="建议先选择 search、view_product、add_to_cart、pay_success 这类连续事件。" />
+          ) : (
+            <>
+              <ChartPanel title="漏斗形态" description="宽度代表达到该步骤的用户规模">
+                <ReactECharts option={option} style={{ height: 388 }} />
+              </ChartPanel>
+              <ChartPanel title="步骤明细" description="整体转化率以首步用户数为基准">
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>步骤</TableHead>
+                        <TableHead className="text-right">用户数</TableHead>
+                        <TableHead className="text-right">转化率</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {result.map((step, index) => (
+                        <TableRow key={step.event}>
+                          <TableCell>
+                            <div className="flex items-center gap-2">
+                              <span className="flex h-7 w-7 items-center justify-center rounded-md bg-primary text-xs font-semibold text-primary-foreground">
+                                {index + 1}
+                              </span>
+                              <span className="font-medium">{step.event}</span>
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-right font-mono">{step.users.toLocaleString()}</TableCell>
+                          <TableCell className="text-right">
+                            <span className="font-mono">{(step.conversion * 100).toFixed(2)}%</span>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </ChartPanel>
+            </>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

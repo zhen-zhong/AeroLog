@@ -6,12 +6,11 @@ import dayjs, { Dayjs } from "dayjs";
 import {
   AnalyticsHeader,
   ChartPanel,
-  DateTimeRange,
   EmptyAnalysis,
   EventPicker,
   MetricTile,
   NumberField,
-  ProjectPicker,
+  ReportControls,
   ToolbarPanel,
 } from "@/features/analytics/analytics-ui";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -88,12 +87,18 @@ export default function RetentionPage() {
         description="按同期日观察用户回访，快速判断事件链路是否具备持续价值。热力颜色越深，代表该日留存率越高。"
       />
 
+      <ReportControls
+        projects={projects?.data || []}
+        projectId={projectId}
+        onProjectChange={setProjectId}
+        range={range}
+        onRangeChange={setRange}
+        comparison="上个周期"
+        filters={[initEvent ? `initial = ${initEvent}` : "选择初始事件", retEvent ? `return = ${retEvent}` : "选择返回事件"]}
+      />
+
       <ToolbarPanel>
-        <div className="grid gap-4 xl:grid-cols-[220px_240px_240px_160px_minmax(360px,1fr)] xl:items-end">
-          <div className="grid gap-1.5">
-            <span className="text-sm font-medium">项目</span>
-            <ProjectPicker projects={projects?.data || []} value={projectId} onChange={setProjectId} className="sm:w-full" />
-          </div>
+        <div className="grid gap-4 xl:grid-cols-[240px_240px_160px] xl:items-end">
           <div className="grid gap-1.5">
             <span className="text-sm font-medium">初始事件</span>
             <EventPicker events={top?.data || []} value={initEvent} onChange={setInitEvent} placeholder="初始事件" className="sm:w-full" />
@@ -103,7 +108,6 @@ export default function RetentionPage() {
             <EventPicker events={top?.data || []} value={retEvent} onChange={setRetEvent} placeholder="返回事件" className="sm:w-full" />
           </div>
           <NumberField label="观察天数" min={2} max={30} value={days} onChange={setDays} />
-          <DateTimeRange value={range} onChange={setRange} />
         </div>
       </ToolbarPanel>
 
@@ -113,21 +117,51 @@ export default function RetentionPage() {
         <MetricTile label="Day1 平均留存" value={dayOneAvg} hint="百分比" loading={isFetching} />
       </div>
 
-      <ChartPanel title="留存热力矩阵" description="每行是一个同期日，每列是 DayN 回访比例">
-        {!initEvent || !retEvent ? (
-          <EmptyAnalysis title="请选择事件" description="选择初始事件和返回事件后，留存矩阵会自动计算。" />
-        ) : isFetching ? (
-          <div className="space-y-2">
-            {Array.from({ length: 8 }).map((_, index) => (
-              <Skeleton key={index} className="h-10 w-full" />
-            ))}
+      <div className="grid gap-5 xl:grid-cols-[360px_minmax(0,1fr)]">
+        <ChartPanel title="Cohort 总览" description="每个同期日的用户规模和 Day1 留存">
+          {rows.length ? <CohortOverview rows={rows} /> : <EmptyAnalysis title="暂无同期批次" />}
+        </ChartPanel>
+        <ChartPanel title="留存热力矩阵" description="每行是一个同期日，每列是 DayN 回访比例">
+          {!initEvent || !retEvent ? (
+            <EmptyAnalysis title="请选择事件" description="选择初始事件和返回事件后，留存矩阵会自动计算。" />
+          ) : isFetching ? (
+            <div className="space-y-2">
+              {Array.from({ length: 8 }).map((_, index) => (
+                <Skeleton key={index} className="h-10 w-full" />
+              ))}
+            </div>
+          ) : rows.length === 0 ? (
+            <EmptyAnalysis title="暂无留存数据" description="当前时间范围内没有满足条件的同期用户。" />
+          ) : (
+            <RetentionHeatmap rows={rows} days={days} />
+          )}
+        </ChartPanel>
+      </div>
+    </div>
+  );
+}
+
+function CohortOverview({ rows }: { rows: RetRow[] }) {
+  const maxSize = rows.reduce((max, row) => Math.max(max, row.size), 0);
+  return (
+    <div className="space-y-3">
+      {rows.map((row) => {
+        const dayOne = row.values[1] || 0;
+        const rate = row.size ? (dayOne / row.size) * 100 : 0;
+        const width = maxSize ? Math.max(6, (row.size / maxSize) * 100) : 0;
+        return (
+          <div key={row.cohort} className="rounded-md border bg-background p-3">
+            <div className="mb-2 flex items-center justify-between gap-3 text-sm">
+              <span className="font-medium">{dayjs(row.cohort).format("MM-DD")}</span>
+              <span className="font-mono text-muted-foreground">{row.size.toLocaleString()} 用户</span>
+            </div>
+            <div className="mb-2 h-2 overflow-hidden rounded-full bg-secondary">
+              <div className="h-full rounded-full bg-primary" style={{ width: `${width}%` }} />
+            </div>
+            <div className="text-xs text-muted-foreground">Day1 留存 {rate.toFixed(1)}%</div>
           </div>
-        ) : rows.length === 0 ? (
-          <EmptyAnalysis title="暂无留存数据" description="当前时间范围内没有满足条件的同期用户。" />
-        ) : (
-          <RetentionHeatmap rows={rows} days={days} />
-        )}
-      </ChartPanel>
+        );
+      })}
     </div>
   );
 }

@@ -44,14 +44,14 @@ BG --> AL
 BG --> ED
 ```
 
-图表来源
+**图表来源**
 - [AeroLog.kt:1-216](file://sdk/android/aerolog/src/main/java/dev/aerolog/sdk/AeroLog.kt#L1-L216)
 - [AeroConfig.kt:1-16](file://sdk/android/aerolog/src/main/java/dev/aerolog/sdk/AeroConfig.kt#L1-L16)
 - [EventDatabase.kt:1-41](file://sdk/android/aerolog/src/main/java/dev/aerolog/sdk/storage/EventDatabase.kt#L1-L41)
 - [AndroidManifest.xml:1-5](file://sdk/android/aerolog/src/main/AndroidManifest.xml#L1-L5)
 - [build.gradle.kts:1-34](file://sdk/android/aerolog/build.gradle.kts#L1-L34)
 
-章节来源
+**章节来源**
 - [README.md:1-44](file://sdk/android/README.md#L1-L44)
 - [build.gradle.kts:1-34](file://sdk/android/aerolog/build.gradle.kts#L1-L34)
 
@@ -60,13 +60,13 @@ BG --> ED
 - AeroConfig：SDK配置对象，包含服务端地址、令牌、批量大小、刷新间隔、存储上限、是否自动追踪应用生命周期与Activity、调试开关等。
 - EventDatabase：基于Room的离线存储，用于失败/离线场景下持久化事件，支持批量拉取、删除、计数与淘汰最旧记录。
 
-章节来源
+**章节来源**
 - [AeroLog.kt:37-216](file://sdk/android/aerolog/src/main/java/dev/aerolog/sdk/AeroLog.kt#L37-L216)
 - [AeroConfig.kt:6-15](file://sdk/android/aerolog/src/main/java/dev/aerolog/sdk/AeroConfig.kt#L6-L15)
 - [EventDatabase.kt:12-41](file://sdk/android/aerolog/src/main/java/dev/aerolog/sdk/storage/EventDatabase.kt#L12-L41)
 
 ## 架构总览
-Android SDK整体架构围绕“内存缓冲 + Room持久化”的双层离线策略，结合周期性flush与生命周期事件触发上报，确保在网络不稳定或应用退后台时仍能可靠落地数据。
+Android SDK整体架构围绕"内存缓冲 + Room持久化"的双层离线策略，结合周期性flush与生命周期事件触发上报，确保在网络不稳定或应用退后台时仍能可靠落地数据。
 
 ```mermaid
 graph TB
@@ -84,7 +84,7 @@ Persist --> DB
 Life --> FlushBack["AppStop 触发 flush()"]
 ```
 
-图表来源
+**图表来源**
 - [AeroLog.kt:59-80](file://sdk/android/aerolog/src/main/java/dev/aerolog/sdk/AeroLog.kt#L59-L80)
 - [AeroLog.kt:108-124](file://sdk/android/aerolog/src/main/java/dev/aerolog/sdk/AeroLog.kt#L108-L124)
 - [AeroLog.kt:175-190](file://sdk/android/aerolog/src/main/java/dev/aerolog/sdk/AeroLog.kt#L175-L190)
@@ -96,7 +96,7 @@ Life --> FlushBack["AppStop 触发 flush()"]
 - 本地模块依赖：在settings.gradle.kts中包含sdk:android:aerolog模块，在app模块的build.gradle.kts中以implementation(project(...))方式引入。
 - 版本与仓库：当前模块版本在构建配置中定义，若需通过JitPack发布，请参考JitPack官方流程在项目根目录添加JitPack仓库与依赖坐标；版本号可依据仓库release或commit SHA进行选择。
 
-章节来源
+**章节来源**
 - [README.md:7-15](file://sdk/android/README.md#L7-L15)
 - [build.gradle.kts:14](file://sdk/android/aerolog/build.gradle.kts#L14)
 
@@ -112,7 +112,7 @@ Life --> FlushBack["AppStop 触发 flush()"]
   - autoTrackActivity：是否自动追踪Activity可见变化（页面曝光）。
   - debug：调试开关（影响日志输出级别）。
 
-章节来源
+**章节来源**
 - [AeroLog.kt:59-80](file://sdk/android/aerolog/src/main/java/dev/aerolog/sdk/AeroLog.kt#L59-L80)
 - [AeroConfig.kt:6-15](file://sdk/android/aerolog/src/main/java/dev/aerolog/sdk/AeroConfig.kt#L6-L15)
 
@@ -123,15 +123,15 @@ Life --> FlushBack["AppStop 触发 flush()"]
 - 设置全局属性：registerSuperProperties(属性映射)。
 - 手动上报：flush()（挂起函数），立即尝试发送内存缓冲与持久化队列中的事件。
 
-章节来源
+**章节来源**
 - [AeroLog.kt:82-105](file://sdk/android/aerolog/src/main/java/dev/aerolog/sdk/AeroLog.kt#L82-L105)
 - [AeroLog.kt:108-124](file://sdk/android/aerolog/src/main/java/dev/aerolog/sdk/AeroLog.kt#L108-L124)
 
 ### 生命周期与Activity自动追踪
-- 应用生命周期：当ProcessLifecycle进入前台时自动track“AppStart”，进入后台时track“AppEnd”并触发flush。
-- Activity可见：onActivityResumed时自动track“AppViewScreen”并携带屏幕名称。
+- 应用生命周期：当ProcessLifecycle进入前台时自动track"AppStart"，进入后台时track"AppEnd"并触发flush。
+- Activity可见：onActivityResumed时自动track"AppViewScreen"并携带屏幕名称。
 
-章节来源
+**章节来源**
 - [AeroLog.kt:192-214](file://sdk/android/aerolog/src/main/java/dev/aerolog/sdk/AeroLog.kt#L192-L214)
 
 ### 离线缓存机制（SharedPreferences与Room）
@@ -164,7 +164,7 @@ TrimCheck --> |否| LoadDB
 DBOK --> |否| Done3["结束"]
 ```
 
-图表来源
+**图表来源**
 - [AeroLog.kt:108-124](file://sdk/android/aerolog/src/main/java/dev/aerolog/sdk/AeroLog.kt#L108-L124)
 - [AeroLog.kt:167-173](file://sdk/android/aerolog/src/main/java/dev/aerolog/sdk/AeroLog.kt#L167-L173)
 - [EventDatabase.kt:19-41](file://sdk/android/aerolog/src/main/java/dev/aerolog/sdk/storage/EventDatabase.kt#L19-L41)
@@ -174,12 +174,12 @@ DBOK --> |否| Done3["结束"]
 - 后台执行限制：Android对后台任务有限制，建议通过周期性flush与生命周期事件（AppStop）触发主动上报，避免依赖长驻后台任务。
 - 电池优化：将应用加入白名单可减少系统节流对上报的影响；必要时可在应用内引导用户关闭电池优化。
 
-章节来源
+**章节来源**
 - [AndroidManifest.xml:1-5](file://sdk/android/aerolog/src/main/AndroidManifest.xml#L1-L5)
 - [AeroLog.kt:195-198](file://sdk/android/aerolog/src/main/java/dev/aerolog/sdk/AeroLog.kt#L195-L198)
 
 ### 上报流程与错误处理
-- 请求构造：POST至“/v1/track?token=...”，携带自定义头“X-AeroLog-SDK: android/版本号”，请求体为JSON数组。
+- 请求构造：POST至"/v1/track?token=..."，携带自定义头"X-AeroLog-SDK: android/版本号"，请求体为JSON数组。
 - 成功判断：HTTP 2xx视为成功；4xx且非429视为服务端拒绝，不重试。
 - 失败回退：发送失败的事件会被持久化到Room，等待后续flush重试。
 
@@ -202,7 +202,7 @@ Log->>Log : "持久化失败事件"
 end
 ```
 
-图表来源
+**图表来源**
 - [AeroLog.kt:175-190](file://sdk/android/aerolog/src/main/java/dev/aerolog/sdk/AeroLog.kt#L175-L190)
 
 ## 依赖关系分析
@@ -217,11 +217,11 @@ AL --> CO["kotlinx-coroutines-android"]
 RT --> DB["EventDatabase.kt"]
 ```
 
-图表来源
+**图表来源**
 - [AeroLog.kt:11-26](file://sdk/android/aerolog/src/main/java/dev/aerolog/sdk/AeroLog.kt#L11-L26)
 - [build.gradle.kts:25-33](file://sdk/android/aerolog/build.gradle.kts#L25-L33)
 
-章节来源
+**章节来源**
 - [build.gradle.kts:25-33](file://sdk/android/aerolog/build.gradle.kts#L25-L33)
 
 ## 性能考虑
@@ -238,12 +238,12 @@ RT --> DB["EventDatabase.kt"]
 - 事件丢失：检查storageLimit与flush触发条件；确保AppStop能触发flush。
 - 用户标识：identify后应检查SharedPreferences中用户ID是否更新；logout会移除用户ID。
 
-章节来源
+**章节来源**
 - [AeroLog.kt:129](file://sdk/android/aerolog/src/main/java/dev/aerolog/sdk/AeroLog.kt#L129)
 - [AeroLog.kt:184-189](file://sdk/android/aerolog/src/main/java/dev/aerolog/sdk/AeroLog.kt#L184-L189)
 
 ## 结论
-AeroLog Android SDK通过“内存缓冲 + Room持久化”的双层离线策略，结合生命周期与Activity自动追踪，能够在复杂网络环境下稳定地采集与上报事件。合理配置AeroConfig参数、遵循Android平台限制并做好混淆与性能优化，可获得更可靠的埋点体验。
+AeroLog Android SDK通过"内存缓冲 + Room持久化"的双层离线策略，结合生命周期与Activity自动追踪，能够在复杂网络环境下稳定地采集与上报事件。合理配置AeroConfig参数、遵循Android平台限制并做好混淆与性能优化，可获得更可靠的埋点体验。
 
 ## 附录
 
@@ -251,21 +251,21 @@ AeroLog Android SDK通过“内存缓冲 + Room持久化”的双层离线策略
 - 本地模块依赖：在settings.gradle.kts中包含模块并在app模块中implementation(project(...))。
 - JitPack：如需通过JitPack发布，请在项目根目录添加JitPack仓库与依赖坐标；版本号可依据仓库release或commit SHA选择。
 
-章节来源
+**章节来源**
 - [README.md:7-15](file://sdk/android/README.md#L7-L15)
 
 ### Android权限与清单
 - 必要权限：INTERNET与ACCESS_NETWORK_STATE。
 - 建议：在应用内提示用户允许后台运行与电池优化豁免，提升上报稳定性。
 
-章节来源
+**章节来源**
 - [AndroidManifest.xml:1-5](file://sdk/android/aerolog/src/main/AndroidManifest.xml#L1-L5)
 
 ### 离线缓存与容量控制
 - SharedPreferences：匿名ID与用户ID持久化。
 - Room：事件持久化，支持取N条、删除、计数与淘汰最旧记录；flush时优先发送持久化事件。
 
-章节来源
+**章节来源**
 - [AeroLog.kt:38-68](file://sdk/android/aerolog/src/main/java/dev/aerolog/sdk/AeroLog.kt#L38-L68)
 - [AeroLog.kt:167-173](file://sdk/android/aerolog/src/main/java/dev/aerolog/sdk/AeroLog.kt#L167-L173)
 - [EventDatabase.kt:19-41](file://sdk/android/aerolog/src/main/java/dev/aerolog/sdk/storage/EventDatabase.kt#L19-L41)
@@ -273,5 +273,3 @@ AeroLog Android SDK通过“内存缓冲 + Room持久化”的双层离线策略
 ### 混淆与打包建议
 - 由于SDK为库模块，建议在消费方应用的混淆规则中保持AeroLog相关类与成员不被混淆，确保反射与序列化正常工作。
 - 若使用R8/ProGuard，请保留SDK公开API签名与内部实体类字段名，避免运行时异常。
-
-[本节为通用实践建议，不直接分析具体文件]

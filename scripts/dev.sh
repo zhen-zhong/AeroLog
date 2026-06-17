@@ -33,6 +33,12 @@ start_service() {
   echo "$!" >"$PID_DIR/$name.pid"
 }
 
+start_web() {
+  echo "clearing web/.next for a clean Next.js dev cache..."
+  rm -rf "$ROOT/web/.next"
+  start_service web web npm run dev
+}
+
 wait_http() {
   local name="$1"
   local url="$2"
@@ -58,7 +64,7 @@ fi
 start_service api server/api go run ./cmd
 start_service collector server/collector go run ./cmd
 start_service consumer server/consumer go run ./cmd
-start_service web web npm run dev
+start_web
 
 wait_http api "http://127.0.0.1:8082/healthz"
 wait_http collector "http://127.0.0.1:8081/healthz"

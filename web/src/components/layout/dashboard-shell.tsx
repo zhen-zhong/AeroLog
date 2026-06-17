@@ -5,28 +5,45 @@ import { usePathname } from "next/navigation";
 import {
   BarChart3,
   Boxes,
+  CircleDot,
   FolderKanban,
   GitBranch,
   LayoutDashboard,
   Menu,
   PanelLeft,
   Route,
+  ShieldCheck,
   Users,
+  Waypoints,
 } from "lucide-react";
 import { Sheet, SheetClose, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
-const navItems = [
-  { href: "/console", label: "概览看板", icon: LayoutDashboard },
-  { href: "/console/event", label: "事件分析", icon: BarChart3 },
-  { href: "/console/funnel", label: "漏斗分析", icon: GitBranch },
-  { href: "/console/retention", label: "留存分析", icon: Route },
-  { href: "/admin/projects", label: "项目管理", icon: FolderKanban },
-  { href: "/admin/events", label: "埋点元数据", icon: Boxes },
-  { href: "/admin/users", label: "用户画像", icon: Users },
+const navGroups = [
+  {
+    label: "报表",
+    items: [
+      { href: "/console", label: "概览", icon: LayoutDashboard },
+      { href: "/console/realtime", label: "实时", icon: CircleDot },
+      { href: "/console/event", label: "事件", icon: BarChart3 },
+      { href: "/console/conversions", label: "转化", icon: Waypoints },
+      { href: "/console/funnel", label: "漏斗", icon: GitBranch },
+      { href: "/console/retention", label: "留存", icon: Route },
+      { href: "/console/users", label: "用户", icon: Users },
+    ],
+  },
+  {
+    label: "配置",
+    items: [
+      { href: "/console/governance", label: "数据治理", icon: ShieldCheck },
+      { href: "/admin/projects", label: "项目管理", icon: FolderKanban },
+    ],
+  },
 ];
+
+const navItems = navGroups.flatMap((group) => group.items);
 
 function useActivePath() {
   const pathname = usePathname() || "/";
@@ -38,30 +55,37 @@ function useActivePath() {
 function NavList({ closeOnNavigate = false }: { closeOnNavigate?: boolean }) {
   const activePath = useActivePath();
   return (
-    <nav className="flex flex-col gap-1">
-      {navItems.map((item) => {
-        const Icon = item.icon;
-        const active = activePath === item.href;
-        const link = (
-          <Link
-            key={item.href}
-            href={item.href}
-            className={cn(
-              "flex h-9 items-center gap-2 rounded-md px-3 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground",
-              active && "bg-accent text-accent-foreground",
-            )}
-          >
-            <Icon className="h-4 w-4" />
-            <span>{item.label}</span>
-          </Link>
-        );
-        if (!closeOnNavigate) return link;
-        return (
-          <SheetClose key={item.href} asChild>
-            {link}
-          </SheetClose>
-        );
-      })}
+    <nav className="flex flex-col gap-5">
+      {navGroups.map((group) => (
+        <div key={group.label}>
+          <div className="mb-2 px-3 text-xs font-medium text-muted-foreground">{group.label}</div>
+          <div className="flex flex-col gap-1">
+            {group.items.map((item) => {
+              const Icon = item.icon;
+              const active = activePath === item.href;
+              const link = (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className={cn(
+                    "flex h-9 items-center gap-2 rounded-md px-3 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground",
+                    active && "bg-accent text-accent-foreground",
+                  )}
+                >
+                  <Icon className="h-4 w-4" />
+                  <span>{item.label}</span>
+                </Link>
+              );
+              if (!closeOnNavigate) return link;
+              return (
+                <SheetClose key={item.href} asChild>
+                  {link}
+                </SheetClose>
+              );
+            })}
+          </div>
+        </div>
+      ))}
     </nav>
   );
 }

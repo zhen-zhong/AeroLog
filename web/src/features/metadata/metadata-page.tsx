@@ -64,8 +64,8 @@ export function MetadataPage() {
   return (
     <AnimatedContent>
       <PageHeader
-        title="埋点元数据"
-        description="自动发现事件、事件属性和用户属性，沉淀可治理的数据字典。"
+        title="数据治理"
+        description="自动发现事件、事件属性和用户属性，沉淀可确认、可解释、可治理的数据字典。"
         actions={
           <ProjectSelect
             projects={projects?.data || []}

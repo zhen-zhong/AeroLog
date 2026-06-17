@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import dynamic from "next/dynamic";
+import dayjs, { Dayjs } from "dayjs";
 import { ArrowUpRight, BarChart3, UsersRound, Zap } from "lucide-react";
 import {
   AnalyticsHeader,
@@ -10,18 +11,20 @@ import {
   EmptyAnalysis,
   EventRankList,
   MetricTile,
-  ProjectPicker,
+  ReportControls,
   ToolbarPanel,
 } from "@/features/analytics/analytics-ui";
 import { api } from "@/lib/api";
 
 const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
 
-const RANGE_HOURS = 24 * 7;
-
 export default function ConsolePage() {
   const [projectId, setProjectId] = useState<number | undefined>();
   const [event, setEvent] = useState<string | undefined>();
+  const [range, setRange] = useState<[Dayjs, Dayjs]>([
+    dayjs().subtract(7, "day").startOf("day"),
+    dayjs().endOf("day"),
+  ]);
 
   const { data: projects, isLoading: projectsLoading } = useQuery({
     queryKey: ["projects"],
@@ -34,15 +37,13 @@ export default function ConsolePage() {
     }
   }, [projects, projectId]);
 
-  const range = useMemo(() => {
-    const to = Date.now();
-    const from = to - RANGE_HOURS * 3600 * 1000;
-    return { from, to };
-  }, []);
+  const tsRange = useMemo(() => {
+    return { from: range[0].valueOf(), to: range[1].valueOf() };
+  }, [range]);
 
   const { data: top, isLoading: topLoading } = useQuery({
-    queryKey: ["top_events", projectId, range],
-    queryFn: () => api.topEvents(projectId!, { ...range, limit: 10 }),
+    queryKey: ["top_events", projectId, tsRange],
+    queryFn: () => api.topEvents(projectId!, { ...tsRange, limit: 10 }),
     enabled: !!projectId,
   });
 
@@ -53,8 +54,8 @@ export default function ConsolePage() {
   }, [top, event]);
 
   const { data: trend, isLoading: trendLoading } = useQuery({
-    queryKey: ["trend", projectId, event, range],
-    queryFn: () => api.trend(projectId!, event!, { ...range, interval: "day" }),
+    queryKey: ["trend", projectId, event, tsRange],
+    queryFn: () => api.trend(projectId!, event!, { ...tsRange, interval: "day" }),
     enabled: !!projectId && !!event,
   });
 
@@ -95,22 +96,25 @@ export default function ConsolePage() {
   return (
     <div>
       <AnalyticsHeader
-        title="概览看板"
+        title="概览"
         description="聚合最近 7 天的核心事件、活跃用户和趋势走势，用同一套事件流验证采集、消费、分析链路是否闭环。"
-        action={
-          <ProjectPicker
-            projects={projects?.data || []}
-            value={projectId}
-            onChange={(next) => {
-              setProjectId(next);
-              setEvent(undefined);
-            }}
-          />
-        }
+      />
+
+      <ReportControls
+        projects={projects?.data || []}
+        projectId={projectId}
+        onProjectChange={(next) => {
+          setProjectId(next);
+          setEvent(undefined);
+        }}
+        range={range}
+        onRangeChange={setRange}
+        comparison="上个周期"
+        filters={["全部事件", "全部用户"]}
       />
 
       <div className="mb-5 grid gap-3 sm:grid-cols-3">
-        <MetricTile label="Top 事件量" value={totalEvents} hint="近 7 天命中 Top 列表" loading={topLoading} />
+        <MetricTile label="Top 事件量" value={totalEvents} hint="当前时间范围命中 Top 列表" loading={topLoading} />
         <MetricTile label="覆盖用户" value={totalUsers} hint="按事件去重用户聚合" loading={topLoading} />
         <MetricTile label="事件种类" value={topRows.length} hint="当前项目已上报事件" loading={topLoading} />
       </div>

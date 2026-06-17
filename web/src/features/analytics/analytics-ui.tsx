@@ -2,7 +2,7 @@
 
 import dayjs, { Dayjs } from "dayjs";
 import type { ReactNode } from "react";
-import { Check, Clock3, Layers3, Sparkles } from "lucide-react";
+import { Check, Clock3, Filter, Layers3, Sparkles } from "lucide-react";
 import { AnimatedContent } from "@/components/react-bits/animated-content";
 import { CountUp } from "@/components/react-bits/count-up";
 import { Badge } from "@/components/ui/badge";
@@ -132,12 +132,14 @@ export function EventPicker({
 export function DateTimeRange({
   value,
   onChange,
+  compact = false,
 }: {
   value: [Dayjs, Dayjs];
   onChange: (value: [Dayjs, Dayjs]) => void;
+  compact?: boolean;
 }) {
   return (
-    <div className="grid gap-3 sm:grid-cols-2">
+    <div className={cn("grid gap-3 sm:grid-cols-2", compact && "gap-2")}>
       <div className="grid gap-1.5">
         <Label htmlFor="from-time">开始时间</Label>
         <Input
@@ -157,6 +159,66 @@ export function DateTimeRange({
         />
       </div>
     </div>
+  );
+}
+
+export function ReportControls({
+  projects,
+  projectId,
+  onProjectChange,
+  range,
+  onRangeChange,
+  comparison = "无对比",
+  filters = [],
+  className,
+}: {
+  projects: AnalyticsProject[];
+  projectId?: number;
+  onProjectChange: (value: number) => void;
+  range: [Dayjs, Dayjs];
+  onRangeChange: (value: [Dayjs, Dayjs]) => void;
+  comparison?: string;
+  filters?: string[];
+  className?: string;
+}) {
+  return (
+    <ToolbarPanel className={className}>
+      <div className="grid gap-4 xl:grid-cols-[220px_minmax(360px,1fr)_220px] xl:items-end">
+        <div className="grid gap-1.5">
+          <Label>项目</Label>
+          <ProjectPicker
+            projects={projects}
+            value={projectId}
+            onChange={onProjectChange}
+            className="sm:w-full"
+          />
+        </div>
+        <DateTimeRange value={range} onChange={onRangeChange} compact />
+        <div className="grid gap-1.5">
+          <Label>对比</Label>
+          <div className="flex h-9 items-center rounded-md border bg-background px-3 text-sm text-muted-foreground">
+            {comparison}
+          </div>
+        </div>
+      </div>
+      <div className="mt-4 flex flex-wrap gap-2">
+        <span className="inline-flex h-8 items-center gap-2 rounded-md border bg-background px-3 text-xs font-medium text-muted-foreground">
+          <Filter className="h-3.5 w-3.5" />
+          筛选器
+        </span>
+        {filters.length ? (
+          filters.map((filter) => (
+            <Badge key={filter} variant="info" className="h-8 items-center">
+              {filter}
+            </Badge>
+          ))
+        ) : (
+          <span className="inline-flex h-8 items-center rounded-md border border-dashed px-3 text-xs text-muted-foreground">
+            全部用户
+          </span>
+        )}
+      </div>
+    </ToolbarPanel>
   );
 }
 

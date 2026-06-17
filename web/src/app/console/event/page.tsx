@@ -7,15 +7,17 @@ import dayjs, { Dayjs } from "dayjs";
 import {
   AnalyticsHeader,
   ChartPanel,
-  DateTimeRange,
   EmptyAnalysis,
   EventPicker,
   MetricTile,
-  ProjectPicker,
+  ReportControls,
   ToolbarPanel,
 } from "@/features/analytics/analytics-ui";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api } from "@/lib/api";
+import { formatDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
@@ -59,6 +61,12 @@ export default function EventAnalysisPage() {
     enabled: !!projectId && !!event,
   });
 
+  const eventProps = useQuery({
+    queryKey: ["event_properties_for_analysis", projectId],
+    queryFn: () => api.listProperties(projectId!, { scope: "event" }),
+    enabled: !!projectId,
+  });
+
   const option = useMemo(() => {
     const points = trend?.data || [];
     return {
@@ -98,25 +106,25 @@ export default function EventAnalysisPage() {
         description="围绕单个事件查看时间趋势，适合验证核心埋点是否稳定、活动峰值是否符合预期。"
       />
 
+      <ReportControls
+        projects={projects?.data || []}
+        projectId={projectId}
+        onProjectChange={(next) => {
+          setProjectId(next);
+          setEvent(undefined);
+        }}
+        range={range}
+        onRangeChange={setRange}
+        comparison="上个周期"
+        filters={event ? [`event = ${event}`] : ["全部事件"]}
+      />
+
       <ToolbarPanel>
-        <div className="grid gap-4 xl:grid-cols-[220px_260px_minmax(360px,1fr)_auto] xl:items-end">
-          <div className="grid gap-1.5">
-            <span className="text-sm font-medium">项目</span>
-            <ProjectPicker
-              projects={projects?.data || []}
-              value={projectId}
-              onChange={(next) => {
-                setProjectId(next);
-                setEvent(undefined);
-              }}
-              className="sm:w-full"
-            />
-          </div>
+        <div className="grid gap-4 md:grid-cols-[minmax(240px,320px)_220px] md:items-end">
           <div className="grid gap-1.5">
             <span className="text-sm font-medium">事件</span>
             <EventPicker events={top?.data || []} value={event} onChange={setEvent} className="sm:w-full" />
           </div>
-          <DateTimeRange value={range} onChange={setRange} />
           <div className="grid gap-1.5">
             <span className="text-sm font-medium">粒度</span>
             <div className="grid grid-cols-2 rounded-md border bg-background p-1">
@@ -143,15 +151,69 @@ export default function EventAnalysisPage() {
         <MetricTile label="事件候选" value={top?.data.length || 0} hint="可用于分析的事件" loading={topLoading} />
       </div>
 
-      <ChartPanel title={`事件趋势：${event || "未选择"}`} description="柱状图显示所选时间范围内的聚合次数">
-        {event ? (
-          <div className="relative">
-            {isFetching ? <div className="absolute inset-x-0 top-0 h-px aero-scan-line" /> : null}
-            <ReactECharts option={option} style={{ height: 430 }} />
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_420px]">
+        <ChartPanel title={`事件趋势：${event || "未选择"}`} description="柱状图显示所选时间范围内的聚合次数">
+          {event ? (
+            <div className="relative">
+              {isFetching ? <div className="absolute inset-x-0 top-0 h-px aero-scan-line" /> : null}
+              <ReactECharts option={option} style={{ height: 430 }} />
+            </div>
+          ) : (
+            <EmptyAnalysis title="请选择事件" description="选择项目和事件后，趋势图会自动刷新。" />
+          )}
+        </ChartPanel>
+
+        <ChartPanel title="事件参数" description="自动发现的事件属性，可作为维度拆解基础">
+          <div className="space-y-2">
+            {(eventProps.data?.data || []).slice(0, 10).map((prop) => (
+              <div key={prop.id} className="flex items-center justify-between gap-3 rounded-md border bg-background px-3 py-2 text-sm">
+                <div className="min-w-0">
+                  <div className="truncate font-medium">{prop.name}</div>
+                  <div className="text-xs text-muted-foreground">{formatDateTime(prop.last_seen)}</div>
+                </div>
+                <Badge variant={prop.data_type === "mixed" ? "danger" : "info"}>{prop.data_type}</Badge>
+              </div>
+            ))}
+            {!eventProps.isLoading && !eventProps.data?.data.length ? (
+              <EmptyAnalysis title="暂无参数字典" description="上报带自定义参数的事件后会自动发现。" />
+            ) : null}
           </div>
-        ) : (
-          <EmptyAnalysis title="请选择事件" description="选择项目和事件后，趋势图会自动刷新。" />
-        )}
+        </ChartPanel>
+      </div>
+
+      <ChartPanel title="事件表" description="按当前时间范围统计 Top 事件，点击事件名可切换趋势图" className="mt-5">
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>事件</TableHead>
+                <TableHead className="text-right">次数</TableHead>
+                <TableHead className="text-right">用户</TableHead>
+                <TableHead>占比</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {(top?.data || []).map((item) => {
+                const share = top?.data?.length ? item.count / Math.max(1, (top.data || []).reduce((sum, row) => sum + row.count, 0)) : 0;
+                return (
+                  <TableRow key={item.event} className="cursor-pointer" onClick={() => setEvent(item.event)}>
+                    <TableCell className="font-medium">{item.event}</TableCell>
+                    <TableCell className="text-right font-mono">{item.count.toLocaleString()}</TableCell>
+                    <TableCell className="text-right font-mono">{item.users.toLocaleString()}</TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <div className="h-2 w-32 overflow-hidden rounded-full bg-secondary">
+                          <div className="h-full rounded-full bg-primary" style={{ width: `${Math.max(4, share * 100)}%` }} />
+                        </div>
+                        <span className="text-xs text-muted-foreground">{(share * 100).toFixed(1)}%</span>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </div>
       </ChartPanel>
     </div>
   );

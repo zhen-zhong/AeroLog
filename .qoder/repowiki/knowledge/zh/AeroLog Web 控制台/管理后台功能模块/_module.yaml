@@ -1,0 +1,18 @@
+schema_version: 1
+module_path: web_console/admin
+title: 管理后台功能模块
+scope:
+    - web/src/app/admin/
+source_files: []
+depends_on: []
+related_to:
+    - path: web_console/console
+    - path: web_console/shared_ui
+    - path: backend_services/api_service
+    - path: backend_services/consumer_service
+    - path: infra_deploy
+    - path: sdk_multi_platform/android_sdk
+    - path: sdk_multi_platform/ios_sdk
+    - path: sdk_multi_platform/web_sdk
+    - path: docs
+    - path: backend_services

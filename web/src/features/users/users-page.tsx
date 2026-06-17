@@ -243,6 +243,30 @@ function ProfileSheet({
               </Card>
 
               <section>
+                <h3 className="mb-2 text-sm font-semibold">用户时间线</h3>
+                <Card>
+                  <CardContent className="space-y-3 pt-5">
+                    <TimelineItem
+                      title="画像快照更新"
+                      description={compactProps(selected.properties)}
+                      time={formatDateTime(selected.updated_at)}
+                    />
+                    {identities.slice(0, 4).map((item) => (
+                      <TimelineItem
+                        key={item.id}
+                        title="身份合并"
+                        description={`${item.anonymous_id} → ${item.user_id}`}
+                        time={formatDateTime(item.last_seen)}
+                      />
+                    ))}
+                    {!identities.length && !identityLoading ? (
+                      <p className="text-sm text-muted-foreground">暂无更多行为时间线。后续可接入用户事件明细接口。</p>
+                    ) : null}
+                  </CardContent>
+                </Card>
+              </section>
+
+              <section>
                 <h3 className="mb-2 text-sm font-semibold">画像属性</h3>
                 <Card>
                   <CardContent className="p-0">
@@ -312,6 +336,23 @@ function ProfileSheet({
         )}
       </SheetContent>
     </Sheet>
+  );
+}
+
+function TimelineItem({ title, description, time }: { title: string; description: string; time: string }) {
+  return (
+    <div className="grid grid-cols-[14px_1fr] gap-3">
+      <div className="pt-1">
+        <span className="block h-3 w-3 rounded-full border-2 border-primary bg-background" />
+      </div>
+      <div className="min-w-0 rounded-md border bg-background p-3">
+        <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+          <div className="font-medium">{title}</div>
+          <div className="text-xs text-muted-foreground">{time}</div>
+        </div>
+        <p className="mt-1 break-all text-sm text-muted-foreground">{description || "-"}</p>
+      </div>
+    </div>
   );
 }
 
