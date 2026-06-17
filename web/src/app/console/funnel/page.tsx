@@ -1,25 +1,27 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
-import {
-  Button,
-  Card,
-  DatePicker,
-  Empty,
-  InputNumber,
-  Select,
-  Space,
-  Table,
-  Typography,
-  message,
-} from "antd";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import dynamic from "next/dynamic";
 import dayjs, { Dayjs } from "dayjs";
+import { Play, RotateCcw } from "lucide-react";
+import {
+  AnalyticsHeader,
+  ChartPanel,
+  DateTimeRange,
+  EmptyAnalysis,
+  EventStepSelector,
+  MetricTile,
+  NumberField,
+  ProjectPicker,
+  ToolbarPanel,
+} from "@/features/analytics/analytics-ui";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api } from "@/lib/api";
 
 const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
-const { RangePicker } = DatePicker;
 
 interface Step {
   event: string;
@@ -36,16 +38,18 @@ export default function FunnelPage() {
     dayjs().endOf("day"),
   ]);
   const [result, setResult] = useState<Step[]>([]);
+  const [error, setError] = useState("");
 
   const { data: projects } = useQuery({
     queryKey: ["projects"],
     queryFn: () => api.listProjects(),
   });
+
   useEffect(() => {
     if (!projectId && projects?.data?.length) setProjectId(projects.data[0].id);
   }, [projects, projectId]);
 
-  const { data: top } = useQuery({
+  const { data: top, isLoading: topLoading } = useQuery({
     queryKey: ["funnel_top", projectId],
     queryFn: () =>
       api.topEvents(projectId!, {
@@ -64,24 +68,35 @@ export default function FunnelPage() {
         to: range[1].valueOf(),
         window_seconds: windowSeconds,
       }),
-    onSuccess: (res) => setResult(res.data.steps),
-    onError: (e: Error) => message.error(e.message),
+    onSuccess: (res) => {
+      setError("");
+      setResult(res.data.steps);
+    },
+    onError: (e: Error) => setError(e.message),
   });
 
   const option = useMemo(
     () => ({
+      color: ["#0891b2", "#0f766e", "#4f46e5", "#7c3aed"],
       tooltip: { trigger: "item", formatter: "{b}: {c} 人" },
       series: [
         {
           type: "funnel",
-          left: "10%",
-          right: "10%",
-          top: 20,
-          bottom: 20,
+          left: "8%",
+          right: "8%",
+          top: 18,
+          bottom: 18,
           minSize: "10%",
-          label: { show: true, position: "inside" },
+          label: {
+            show: true,
+            position: "inside",
+            formatter: "{b}",
+            color: "#ffffff",
+            fontWeight: 600,
+          },
+          itemStyle: { borderColor: "#ffffff", borderWidth: 2 },
           data: result.map((s) => ({
-            name: `${s.event} (${(s.conversion * 100).toFixed(1)}%)`,
+            name: `${s.event} ${(s.conversion * 100).toFixed(1)}%`,
             value: s.users,
           })),
         },
@@ -90,74 +105,109 @@ export default function FunnelPage() {
     [result],
   );
 
+  const firstUsers = result[0]?.users || 0;
+  const lastUsers = result[result.length - 1]?.users || 0;
+  const finalRate = firstUsers ? Math.round((lastUsers / firstUsers) * 10000) / 100 : 0;
+
   return (
     <div>
-      <Typography.Title level={4}>漏斗分析</Typography.Title>
-      <Card size="small" style={{ marginBottom: 16 }}>
-        <Space direction="vertical" style={{ width: "100%" }}>
-          <Space wrap>
-            <Select
-              style={{ width: 220 }}
-              placeholder="项目"
-              value={projectId}
-              onChange={setProjectId}
-              options={(projects?.data || []).map((p) => ({ value: p.id, label: p.name }))}
-            />
-            <RangePicker
-              value={range}
-              onChange={(v) => v && v[0] && v[1] && setRange([v[0], v[1]])}
-              showTime
-            />
-            <span>窗口（秒）：</span>
-            <InputNumber
-              min={60}
-              max={30 * 24 * 3600}
-              step={3600}
-              value={windowSeconds}
-              onChange={(v) => v && setWindowSeconds(v)}
-            />
-          </Space>
-          <Select
-            mode="multiple"
-            style={{ width: "100%" }}
-            placeholder="按顺序选择 2-8 个事件作为漏斗步骤"
-            value={events}
-            onChange={setEvents}
-            options={(top?.data || []).map((e) => ({ value: e.event, label: e.event }))}
+      <AnalyticsHeader
+        title="漏斗分析"
+        description="按用户行为顺序计算转化链路，适合观察搜索、浏览、加购、支付等关键路径的流失。"
+      />
+
+      <ToolbarPanel>
+        <div className="grid gap-4 xl:grid-cols-[220px_minmax(360px,1fr)_180px] xl:items-end">
+          <div className="grid gap-1.5">
+            <span className="text-sm font-medium">项目</span>
+            <ProjectPicker projects={projects?.data || []} value={projectId} onChange={setProjectId} className="sm:w-full" />
+          </div>
+          <DateTimeRange value={range} onChange={setRange} />
+          <NumberField
+            label="转化窗口（秒）"
+            min={60}
+            max={30 * 24 * 3600}
+            step={3600}
+            value={windowSeconds}
+            onChange={setWindowSeconds}
           />
+        </div>
+
+        <div className="mt-5">
+          <div className="mb-2 text-sm font-medium">漏斗步骤</div>
+          <EventStepSelector options={top?.data || []} value={events} onChange={setEvents} />
+        </div>
+
+        <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:items-center">
           <Button
-            type="primary"
-            disabled={!projectId || events.length < 2}
-            loading={runMut.isPending}
+            type="button"
+            disabled={!projectId || events.length < 2 || runMut.isPending}
             onClick={() => runMut.mutate()}
           >
-            计算漏斗
+            <Play className="h-4 w-4" />
+            {runMut.isPending ? "计算中" : "计算漏斗"}
           </Button>
-        </Space>
-      </Card>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => {
+              setEvents([]);
+              setResult([]);
+              setError("");
+            }}
+          >
+            <RotateCcw className="h-4 w-4" />
+            重置
+          </Button>
+          {error ? <Badge variant="danger" className="h-8 items-center">{error}</Badge> : null}
+        </div>
+      </ToolbarPanel>
+
+      <div className="mb-5 grid gap-3 sm:grid-cols-3">
+        <MetricTile label="步骤数" value={events.length} loading={topLoading} />
+        <MetricTile label="起始用户" value={firstUsers} loading={runMut.isPending} />
+        <MetricTile label="最终转化率" value={finalRate} hint="百分比" loading={runMut.isPending} />
+      </div>
 
       {result.length === 0 ? (
-        <Empty description="选择步骤并点击计算" />
+        <EmptyAnalysis title="选择步骤并点击计算" description="建议先选择 search、view_product、add_to_cart、pay_success 这类连续事件。" />
       ) : (
-        <Card size="small">
-          <ReactECharts option={option} style={{ height: 360 }} />
-          <Table
-            size="small"
-            rowKey="event"
-            pagination={false}
-            dataSource={result}
-            columns={[
-              { title: "步骤", dataIndex: "event" },
-              { title: "用户数", dataIndex: "users", width: 120 },
-              {
-                title: "整体转化率",
-                dataIndex: "conversion",
-                width: 140,
-                render: (v: number) => `${(v * 100).toFixed(2)}%`,
-              },
-            ]}
-          />
-        </Card>
+        <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_420px]">
+          <ChartPanel title="漏斗形态" description="宽度代表达到该步骤的用户规模">
+            <ReactECharts option={option} style={{ height: 388 }} />
+          </ChartPanel>
+          <ChartPanel title="步骤明细" description="整体转化率以首步用户数为基准">
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>步骤</TableHead>
+                    <TableHead className="text-right">用户数</TableHead>
+                    <TableHead className="text-right">转化率</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {result.map((step, index) => (
+                    <TableRow key={step.event}>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          <span className="flex h-7 w-7 items-center justify-center rounded-md bg-primary text-xs font-semibold text-primary-foreground">
+                            {index + 1}
+                          </span>
+                          <span className="font-medium">{step.event}</span>
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right font-mono">{step.users.toLocaleString()}</TableCell>
+                      <TableCell className="text-right">
+                        <span className="font-mono">{(step.conversion * 100).toFixed(2)}%</span>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </ChartPanel>
+        </div>
       )}
     </div>
   );

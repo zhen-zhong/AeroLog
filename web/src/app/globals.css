@@ -40,4 +40,62 @@
   .text-balance {
     text-wrap: balance;
   }
+
+  .aero-signal-surface {
+    background:
+      linear-gradient(90deg, hsl(var(--primary) / 0.09) 1px, transparent 1px),
+      linear-gradient(180deg, hsl(var(--primary) / 0.07) 1px, transparent 1px);
+    background-size: 32px 32px;
+    mask-image: linear-gradient(90deg, black, transparent 76%);
+  }
+
+  .aero-scan-line {
+    background: linear-gradient(90deg, transparent, hsl(var(--primary) / 0.75), transparent);
+    animation: aero-scan 2.8s ease-out infinite;
+  }
+
+  .aero-flow {
+    position: relative;
+    overflow: hidden;
+  }
+
+  .aero-flow::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, transparent, hsl(var(--primary) / 0.14), transparent);
+    transform: translateX(-100%);
+    animation: aero-flow 2.4s ease-out infinite;
+  }
+}
+
+@keyframes aero-scan {
+  0% {
+    transform: translateX(-100%);
+    opacity: 0;
+  }
+  25% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+}
+
+@keyframes aero-flow {
+  0% {
+    transform: translateX(-100%);
+  }
+  60%,
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .aero-scan-line,
+  .aero-flow::after {
+    animation: none;
+  }
 }

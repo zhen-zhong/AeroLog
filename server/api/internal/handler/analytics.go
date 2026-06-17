@@ -147,12 +147,14 @@ func (h *AnalyticsHandler) funnel(c *gin.Context) {
 	// ClickHouse 漏斗：windowFunnel 函数
 	// SELECT level, count() FROM ( SELECT distinct_id, windowFunnel(W)(time, e=ev1, e=ev2, ...) AS level ... ) GROUP BY level
 	conds := make([]string, 0, len(body.Events))
-	args := []any{uint32(pid), body.From, body.To}
+	args := make([]any, 0, len(body.Events)+3)
 	for _, ev := range body.Events {
 		conds = append(conds, "event = ?")
 		args = append(args, ev)
 	}
-	inner := `SELECT distinct_id, windowFunnel(` + strconv.FormatInt(body.WindowSeconds, 10) + `)(time, ` + joinStrs(conds, ", ") + `) AS level
+	args = append(args, uint32(pid), body.From, body.To)
+
+	inner := `SELECT distinct_id, windowFunnel(` + strconv.FormatInt(body.WindowSeconds, 10) + `)(toDateTime(time), ` + joinStrs(conds, ", ") + `) AS level
 	          FROM events
 	          WHERE project_id = ? AND time BETWEEN fromUnixTimestamp64Milli(?) AND fromUnixTimestamp64Milli(?)
 	          GROUP BY distinct_id`
@@ -221,20 +223,13 @@ func (h *AnalyticsHandler) retention(c *gin.Context) {
 		from = to - int64(days+7)*24*3600*1000
 	}
 
-	// ClickHouse retention(): 传入多个条件表达式，返回每个 distinct_id 的位图。
-	// 这里采用 group by toDate(time) cohort。
-	conds := []string{"event = ?"}
-	args := []any{initEv}
-	for i := 0; i < days; i++ {
-		conds = append(conds, "event = ? AND toDate(time) = cohort + INTERVAL ? DAY")
-		args = append(args, retEv, i)
-	}
-	_ = conds
-	_ = args
-
 	// 简单实现：分两步
 	// 1) cohort_users: 初始事件当天首次发生的 (date, distinct_id)
-	// 2) join 返回事件，计算 偏移天数
+	// 2) 等值 join 返回事件，再在聚合条件里计算偏移天数。
+	valueExprs := make([]string, 0, days)
+	for i := 0; i < days; i++ {
+		valueExprs = append(valueExprs, "uniqExactIf(c.distinct_id, dateDiff('day', c.d0, r.d) = "+strconv.Itoa(i)+")")
+	}
 	q := `
 	WITH cohort AS (
 		SELECT distinct_id, min(toDate(time)) AS d0
@@ -250,17 +245,15 @@ func (h *AnalyticsHandler) retention(c *gin.Context) {
 	)
 	SELECT c.d0 AS cohort,
 	       count(DISTINCT c.distinct_id) AS size,
-	       arrayMap(i -> uniqExactIf(c.distinct_id, dateDiff('day', c.d0, r.d) = i),
-	                range(0, ?)) AS values
+	       [` + joinStrs(valueExprs, ", ") + `] AS values
 	FROM cohort AS c
-	LEFT JOIN ret AS r ON c.distinct_id = r.distinct_id AND r.d >= c.d0 AND r.d < c.d0 + ?
+	LEFT JOIN ret AS r ON c.distinct_id = r.distinct_id
 	GROUP BY c.d0
 	ORDER BY c.d0
 	`
 	rows, err := h.CH.Query(c, q,
 		uint32(pid), initEv, from, to,
 		uint32(pid), retEv, from, to,
-		uint32(days), uint32(days),
 	)
 	if err != nil {
 		c.JSON(500, gin.H{"err": err.Error()})
