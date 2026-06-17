@@ -17,6 +17,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { useProjectStore } from "@/stores/project-store";
 
 interface RetRow {
   cohort: string;
@@ -25,7 +26,7 @@ interface RetRow {
 }
 
 export default function RetentionPage() {
-  const [projectId, setProjectId] = useState<number | undefined>();
+  const projectId = useProjectStore((s) => s.projectId);
   const [initEvent, setInitEvent] = useState<string | undefined>();
   const [retEvent, setRetEvent] = useState<string | undefined>();
   const [days, setDays] = useState<number>(7);
@@ -34,14 +35,11 @@ export default function RetentionPage() {
     dayjs().endOf("day"),
   ]);
 
-  const { data: projects } = useQuery({
-    queryKey: ["projects"],
-    queryFn: () => api.listProjects(),
-  });
-
+  // 切换项目时重置
   useEffect(() => {
-    if (!projectId && projects?.data?.length) setProjectId(projects.data[0].id);
-  }, [projects, projectId]);
+    setInitEvent(undefined);
+    setRetEvent(undefined);
+  }, [projectId]);
 
   const { data: top, isLoading: topLoading } = useQuery({
     queryKey: ["retention_top", projectId],
@@ -88,9 +86,6 @@ export default function RetentionPage() {
       />
 
       <ReportControls
-        projects={projects?.data || []}
-        projectId={projectId}
-        onProjectChange={setProjectId}
         range={range}
         onRangeChange={setRange}
         comparison="上个周期"

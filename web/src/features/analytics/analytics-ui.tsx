@@ -167,18 +167,12 @@ export function DateTimeRange({
 }
 
 export function ReportControls({
-  projects,
-  projectId,
-  onProjectChange,
   range,
   onRangeChange,
   comparison = "无对比",
   filters = [],
   className,
 }: {
-  projects: AnalyticsProject[];
-  projectId?: number;
-  onProjectChange: (value: number) => void;
   range: [Dayjs, Dayjs];
   onRangeChange: (value: [Dayjs, Dayjs]) => void;
   comparison?: string;
@@ -187,16 +181,7 @@ export function ReportControls({
 }) {
   return (
     <ToolbarPanel className={className}>
-      <div className="grid gap-4 xl:grid-cols-[220px_minmax(360px,1fr)_220px] xl:items-end">
-        <div className="grid gap-1.5">
-          <Label>项目</Label>
-          <ProjectPicker
-            projects={projects}
-            value={projectId}
-            onChange={onProjectChange}
-            className="sm:w-full"
-          />
-        </div>
+      <div className="grid gap-4 xl:grid-cols-[minmax(360px,1fr)_220px] xl:items-end">
         <DateTimeRange value={range} onChange={onRangeChange} compact />
         <div className="grid gap-1.5">
           <Label>对比</Label>

@@ -7,7 +7,6 @@ import { Bug, CheckCircle2, RefreshCw, Save, ShieldAlert, SlidersHorizontal, Use
 import {
   AnalyticsHeader,
   EmptyAnalysis,
-  ProjectPicker,
 } from "@/features/analytics/analytics-ui";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -26,12 +25,13 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { api, DebugEvent, PropertyDefinition, SchemaIssue } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { useProjectStore } from "@/stores/project-store";
 
 const DATA_TYPES = ["string", "number", "bool", "datetime", "list", "object", "mixed", "unknown"];
 
 export default function DebuggerPage() {
   const queryClient = useQueryClient();
-  const [projectId, setProjectId] = useState<number | undefined>();
+  const projectId = useProjectStore((s) => s.projectId);
   const [eventFilter, setEventFilter] = useState("__all__");
   const [resultFilter, setResultFilter] = useState("__all__");
   const [distinctId, setDistinctId] = useState("");
@@ -42,16 +42,11 @@ export default function DebuggerPage() {
   const [selectedEventSchema, setSelectedEventSchema] = useState("");
   const [requiredPropsText, setRequiredPropsText] = useState("");
 
-  const projects = useQuery({
-    queryKey: ["projects"],
-    queryFn: () => api.listProjects(),
-  });
-
+  // 切换项目时重置选中
   useEffect(() => {
-    if (!projectId && projects.data?.data?.length) {
-      setProjectId(projects.data.data[0].id);
-    }
-  }, [projectId, projects.data]);
+    setSelectedProperty("");
+    setSelectedEventSchema("");
+  }, [projectId]);
 
   const events = useQuery({
     queryKey: ["debugger_events", projectId],
@@ -186,10 +181,6 @@ export default function DebuggerPage() {
               <CardDescription>按事件、用户标识和校验结果缩小 SDK 调试范围。</CardDescription>
             </CardHeader>
             <CardContent className="grid gap-4">
-              <div className="grid gap-1.5">
-                <Label>项目</Label>
-                <ProjectPicker projects={projects.data?.data || []} value={projectId} onChange={setProjectId} className="sm:w-full" />
-              </div>
               <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
                 <div className="grid gap-1.5">
                   <Label>事件</Label>
@@ -348,7 +339,7 @@ export default function DebuggerPage() {
           </Card>
         </div>
 
-        <div className="grid min-w-0 gap-5">
+        <div className="grid min-w-0 content-start gap-5">
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <StatTile label="最近事件" value={stats.events} tone="default" />
             <StatTile label="Schema 告警" value={stats.warnings} tone="warning" />

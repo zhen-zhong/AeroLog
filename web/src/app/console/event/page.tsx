@@ -19,11 +19,12 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { api } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { useProjectStore } from "@/stores/project-store";
 
 const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
 
 export default function EventAnalysisPage() {
-  const [projectId, setProjectId] = useState<number | undefined>();
+  const projectId = useProjectStore((s) => s.projectId);
   const [event, setEvent] = useState<string | undefined>();
   const [selectedProperty, setSelectedProperty] = useState<string | undefined>();
   const [interval, setInterval] = useState<"hour" | "day">("day");
@@ -32,14 +33,11 @@ export default function EventAnalysisPage() {
     dayjs().endOf("day"),
   ]);
 
-  const { data: projects } = useQuery({
-    queryKey: ["projects"],
-    queryFn: () => api.listProjects(),
-  });
-
+  // 切换项目时重置
   useEffect(() => {
-    if (!projectId && projects?.data?.length) setProjectId(projects.data[0].id);
-  }, [projects, projectId]);
+    setEvent(undefined);
+    setSelectedProperty(undefined);
+  }, [projectId]);
 
   const tsRange = useMemo(
     () => ({ from: range[0].valueOf(), to: range[1].valueOf() }),
@@ -122,13 +120,6 @@ export default function EventAnalysisPage() {
       />
 
       <ReportControls
-        projects={projects?.data || []}
-        projectId={projectId}
-        onProjectChange={(next) => {
-          setProjectId(next);
-          setEvent(undefined);
-          setSelectedProperty(undefined);
-        }}
         range={range}
         onRangeChange={setRange}
         comparison="上个周期"

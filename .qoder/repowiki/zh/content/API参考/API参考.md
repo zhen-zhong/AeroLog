@@ -5,11 +5,11 @@
 - [server/api/cmd/main.go](file://server/api/cmd/main.go)
 - [server/api/internal/handler/analytics.go](file://server/api/internal/handler/analytics.go)
 - [server/api/internal/handler/project.go](file://server/api/internal/handler/project.go)
+- [server/api/internal/handler/governance.go](file://server/api/internal/handler/governance.go)
 - [server/api/internal/config/config.go](file://server/api/internal/config/config.go)
-- [server/collector/cmd/main.go](file://server/collector/cmd/main.go)
 - [server/collector/internal/handler/track.go](file://server/collector/internal/handler/track.go)
 - [server/collector/internal/config/config.go](file://server/collector/internal/config/config.go)
-- [server/consumer/cmd/main.go](file://server/consumer/cmd/main.go)
+- [server/consumer/internal/metadata/syncer.go](file://server/consumer/internal/metadata/syncer.go)
 - [server/consumer/internal/config/config.go](file://server/consumer/internal/config/config.go)
 - [server/pkg/model/event.go](file://server/pkg/model/event.go)
 - [deploy/init/postgres/01_schema.sql](file://deploy/init/postgres/01_schema.sql)
@@ -18,7 +18,15 @@
 - [sdk/web/src/types.ts](file://sdk/web/src/types.ts)
 - [sdk/android/aerolog/src/main/java/dev/aerolog/sdk/AeroLog.kt](file://sdk/android/aerolog/src/main/java/dev/aerolog/sdk/AeroLog.kt)
 - [sdk/ios/Sources/AeroLog/AeroLog.swift](file://sdk/ios/Sources/AeroLog/AeroLog.swift)
+- [web/src/app/console/debugger/page.tsx](file://web/src/app/console/debugger/page.tsx)
 </cite>
+
+## 更新摘要
+**所做更改**
+- 新增事件模式管理API端点：PUT /projects/:id/events/:event/schema
+- 更新调试事件查询API：支持全局模式查询
+- 新增治理API端点：调试事件查询与模式问题诊断
+- 更新数据库模式：事件定义表新增schema_required_props和schema_locked字段
 
 ## 目录
 1. [简介](#简介)
@@ -37,6 +45,8 @@
 - 事件上报接口：用于 SDK 将事件数据上报至收集器。
 - 分析查询接口：提供事件趋势、热门事件、漏斗分析、留存分析等。
 - 项目管理接口：提供项目创建、查询与事件定义列表。
+- 事件模式管理接口：支持事件Schema定义与锁定。
+- 治理查询接口：提供调试事件查询与模式问题诊断。
 - 认证与权限：基于项目 Token 的访问控制与鉴权流程。
 - 分页与过滤：查询参数的分页、过滤与排序规则。
 - API 版本与兼容性：当前采用 /v1 路由，向后兼容策略建议。
@@ -75,15 +85,15 @@ API --> PG
 API --> CH
 ```
 
-图表来源
-- [server/api/cmd/main.go:35-78](file://server/api/cmd/main.go#L35-L78)
+**图表来源**
+- [server/api/cmd/main.go:13-25](file://server/api/cmd/main.go#L13-L25)
 - [server/collector/cmd/main.go:22-54](file://server/collector/cmd/main.go#L22-L54)
 - [server/consumer/cmd/main.go:18-54](file://server/consumer/cmd/main.go#L18-L54)
 - [deploy/init/postgres/01_schema.sql:18-28](file://deploy/init/postgres/01_schema.sql#L18-L28)
 - [deploy/init/clickhouse/01_schema.sql:6-42](file://deploy/init/clickhouse/01_schema.sql#L6-L42)
 
-章节来源
-- [server/api/cmd/main.go:35-78](file://server/api/cmd/main.go#L35-L78)
+**章节来源**
+- [server/api/cmd/main.go:13-25](file://server/api/cmd/main.go#L13-L25)
 - [server/collector/cmd/main.go:22-54](file://server/collector/cmd/main.go#L22-L54)
 - [server/consumer/cmd/main.go:18-54](file://server/consumer/cmd/main.go#L18-L54)
 - [deploy/init/postgres/01_schema.sql:18-28](file://deploy/init/postgres/01_schema.sql#L18-L28)
@@ -97,8 +107,8 @@ API --> CH
 - 前端 API 客户端：封装 /v1 项目与分析接口调用。
 - SDK：Web/Android/iOS 三端上报事件，遵循统一事件结构。
 
-章节来源
-- [server/api/internal/handler/project.go:24-33](file://server/api/internal/handler/project.go#L24-L33)
+**章节来源**
+- [server/api/internal/handler/project.go:25-34](file://server/api/internal/handler/project.go#L25-L34)
 - [server/api/internal/handler/analytics.go:27-32](file://server/api/internal/handler/analytics.go#L27-L32)
 - [server/collector/internal/handler/track.go:47-51](file://server/collector/internal/handler/track.go#L47-L51)
 - [server/pkg/model/event.go:27-60](file://server/pkg/model/event.go#L27-L60)
@@ -106,7 +116,7 @@ API --> CH
 - [sdk/web/src/types.ts:16-25](file://sdk/web/src/types.ts#L16-L25)
 
 ## 架构总览
-AeroLog 采用“上报-存储-查询”三层架构：
+AeroLog 采用"上报-存储-查询"三层架构：
 - 上报层：SDK 将事件发送到收集器，收集器进行基础校验并投递到消息队列。
 - 存储层：消费者从消息队列读取事件，批量写入 ClickHouse；元数据保存在 PostgreSQL。
 - 查询层：API 服务通过 PostgreSQL 获取项目与事件定义，通过 ClickHouse 执行分析查询。
@@ -125,7 +135,7 @@ MQ-->>CON : 拉取事件
 CON->>CH : 批量写入 events 表
 ```
 
-图表来源
+**图表来源**
 - [server/collector/internal/handler/track.go:60-133](file://server/collector/internal/handler/track.go#L60-L133)
 - [server/pkg/model/event.go:62-74](file://server/pkg/model/event.go#L62-L74)
 - [server/consumer/cmd/main.go:34-51](file://server/consumer/cmd/main.go#L34-L51)
@@ -146,7 +156,7 @@ CON->>CH : 批量写入 events 表
     - X-AeroLog-SDK: SDK 类型与版本（Android/iOS/Web/Server）
   - 请求体
     - 单个事件对象或事件对象数组
-    - 事件字段遵循统一模型（见“数据模型”）
+    - 事件字段遵循统一模型（见"数据模型"）
 - 成功响应
   - 结构：包含 accepted/rejected 计数与状态信息
   - 示例路径：[响应示例:53-58](file://server/collector/internal/handler/track.go#L53-L58)
@@ -184,11 +194,11 @@ Handler-->>Client : 200 {code,msg,accepted,rejected}
 end
 ```
 
-图表来源
+**图表来源**
 - [server/collector/internal/handler/track.go:60-133](file://server/collector/internal/handler/track.go#L60-L133)
 - [server/pkg/model/event.go:40-60](file://server/pkg/model/event.go#L40-L60)
 
-章节来源
+**章节来源**
 - [server/collector/internal/handler/track.go:47-51](file://server/collector/internal/handler/track.go#L47-L51)
 - [server/collector/internal/handler/track.go:60-133](file://server/collector/internal/handler/track.go#L60-L133)
 - [server/pkg/model/event.go:27-60](file://server/pkg/model/event.go#L27-L60)
@@ -229,10 +239,10 @@ Rows --> |是| Map["映射为 {bucket,count}"]
 Map --> Done(["返回 data 数组"])
 ```
 
-图表来源
+**图表来源**
 - [server/api/internal/handler/analytics.go:34-74](file://server/api/internal/handler/analytics.go#L34-L74)
 
-章节来源
+**章节来源**
 - [server/api/internal/handler/analytics.go:27-32](file://server/api/internal/handler/analytics.go#L27-L32)
 - [server/api/internal/handler/analytics.go:34-283](file://server/api/internal/handler/analytics.go#L34-L283)
 
@@ -254,8 +264,58 @@ Map --> Done(["返回 data 数组"])
     - 响应：事件定义列表（最多 500 条）
     - 示例路径：[事件定义列表:107-134](file://server/api/internal/handler/project.go#L107-L134)
 
-章节来源
+**章节来源**
 - [server/api/internal/handler/project.go:29-134](file://server/api/internal/handler/project.go#L29-L134)
+
+### 事件模式管理接口
+- 路由前缀：/v1/projects/{id}/events
+- 认证：需要项目存在且已授权
+- 接口清单
+  - PUT /projects/{id}/events/{event}/schema
+    - 功能：更新指定事件的Schema定义，锁定后禁止修改
+    - 请求体参数：schema_required_props（必需属性数组）、status（状态）、display_name（显示名）、description（描述）
+    - 响应：事件定义详情，包含 schema_required_props、schema_locked、status 等字段
+    - 示例路径：[更新Schema:146-204](file://server/api/internal/handler/project.go#L146-L204)
+  - GET /projects/{id}/events
+    - 功能：获取事件定义列表
+    - 响应：事件定义数组，包含 id、name、display_name、description、schema_required_props、schema_locked、status 等
+    - 示例路径：[事件列表:109-144](file://server/api/internal/handler/project.go#L109-L144)
+
+**更新** 新增事件模式管理API端点，支持事件Schema的定义与锁定
+
+**章节来源**
+- [server/api/internal/handler/project.go:104-204](file://server/api/internal/handler/project.go#L104-L204)
+- [deploy/init/postgres/01_schema.sql:38-53](file://deploy/init/postgres/01_schema.sql#L38-L53)
+
+### 治理查询接口
+- 路由前缀：/v1/projects/{id}
+- 认证：需要项目存在且已授权
+- 接口清单
+  - GET /debug/events
+    - 功能：查询调试事件，支持全局模式查询
+    - 查询参数：limit（默认100，最大500）、event（事件名）、result（结果类型）、distinct_id（去重ID）、include_global（是否包含全局模式）
+    - 响应：调试事件数组，包含 id、project_id、event、event_type、distinct_id、user_id、anonymous_id、result、reason、payload、received_at、created_at
+    - 示例路径：[调试事件查询:160-228](file://server/api/internal/handler/governance.go#L160-L228)
+  - GET /debug/schema_issues
+    - 功能：查询Schema问题
+    - 查询参数：limit（默认100，最大500）、event（事件名）、property（属性名）
+    - 响应：Schema问题数组，包含 id、event、property、expected_type、actual_type、severity、message、payload、observed_at、created_at
+    - 示例路径：[Schema问题查询:230-285](file://server/api/internal/handler/governance.go#L230-L285)
+  - GET /properties
+    - 功能：获取属性定义列表
+    - 查询参数：scope（作用域：event/user，默认为空表示全部）
+    - 响应：属性定义数组，包含 id、name、display_name、data_type、scope、description、schema_required、schema_locked、enum_values、status、first_seen、last_seen
+    - 示例路径：[属性列表:31-85](file://server/api/internal/handler/governance.go#L31-L85)
+  - PUT /properties/{property}/schema
+    - 功能：更新属性Schema定义
+    - 请求体参数：scope（作用域：event/user）、data_type（数据类型）、schema_required（是否必需）、enum_values（枚举值数组）、display_name、description
+    - 响应：属性定义详情
+    - 示例路径：[更新属性Schema:87-158](file://server/api/internal/handler/governance.go#L87-L158)
+
+**更新** 新增调试事件查询API，支持include_global参数实现全局模式查询
+
+**章节来源**
+- [server/api/internal/handler/governance.go:21-285](file://server/api/internal/handler/governance.go#L21-L285)
 
 ### 数据模型
 - 事件类型
@@ -268,7 +328,7 @@ Map --> Done(["返回 data 数组"])
 - 包装事件（投递到消息队列）
   - EnvelopedEvent：包含 project_id、ip、ua、received_at、event
 
-章节来源
+**章节来源**
 - [server/pkg/model/event.go:9-60](file://server/pkg/model/event.go#L9-L60)
 - [server/pkg/model/event.go:62-83](file://server/pkg/model/event.go#L62-L83)
 
@@ -284,7 +344,7 @@ Map --> Done(["返回 data 数组"])
   - 自动采集生命周期与页面事件，支持批量上报与本地持久化
   - 示例路径：[Android SDK:175-190](file://sdk/android/aerolog/src/main/java/dev/aerolog/sdk/AeroLog.kt#L175-L190)，[iOS SDK:158-181](file://sdk/ios/Sources/AeroLog/AeroLog.swift#L158-L181)
 
-章节来源
+**章节来源**
 - [web/src/lib/api.ts:3-19](file://web/src/lib/api.ts#L3-L19)
 - [web/src/lib/api.ts:33-75](file://web/src/lib/api.ts#L33-L75)
 - [sdk/web/src/types.ts:16-25](file://sdk/web/src/types.ts#L16-L25)
@@ -311,15 +371,15 @@ CON["消费者服务"] --> MQ
 CON --> CH
 ```
 
-图表来源
-- [server/api/cmd/main.go:38-48](file://server/api/cmd/main.go#L38-L48)
-- [server/collector/cmd/main.go:31-35](file://server/collector/cmd/main.go#L31-L35)
-- [server/consumer/cmd/main.go:27-32](file://server/consumer/cmd/main.go#L27-L32)
+**图表来源**
+- [server/api/cmd/main.go:18-25](file://server/api/cmd/main.go#L18-L25)
+- [server/collector/cmd/main.go:22-54](file://server/collector/cmd/main.go#L22-L54)
+- [server/consumer/cmd/main.go:18-54](file://server/consumer/cmd/main.go#L18-L54)
 
-章节来源
-- [server/api/cmd/main.go:38-48](file://server/api/cmd/main.go#L38-L48)
-- [server/collector/cmd/main.go:31-35](file://server/collector/cmd/main.go#L31-L35)
-- [server/consumer/cmd/main.go:27-32](file://server/consumer/cmd/main.go#L27-L32)
+**章节来源**
+- [server/api/cmd/main.go:18-25](file://server/api/cmd/main.go#L18-L25)
+- [server/collector/cmd/main.go:22-54](file://server/collector/cmd/main.go#L22-L54)
+- [server/consumer/cmd/main.go:18-54](file://server/consumer/cmd/main.go#L18-L54)
 
 ## 性能考虑
 - 查询性能
@@ -330,8 +390,6 @@ CON --> CH
 - 网络与并发
   - 收集器对请求体大小限制，避免过大负载
   - API 服务与消费者均提供指标端点，便于监控
-
-[本节为通用指导，无需列出具体文件来源]
 
 ## 故障排查指南
 - 上报失败
@@ -345,15 +403,13 @@ CON --> CH
   - 检查消费者运行状态与 Kafka 消费进度
   - 核对 ClickHouse 表结构与分区策略
 
-章节来源
+**章节来源**
 - [server/collector/internal/handler/track.go:60-133](file://server/collector/internal/handler/track.go#L60-L133)
 - [server/api/internal/handler/analytics.go:119-199](file://server/api/internal/handler/analytics.go#L119-L199)
 - [server/consumer/cmd/main.go:34-51](file://server/consumer/cmd/main.go#L34-L51)
 
 ## 结论
 AeroLog 提供了清晰的事件上报与分析查询能力，结合 PostgreSQL 与 ClickHouse 的组合，满足高吞吐与高性能分析需求。通过项目 Token 实现基础访问控制，配合前端 API 客户端与多端 SDK，可快速完成埋点与数据分析闭环。
-
-[本节为总结性内容，无需列出具体文件来源]
 
 ## 附录
 
@@ -367,7 +423,7 @@ AeroLog 提供了清晰的事件上报与分析查询能力，结合 PostgreSQL 
   - 严格保密项目 token，避免泄露
   - 在生产环境配置 CORS 与 TLS
 
-章节来源
+**章节来源**
 - [server/collector/internal/handler/track.go:67-76](file://server/collector/internal/handler/track.go#L67-L76)
 - [server/api/internal/config/config.go:35-36](file://server/api/internal/config/config.go#L35-L36)
 - [deploy/init/postgres/01_schema.sql:30-36](file://deploy/init/postgres/01_schema.sql#L30-L36)
@@ -376,19 +432,25 @@ AeroLog 提供了清晰的事件上报与分析查询能力，结合 PostgreSQL 
 - 分页
   - 项目列表：LIMIT 200
   - 事件定义列表：LIMIT 500
+  - 调试事件查询：LIMIT 500
+  - 属性定义列表：LIMIT 1000
 - 过滤
   - 时间范围：from/to（毫秒时间戳）
   - 事件名：趋势分析的 event 字段
   - 事件序列：漏斗分析的 events 数组
+  - 调试事件：支持按 event、result、distinct_id 过滤
 - 排序
   - 热门事件：按事件次数降序
   - 趋势分析：按时间桶升序
+  - 调试事件：按 created_at 降序
+  - 属性定义：按 scope、last_seen 降序
 
-章节来源
+**章节来源**
 - [server/api/internal/handler/project.go:36-51](file://server/api/internal/handler/project.go#L36-L51)
 - [server/api/internal/handler/project.go:109-134](file://server/api/internal/handler/project.go#L109-L134)
 - [server/api/internal/handler/analytics.go:78-112](file://server/api/internal/handler/analytics.go#L78-L112)
 - [server/api/internal/handler/analytics.go:40-74](file://server/api/internal/handler/analytics.go#L40-L74)
+- [server/api/internal/handler/governance.go:160-228](file://server/api/internal/handler/governance.go#L160-L228)
 
 ### API 版本管理与兼容性
 - 当前版本：/v1
@@ -397,8 +459,8 @@ AeroLog 提供了清晰的事件上报与分析查询能力，结合 PostgreSQL 
   - 不破坏现有字段语义与命名
   - 通过新路由或参数扩展功能，避免删除旧字段
 
-章节来源
-- [server/api/cmd/main.go:55-58](file://server/api/cmd/main.go#L55-L58)
+**章节来源**
+- [server/api/cmd/main.go:18-25](file://server/api/cmd/main.go#L18-L25)
 
 ### API 测试与模拟数据
 - 前端 API 客户端
@@ -407,9 +469,31 @@ AeroLog 提供了清晰的事件上报与分析查询能力，结合 PostgreSQL 
 - SDK 模拟
   - Web/Android/iOS SDK 均支持本地持久化与定时 flush，便于离线测试
   - 示例路径：[Android SDK:108-124](file://sdk/android/aerolog/src/main/java/dev/aerolog/sdk/AeroLog.kt#L108-L124)，[iOS SDK:77-82](file://sdk/ios/Sources/AeroLog/AeroLog.swift#L77-L82)
+- 调试工具
+  - Web 控制台提供调试器页面，支持事件过滤与属性配置
+  - 示例路径：[调试器页面:32-68](file://web/src/app/console/debugger/page.tsx#L32-L68)
 
-章节来源
+**章节来源**
 - [web/src/lib/api.ts:3-19](file://web/src/lib/api.ts#L3-L19)
 - [web/src/lib/api.ts:33-75](file://web/src/lib/api.ts#L33-L75)
 - [sdk/android/aerolog/src/main/java/dev/aerolog/sdk/AeroLog.kt:108-124](file://sdk/android/aerolog/src/main/java/dev/aerolog/sdk/AeroLog.kt#L108-L124)
-- [sdk/ios/Sources/AeroLog/AeroLog.swift#L77-L82:77-82](file://sdk/ios/Sources/AeroLog/AeroLog.swift#L77-L82)
+- [sdk/ios/Sources/AeroLog/AeroLog.swift:77-82](file://sdk/ios/Sources/AeroLog/AeroLog.swift#L77-L82)
+- [web/src/app/console/debugger/page.tsx:32-68](file://web/src/app/console/debugger/page.tsx#L32-L68)
+
+### 数据库模式更新
+- 事件定义表（event_definitions）
+  - 新增 schema_required_props：JSONB字段，存储必需属性列表
+  - 新增 schema_locked：布尔字段，锁定后禁止修改Schema
+- 属性定义表（property_definitions）
+  - 新增 schema_required：布尔字段，标记属性是否必需
+  - 新增 schema_locked：布尔字段，锁定后禁止修改Schema
+  - 新增 enum_values：JSONB字段，存储枚举值列表
+- 调试事件表（debug_events）
+  - 新增 project_id 可为空，支持全局模式查询
+  - 新增索引优化查询性能
+
+**章节来源**
+- [deploy/init/postgres/01_schema.sql:38-76](file://deploy/init/postgres/01_schema.sql#L38-L76)
+- [deploy/init/postgres/01_schema.sql:114-156](file://deploy/init/postgres/01_schema.sql#L114-L156)
+- [server/api/internal/handler/governance.go:462-511](file://server/api/internal/handler/governance.go#L462-L511)
+- [server/collector/internal/handler/track.go:219-242](file://server/collector/internal/handler/track.go#L219-L242)

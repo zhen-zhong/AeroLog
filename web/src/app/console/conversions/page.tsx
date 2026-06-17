@@ -12,7 +12,6 @@ import {
   EventStepSelector,
   MetricTile,
   NumberField,
-  ProjectPicker,
 } from "@/features/analytics/analytics-ui";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -28,12 +27,13 @@ import {
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api, ConversionGoal } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { useProjectStore } from "@/stores/project-store";
 
 const DEFAULT_EVENTS = ["search", "view_product", "pay_success"];
 
 export default function ConversionsPage() {
   const queryClient = useQueryClient();
-  const [projectId, setProjectId] = useState<number | undefined>();
+  const projectId = useProjectStore((s) => s.projectId);
   const [range, setRange] = useState<[Dayjs, Dayjs]>([
     dayjs().subtract(7, "day").startOf("day"),
     dayjs().endOf("day"),
@@ -43,14 +43,11 @@ export default function ConversionsPage() {
   const [windowSeconds, setWindowSeconds] = useState(7 * 24 * 3600);
   const [breakdownProperty, setBreakdownProperty] = useState("");
 
-  const { data: projects } = useQuery({
-    queryKey: ["projects"],
-    queryFn: () => api.listProjects(),
-  });
-
+  // 切换项目时重置
   useEffect(() => {
-    if (!projectId && projects?.data?.length) setProjectId(projects.data[0].id);
-  }, [projects, projectId]);
+    setEvents([]);
+    setBreakdownProperty("");
+  }, [projectId]);
 
   const tsRange = useMemo(() => ({ from: range[0].valueOf(), to: range[1].valueOf() }), [range]);
 
@@ -152,10 +149,6 @@ export default function ConversionsPage() {
         <div className="min-w-0 grid gap-5">
           <Card>
             <CardContent className="grid gap-4 pt-4 sm:pt-4">
-              <div className="grid gap-1.5">
-                <div className="text-sm font-medium">项目</div>
-                <ProjectPicker projects={projects?.data || []} value={projectId} onChange={setProjectId} className="sm:w-full" />
-              </div>
               <DateTimeRange value={range} onChange={setRange} />
               <div className="grid gap-1.5">
                 <div className="text-sm font-medium">转化目标名称</div>

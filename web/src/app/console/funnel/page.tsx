@@ -13,13 +13,13 @@ import {
   EventStepSelector,
   MetricTile,
   NumberField,
-  ProjectPicker,
   ToolbarPanel,
 } from "@/features/analytics/analytics-ui";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api } from "@/lib/api";
+import { useProjectStore } from "@/stores/project-store";
 
 const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
 
@@ -30,7 +30,7 @@ interface Step {
 }
 
 export default function FunnelPage() {
-  const [projectId, setProjectId] = useState<number | undefined>();
+  const projectId = useProjectStore((s) => s.projectId);
   const [events, setEvents] = useState<string[]>([]);
   const [windowSeconds, setWindowSeconds] = useState<number>(24 * 3600);
   const [range, setRange] = useState<[Dayjs, Dayjs]>([
@@ -40,14 +40,12 @@ export default function FunnelPage() {
   const [result, setResult] = useState<Step[]>([]);
   const [error, setError] = useState("");
 
-  const { data: projects } = useQuery({
-    queryKey: ["projects"],
-    queryFn: () => api.listProjects(),
-  });
-
+  // 切换项目时重置
   useEffect(() => {
-    if (!projectId && projects?.data?.length) setProjectId(projects.data[0].id);
-  }, [projects, projectId]);
+    setEvents([]);
+    setResult([]);
+    setError("");
+  }, [projectId]);
 
   const { data: top, isLoading: topLoading } = useQuery({
     queryKey: ["funnel_top", projectId],
@@ -120,10 +118,6 @@ export default function FunnelPage() {
         <div className="grid gap-5">
           <ToolbarPanel className="mb-0">
             <div className="grid gap-4">
-              <div className="grid gap-1.5">
-                <span className="text-sm font-medium">项目</span>
-                <ProjectPicker projects={projects?.data || []} value={projectId} onChange={setProjectId} className="sm:w-full" />
-              </div>
               <DateTimeRange value={range} onChange={setRange} stacked />
               <NumberField
                 label="转化窗口（秒）"

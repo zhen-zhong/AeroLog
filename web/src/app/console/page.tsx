@@ -15,27 +15,22 @@ import {
   ToolbarPanel,
 } from "@/features/analytics/analytics-ui";
 import { api } from "@/lib/api";
+import { useProjectStore } from "@/stores/project-store";
 
 const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
 
 export default function ConsolePage() {
-  const [projectId, setProjectId] = useState<number | undefined>();
+  const projectId = useProjectStore((s) => s.projectId);
   const [event, setEvent] = useState<string | undefined>();
   const [range, setRange] = useState<[Dayjs, Dayjs]>([
     dayjs().subtract(7, "day").startOf("day"),
     dayjs().endOf("day"),
   ]);
 
-  const { data: projects, isLoading: projectsLoading } = useQuery({
-    queryKey: ["projects"],
-    queryFn: () => api.listProjects(),
-  });
-
+  // 切换项目时重置事件选择
   useEffect(() => {
-    if (!projectId && projects?.data?.length) {
-      setProjectId(projects.data[0].id);
-    }
-  }, [projects, projectId]);
+    setEvent(undefined);
+  }, [projectId]);
 
   const tsRange = useMemo(() => {
     return { from: range[0].valueOf(), to: range[1].valueOf() };
@@ -101,12 +96,6 @@ export default function ConsolePage() {
       />
 
       <ReportControls
-        projects={projects?.data || []}
-        projectId={projectId}
-        onProjectChange={(next) => {
-          setProjectId(next);
-          setEvent(undefined);
-        }}
         range={range}
         onRangeChange={setRange}
         comparison="上个周期"
@@ -119,7 +108,7 @@ export default function ConsolePage() {
         <MetricTile label="事件种类" value={topRows.length} hint="当前项目已上报事件" loading={topLoading} />
       </div>
 
-      {!projectId && !projectsLoading ? (
+      {!projectId ? (
         <EmptyAnalysis title="暂无项目" description="先在项目管理里创建项目，再通过 SDK 或 seed 脚本上报事件。" />
       ) : (
         <div className="grid gap-5 lg:grid-cols-[420px_minmax(0,1fr)]">

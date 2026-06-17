@@ -17,9 +17,10 @@ import { Badge } from "@/components/ui/badge";
 import { api } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { useProjectStore } from "@/stores/project-store";
 
 export default function RealtimePage() {
-  const [projectId, setProjectId] = useState<number | undefined>();
+  const projectId = useProjectStore((s) => s.projectId);
   const [selectedEvent, setSelectedEvent] = useState<string | undefined>();
   const [selectedProperty, setSelectedProperty] = useState<string | undefined>();
   const [range, setRange] = useState<[Dayjs, Dayjs]>([
@@ -27,14 +28,11 @@ export default function RealtimePage() {
     dayjs(),
   ]);
 
-  const { data: projects } = useQuery({
-    queryKey: ["projects"],
-    queryFn: () => api.listProjects(),
-  });
-
+  // 切换项目时重置
   useEffect(() => {
-    if (!projectId && projects?.data?.length) setProjectId(projects.data[0].id);
-  }, [projects, projectId]);
+    setSelectedEvent(undefined);
+    setSelectedProperty(undefined);
+  }, [projectId]);
 
   const tsRange = useMemo(() => ({ from: range[0].valueOf(), to: range[1].valueOf() }), [range]);
 
@@ -84,13 +82,6 @@ export default function RealtimePage() {
       />
 
       <ReportControls
-        projects={projects?.data || []}
-        projectId={projectId}
-        onProjectChange={(next) => {
-          setProjectId(next);
-          setSelectedEvent(undefined);
-          setSelectedProperty(undefined);
-        }}
         range={range}
         onRangeChange={setRange}
         comparison="上一窗口"

@@ -8,7 +8,6 @@ import { Search } from "lucide-react";
 import { api, IdentityMapping, UserEvent, UserProfile } from "@/lib/api";
 import { compactProps, compactValue, formatDateTime } from "@/lib/format";
 import { PageHeader } from "@/components/layout/page-header";
-import { ProjectSelect } from "@/features/common/project-select";
 import { EmptyState } from "@/components/data/empty-state";
 import { AnimatedContent } from "@/components/react-bits/animated-content";
 import { CountUp } from "@/components/react-bits/count-up";
@@ -19,20 +18,22 @@ import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { useProjectStore } from "@/stores/project-store";
 
 export function UsersPage() {
   const searchParams = useSearchParams();
-  const [projectId, setProjectId] = useState<number | undefined>();
+  const projectId = useProjectStore((s) => s.projectId);
+  const setProjectId = useProjectStore((s) => s.setProjectId);
   const [query, setQuery] = useState("");
   const [submittedQuery, setSubmittedQuery] = useState("");
   const [selected, setSelected] = useState<UserProfile | null>(null);
   const [deepLinkReady, setDeepLinkReady] = useState(false);
   const [timelinePreset, setTimelinePreset] = useState<{ from?: number; to?: number; event?: string; distinctId?: string }>({});
 
-  const { data: projects } = useQuery({
-    queryKey: ["projects"],
-    queryFn: () => api.listProjects(),
-  });
+  // 切换项目时重置选中用户
+  useEffect(() => {
+    setSelected(null);
+  }, [projectId]);
 
   useEffect(() => {
     if (deepLinkReady) return;
@@ -55,13 +56,7 @@ export function UsersPage() {
       });
     }
     setDeepLinkReady(true);
-  }, [deepLinkReady, searchParams]);
-
-  useEffect(() => {
-    if (!projectId && projects?.data?.length) {
-      setProjectId(projects.data[0].id);
-    }
-  }, [projects, projectId]);
+  }, [deepLinkReady, searchParams, setProjectId]);
 
   const users = useQuery({
     queryKey: ["users", projectId, submittedQuery],
@@ -111,16 +106,6 @@ export function UsersPage() {
       <PageHeader
         title="用户画像"
         description="查看用户属性快照、登录身份和匿名身份链路。"
-        actions={
-          <ProjectSelect
-            projects={projects?.data || []}
-            value={projectId}
-            onChange={(value) => {
-              setProjectId(value);
-              setSelected(null);
-            }}
-          />
-        }
       />
 
       <div className="mb-5 grid gap-3 sm:grid-cols-3">

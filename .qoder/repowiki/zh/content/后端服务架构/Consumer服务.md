@@ -17,16 +17,18 @@
 - [01_schema.sql](file://deploy/init/clickhouse/01_schema.sql)
 - [01_schema.sql](file://deploy/init/postgres/01_schema.sql)
 - [README.md](file://server/consumer/README.md)
+- [project.go](file://server/api/internal/handler/project.go)
+- [governance.go](file://server/api/internal/handler/governance.go)
+- [20260617_governance_metadata.sql](file://deploy/migrations/postgres/20260617_governance_metadata.sql)
 </cite>
 
 ## 更新摘要
 **所做更改**
-- 完全重构Consumer服务架构，从简单的事件处理升级为完整的事件处理流水线
-- 重构Worker系统，分离跟踪事件和用户档案事件处理，提升处理效率
-- 集成元数据同步器，实现实时事件/属性字典和身份映射同步
-- 增强ETL模块，提供更精确的UA解析和地理信息处理
-- 优化ClickHouse写入器，支持用户档案事件的专门处理方法
-- 改进应用初始化流程，采用依赖注入模式
+- 新增事件级模式验证逻辑，支持事件启用状态检查和必带参数验证
+- 集成schema_issues表用于记录和追踪模式验证问题
+- 新增debug_events表用于事件调试和验证结果记录
+- 扩展元数据同步器的schema验证功能，提供完整的事件治理能力
+- 新增API接口用于事件Schema配置和问题查询
 
 ## 目录
 1. [简介](#简介)
@@ -43,7 +45,7 @@
 ## 简介
 本文件面向AeroLog项目中的Consumer服务，提供一份全面的架构文档，重点阐述基于Kafka的事件消费处理流程：消费者组管理、并发工作线程调度、ETL数据转换以及ClickHouse写入。文档将深入解释数据处理管道的每个环节，从Kafka消息解析、数据清洗验证到最终的OLAP存储优化；同时描述Worker的工作机制、任务分配策略和错误重试逻辑，详述ETL转换规则、数据建模与索引优化，并给出性能监控指标、吞吐量调优与故障恢复策略，最后提供配置参数详解与运维最佳实践。
 
-**更新** 基于最新代码变更，Consumer服务已完成完全重构，采用现代化的依赖注入架构，实现了分离的事件处理和实时元数据同步功能。
+**更新** 基于最新代码变更，Consumer服务已完全重构，采用现代化的依赖注入架构，实现了分离的事件处理和实时元数据同步功能。新增事件级模式验证逻辑，支持事件启用状态检查和必带参数验证，提供完整的事件治理能力。
 
 ## 项目结构
 Consumer服务位于server/consumer目录，采用现代Go语言分层设计：
@@ -51,7 +53,7 @@ Consumer服务位于server/consumer目录，采用现代Go语言分层设计：
 - internal/app：应用容器，负责依赖注入和组件协调
 - internal/config：配置加载与环境变量解析
 - internal/worker：Kafka消费者组、消息批处理、写入触发与DLQ落库
-- internal/metadata：元数据同步器，负责事件/属性字典和身份映射的实时同步
+- internal/metadata：元数据同步器，负责事件/属性字典和身份映射的实时同步，现包含完整的schema验证功能
 - internal/etl：UA解析与地理信息占位解析
 - internal/chsink：ClickHouse批量写入器，支持跟踪事件和用户档案事件分别写入
 - pkg/model：事件模型定义，包括EnvelopedEvent与Event结构及序列化方法
@@ -69,6 +71,8 @@ ETL["internal/etl/etl.go<br/>ETL转换"]
 SINK["internal/chsink/sink.go<br/>ClickHouse写入器"]
 MODEL["pkg/model/event.go<br/>事件模型"]
 METRICS["pkg/metrics/metrics.go<br/>指标服务"]
+SCHEMA["schema_issues表<br/>模式验证问题"]
+DEBUG["debug_events表<br/>事件调试记录"]
 end
 CMD --> APP
 APP --> CFG
@@ -79,6 +83,8 @@ WRK --> SINK
 WRK --> MODEL
 WRK --> METRICS
 META --> MODEL
+META --> SCHEMA
+META --> DEBUG
 SINK --> ETL
 SINK --> MODEL
 ```
@@ -88,7 +94,7 @@ SINK --> MODEL
 - [app.go:1-79](file://server/consumer/internal/app/app.go#L1-L79)
 - [config.go:1-53](file://server/consumer/internal/config/config.go#L1-L53)
 - [worker.go:1-211](file://server/consumer/internal/worker/worker.go#L1-L211)
-- [syncer.go:1-273](file://server/consumer/internal/metadata/syncer.go#L1-L273)
+- [syncer.go:1-684](file://server/consumer/internal/metadata/syncer.go#L1-L684)
 - [etl.go:1-90](file://server/consumer/internal/etl/etl.go#L1-L90)
 - [sink.go:1-333](file://server/consumer/internal/chsink/sink.go#L1-L333)
 - [event.go:1-84](file://server/pkg/model/event.go#L1-L84)
@@ -98,12 +104,13 @@ SINK --> MODEL
 - **应用容器**：负责依赖注入、资源管理和生命周期控制
 - **配置模块**：从环境变量读取Kafka、ClickHouse、Postgres、批处理参数与指标端口
 - **Worker**：封装Sarama消费者组，实现消息批处理、超时控制、错误处理与DLQ落库，支持事件分离处理
-- **元数据同步器**：实时同步事件/属性字典和身份映射，支持批量更新和类型推断
+- **元数据同步器**：实时同步事件/属性字典和身份映射，支持批量更新和类型推断，现包含完整的schema验证功能
 - **ETL模块**：UA极简解析与地理信息占位解析，为写入ClickHouse提供上下文字段
 - **ClickHouse写入器**：支持跟踪事件和用户档案事件分别写入events_buffer和users表
 - **指标服务**：注册并暴露Prometheus指标，包括消息计数、flush耗时、批次大小与DLQ计数
+- **Schema验证**：新增事件级模式验证逻辑，支持事件启用状态检查和必带参数验证
 
-**更新** 应用容器采用依赖注入模式，Worker现在集成元数据同步器，支持事件分离处理。
+**更新** 应用容器采用依赖注入模式，Worker现在集成元数据同步器，支持事件分离处理。元数据同步器新增完整的schema验证功能，包含事件启用状态检查、必带参数验证和类型匹配验证。
 
 **章节来源**
 - [app.go:17-55](file://server/consumer/internal/app/app.go#L17-L55)
@@ -112,6 +119,7 @@ SINK --> MODEL
 - [worker.go:158-192](file://server/consumer/internal/worker/worker.go#L158-L192)
 - [syncer.go:15-23](file://server/consumer/internal/metadata/syncer.go#L15-L23)
 - [syncer.go:25-97](file://server/consumer/internal/metadata/syncer.go#L25-L97)
+- [syncer.go:220-356](file://server/consumer/internal/metadata/syncer.go#L220-L356)
 - [etl.go:9-89](file://server/consumer/internal/etl/etl.go#L9-L89)
 - [sink.go:21-47](file://server/consumer/internal/chsink/sink.go#L21-L47)
 - [sink.go:109-168](file://server/consumer/internal/chsink/sink.go#L109-L168)
@@ -125,8 +133,10 @@ Consumer服务的数据处理链路如下：
 - 用户档案事件写入users表，支持profile_set等操作的增量更新
 - 失败事件落至Postgres的event_dlq表，便于离线排查与重放
 - 元数据同步器实时同步事件/属性字典和身份映射，确保治理表的准确性
+- **新增** Schema验证器检查事件启用状态和必带参数，记录到schema_issues表
+- **新增** 调试事件记录到debug_events表，包含验证结果和原因
 
-**更新** 新增用户档案事件处理流程，支持profile_set、profile_increment等操作的增量更新。
+**更新** 新增用户档案事件处理流程，支持profile_set、profile_increment等操作的增量更新。新增schema验证功能，提供完整的事件治理能力。
 
 ```mermaid
 graph TB
@@ -135,6 +145,8 @@ COL --> KAFKA["Kafka events.raw"]
 KAFKA --> CONSUMER["Consumer"]
 CONSUMER --> META["元数据同步器"]
 META --> PG["Postgres 治理表"]
+META --> SCHEMA["schema_issues表"]
+META --> DEBUG["debug_events表"]
 CONSUMER --> ETL["ETL: UA/IP解析"]
 ETL --> CH_BUFFER["ClickHouse events_buffer"]
 CH_BUFFER --> CH_MAIN["ClickHouse events"]
@@ -147,6 +159,7 @@ CONSUMER --> PG_DLQ["Postgres event_dlq"]
 - [worker.go:158-192](file://server/consumer/internal/worker/worker.go#L158-L192)
 - [worker.go:168-191](file://server/consumer/internal/worker/worker.go#L168-L191)
 - [syncer.go:25-97](file://server/consumer/internal/metadata/syncer.go#L25-L97)
+- [syncer.go:220-356](file://server/consumer/internal/metadata/syncer.go#L220-L356)
 - [sink.go:49-107](file://server/consumer/internal/chsink/sink.go#L49-L107)
 - [sink.go:109-168](file://server/consumer/internal/chsink/sink.go#L109-L168)
 - [01_schema.sql:44-49](file://deploy/init/clickhouse/01_schema.sql#L44-L49)
@@ -198,7 +211,7 @@ Worker负责Kafka消费者组的生命周期管理、消息批处理与写入触
 - **错误处理**：写入ClickHouse失败时记录日志并调用DLQ落库，同时更新指标
 - **上下文控制**：使用session.Context监听取消信号，优雅退出
 
-**更新** Worker现在集成元数据同步器，在flushBatch方法中先执行元数据同步，然后分离处理跟踪事件和用户档案事件。
+**更新** Worker现在集成元数据同步器，在flushBatch方法中先执行元数据同步，然后分离处理跟踪事件和用户档案事件。元数据同步器新增完整的schema验证功能，包含事件启用状态检查和必带参数验证。
 
 ```mermaid
 sequenceDiagram
@@ -215,6 +228,7 @@ H->>W : "加入batch"
 alt "batch满或定时器触发"
 H->>W : "flush()"
 W->>M : "Sync(ctx, batch)"
+M->>M : "validateSchemas(ctx, events)"
 M-->>W : "元数据同步完成"
 W->>W : "分离跟踪事件和用户档案事件"
 W->>S : "WriteBatch(ctx, tracks)"
@@ -236,19 +250,22 @@ end
 - [worker.go:158-192](file://server/consumer/internal/worker/worker.go#L158-L192)
 - [worker.go:195-210](file://server/consumer/internal/worker/worker.go#L195-L210)
 - [syncer.go:25-97](file://server/consumer/internal/metadata/syncer.go#L25-L97)
+- [syncer.go:220-356](file://server/consumer/internal/metadata/syncer.go#L220-L356)
 
 **章节来源**
 - [worker.go:41-211](file://server/consumer/internal/worker/worker.go#L41-L211)
 
 ### 元数据同步器分析
-元数据同步器负责实时同步事件/属性字典和身份映射，确保治理表的准确性：
+元数据同步器负责实时同步事件/属性字典和身份映射，确保治理表的准确性，并新增完整的schema验证功能：
 - **事件定义同步**：收集事件名称，维护首次和最后观察时间
 - **属性定义同步**：收集属性名称和类型，支持数据类型推断和合并
 - **身份映射同步**：建立匿名ID到用户ID的映射关系
 - **批量操作**：使用pgx.Batch进行批量插入和更新
 - **类型推断**：智能推断属性数据类型，支持混合类型处理
+- **Schema验证**：新增事件级模式验证逻辑，检查事件启用状态和必带参数
+- **问题记录**：将验证问题记录到schema_issues表，支持调试和监控
 
-**更新** 新增独立的元数据同步器组件，提供完整的事件治理功能。
+**更新** 新增独立的元数据同步器组件，提供完整的事件治理功能。新增schema验证功能，包含事件启用状态检查、必带参数验证和类型匹配验证。
 
 ```mermaid
 flowchart TD
@@ -263,16 +280,57 @@ InferTypes --> MergeProps["合并属性定义"]
 MergeEvents --> Batch["批量操作"]
 MergeProps --> Batch
 MergeIdentities --> Batch
-Batch --> Execute["执行SQL"]
-Execute --> End(["同步完成"])
+Batch --> Validate["Schema验证"]
+Validate --> Issues["记录验证问题"]
+Validate --> Debug["记录调试事件"]
+Issues --> SchemaTable["schema_issues表"]
+Debug --> DebugTable["debug_events表"]
+SchemaTable --> End(["同步完成"])
+DebugTable --> End
 ```
 
 **图表来源**
 - [syncer.go:25-97](file://server/consumer/internal/metadata/syncer.go#L25-L97)
+- [syncer.go:220-356](file://server/consumer/internal/metadata/syncer.go#L220-L356)
+- [syncer.go:406-458](file://server/consumer/internal/metadata/syncer.go#L406-L458)
 - [syncer.go:204-239](file://server/consumer/internal/metadata/syncer.go#L204-L239)
 
 **章节来源**
-- [syncer.go:15-273](file://server/consumer/internal/metadata/syncer.go#L15-L273)
+- [syncer.go:15-684](file://server/consumer/internal/metadata/syncer.go#L15-L684)
+
+### Schema验证规则
+元数据同步器新增的Schema验证功能包含以下规则：
+- **事件启用状态检查**：当事件状态为0（禁用）时，记录"事件已被禁用"问题
+- **必带参数验证**：检查事件定义中的requiredProps，缺失必带参数时记录"事件必带参数缺失"问题
+- **属性必填验证**：检查属性定义中的schema_required标记，缺失必填属性时记录"必填参数缺失"问题
+- **类型匹配验证**：当属性类型与期望类型不匹配时记录"参数类型不符合 Schema"问题
+- **枚举值验证**：当属性值不在允许的枚举范围内时记录"参数值不在允许枚举内"问题
+
+**更新** 新增完整的事件级模式验证逻辑，提供多维度的事件质量保证。
+
+```mermaid
+flowchart TD
+Start(["开始Schema验证"]) --> LoadDefs["加载事件和属性定义"]
+LoadDefs --> CheckEventStatus["检查事件启用状态"]
+CheckEventStatus --> StatusEnabled{"事件启用?"}
+StatusEnabled --> |否| RecordDisabled["记录禁用事件问题"]
+StatusEnabled --> |是| CheckRequiredProps["检查必带参数"]
+RecordDisabled --> NextEvent["下一个事件"]
+CheckRequiredProps --> CheckEventProps["检查事件属性"]
+CheckEventProps --> TypeMatch["类型匹配验证"]
+TypeMatch --> EnumCheck["枚举值验证"]
+EnumCheck --> RecordIssues["记录验证问题"]
+RecordIssues --> NextEvent
+NextEvent --> End(["验证完成"])
+```
+
+**图表来源**
+- [syncer.go:220-356](file://server/consumer/internal/metadata/syncer.go#L220-L356)
+- [syncer.go:260-296](file://server/consumer/internal/metadata/syncer.go#L260-L296)
+- [syncer.go:298-353](file://server/consumer/internal/metadata/syncer.go#L298-L353)
+
+**章节来源**
+- [syncer.go:220-356](file://server/consumer/internal/metadata/syncer.go#L220-L356)
 
 ### ETL转换规则
 ETL模块提供两类富化能力：
@@ -383,7 +441,7 @@ Consumer服务内部依赖清晰，职责分离明确：
 - **etl**依赖正则表达式与strings
 - **metrics**提供通用指标注册与HTTP服务
 
-**更新** 新增**app**包作为依赖注入容器，Worker现在依赖元数据同步器。
+**更新** 新增**app**包作为依赖注入容器，Worker现在依赖元数据同步器。元数据同步器新增schema验证功能，依赖Postgres连接池和事件模型。
 
 ```mermaid
 graph TB
@@ -398,6 +456,8 @@ WRK --> MODEL["pkg/model/event.go"]
 SINK --> ETL["etl/etl.go"]
 SINK --> MODEL
 META --> MODEL
+META --> SCHEMA["schema_issues表"]
+META --> DEBUG["debug_events表"]
 ```
 
 **图表来源**
@@ -420,13 +480,15 @@ META --> MODEL
 - **指标监控**：通过flush耗时与批次大小直方图定位瓶颈
 - **缓冲表设计**：events_buffer使用Buffer引擎，最小化写入延迟并自动刷新
 - **用户档案增量更新**：users表使用ReplacingMergeTree，支持profile_set等操作的增量更新
+- **Schema验证性能**：批量加载和缓存事件/属性定义，减少数据库查询开销
 - **建议优化方向**：
   - 根据QPS调整BatchSize与BatchMs
   - 监控ClickHouse merges与parts，必要时引入clickhouse-exporter
   - 对DLQ持续率建立告警，防止积压
   - 监控元数据同步延迟，确保治理表实时性
+  - 监控schema_issues表增长，及时处理验证问题
 
-**更新** 新增用户档案事件的增量更新机制和元数据同步性能考虑。
+**更新** 新增用户档案事件的增量更新机制和元数据同步性能考虑。新增Schema验证功能的性能优化建议。
 
 ## 故障排查指南
 - **Kafka消费失败**：检查消费者组是否正常、topic是否存在、broker连通性
@@ -434,20 +496,23 @@ META --> MODEL
 - **DLQ堆积**：检查event_dlq表，定位失败原因并修复后重放
 - **元数据同步失败**：检查Postgres连接和SQL执行情况，确认治理表结构
 - **用户档案更新异常**：检查users表的profile操作，确认updated_at字段正确更新
+- **Schema验证问题**：检查schema_issues表，查看具体验证错误和事件详情
+- **调试事件异常**：检查debug_events表，确认事件验证结果和原因
 - **指标异常**：结合Go runtime与process指标判断服务健康度
 
-**更新** 新增用户档案事件处理和元数据同步相关的故障排查指导。
+**更新** 新增Schema验证和调试事件相关的故障排查指导。
 
 **章节来源**
 - [worker.go:107-112](file://server/consumer/internal/worker/worker.go#L107-L112)
 - [syncer.go:25-97](file://server/consumer/internal/metadata/syncer.go#L25-L97)
+- [syncer.go:406-458](file://server/consumer/internal/metadata/syncer.go#L406-L458)
 - [sink.go:109-168](file://server/consumer/internal/chsink/sink.go#L109-L168)
 - [01_schema.sql:94-101](file://deploy/init/postgres/01_schema.sql#L94-L101)
 
 ## 结论
-Consumer服务通过现代化的依赖注入架构与完善的指标体系，实现了从Kafka到ClickHouse的高效事件处理流水线。其批处理与缓冲表设计兼顾了低延迟与高吞吐，DLQ机制保障了数据可靠性。新集成的元数据同步器进一步增强了事件治理能力，实现了事件/属性字典和身份映射的实时同步。用户档案事件的专门处理方法支持profile_set、profile_increment等操作的增量更新，提升了数据一致性。配合Prometheus与Grafana的可观测性方案，能够有效支撑从MVP到大规模场景的演进。
+Consumer服务通过现代化的依赖注入架构与完善的指标体系，实现了从Kafka到ClickHouse的高效事件处理流水线。其批处理与缓冲表设计兼顾了低延迟与高吞吐，DLQ机制保障了数据可靠性。新集成的元数据同步器进一步增强了事件治理能力，实现了事件/属性字典和身份映射的实时同步。新增的Schema验证功能提供了完整的事件质量保证，包含事件启用状态检查、必带参数验证和类型匹配验证。用户档案事件的专门处理方法支持profile_set、profile_increment等操作的增量更新，提升了数据一致性。配合Prometheus与Grafana的可观测性方案，能够有效支撑从MVP到大规模场景的演进。
 
-**更新** 重构后的Consumer服务采用现代化架构，显著提升了系统的治理能力、可维护性和扩展性。
+**更新** 重构后的Consumer服务采用现代化架构，显著提升了系统的治理能力、可维护性和扩展性。新增的Schema验证功能进一步增强了事件质量保证能力。
 
 ## 附录
 
@@ -474,12 +539,35 @@ Consumer服务通过现代化的依赖注入架构与完善的指标体系，实
 - **kminion监控**：结合kminion监控消费者组lag，及时发现积压
 - **元数据同步监控**：监控元数据同步延迟，确保治理表实时性
 - **用户档案一致性**：定期检查users表的数据质量，维护用户档案的准确性
+- **Schema验证监控**：监控schema_issues表增长，及时处理验证问题
+- **调试事件分析**：定期分析debug_events表，优化事件Schema配置
 - **性能调优**：根据实际负载调整批处理参数和连接池配置
 
-**更新** 新增用户档案事件处理和元数据同步相关的运维建议。
+**更新** 新增Schema验证和调试事件相关的运维建议。
 
 **章节来源**
 - [observability.md:1-67](file://docs/observability.md#L1-L67)
 - [docker-compose.yml:1-147](file://deploy/docker-compose.yml#L1-L147)
 - [syncer.go:25-97](file://server/consumer/internal/metadata/syncer.go#L25-L97)
 - [sink.go:109-168](file://server/consumer/internal/chsink/sink.go#L109-L168)
+
+### API接口说明
+- **事件Schema配置**：/projects/:id/events/:event/schema，支持设置必带参数和事件状态
+- **属性Schema配置**：/projects/:id/properties/:property/schema，支持设置数据类型、必填和枚举值
+- **调试事件查询**：/projects/:id/debug/events，查询事件验证结果和原因
+- **Schema问题查询**：/projects/:id/debug/schema_issues，查询Schema验证问题详情
+
+**章节来源**
+- [project.go:146-204](file://server/api/internal/handler/project.go#L146-L204)
+- [governance.go:87-158](file://server/api/internal/handler/governance.go#L87-L158)
+- [governance.go:160-285](file://server/api/internal/handler/governance.go#L160-L285)
+
+### 数据库迁移
+- **治理元数据迁移**：20260617_governance_metadata.sql，添加schema_required_props、schema_locked等列
+- **Schema验证表**：schema_issues表用于记录验证问题，debug_events表用于记录调试事件
+- **索引优化**：为schema_issues和debug_events表创建复合索引，支持按项目和时间查询
+
+**章节来源**
+- [20260617_governance_metadata.sql](file://deploy/migrations/postgres/20260617_governance_metadata.sql)
+- [syncer.go:169-218](file://server/consumer/internal/metadata/syncer.go#L169-L218)
+- [syncer.go:462-511](file://server/consumer/internal/metadata/syncer.go#L462-L511)

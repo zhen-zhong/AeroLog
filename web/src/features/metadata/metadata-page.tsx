@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, EventDefinition, PropertyDefinition } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
 import { PageHeader } from "@/components/layout/page-header";
-import { ProjectSelect } from "@/features/common/project-select";
+import { useProjectStore } from "@/stores/project-store";
 import { EmptyState } from "@/components/data/empty-state";
 import { AnimatedContent } from "@/components/react-bits/animated-content";
 import { CountUp } from "@/components/react-bits/count-up";
@@ -18,19 +18,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 type MetadataView = "events" | "eventProps" | "userProps";
 
 export function MetadataPage() {
-  const [projectId, setProjectId] = useState<number | undefined>();
+  const projectId = useProjectStore((s) => s.projectId);
   const [view, setView] = useState<MetadataView>("events");
-
-  const { data: projects } = useQuery({
-    queryKey: ["projects"],
-    queryFn: () => api.listProjects(),
-  });
-
-  useEffect(() => {
-    if (!projectId && projects?.data?.length) {
-      setProjectId(projects.data[0].id);
-    }
-  }, [projects, projectId]);
 
   const events = useQuery({
     queryKey: ["events", projectId],
@@ -66,13 +55,6 @@ export function MetadataPage() {
       <PageHeader
         title="数据治理"
         description="自动发现事件、事件属性和用户属性，沉淀可确认、可解释、可治理的数据字典。"
-        actions={
-          <ProjectSelect
-            projects={projects?.data || []}
-            value={projectId}
-            onChange={setProjectId}
-          />
-        }
       />
 
       <div className="mb-5 grid gap-3 sm:grid-cols-3">

@@ -10,7 +10,6 @@ import {
   ChartPanel,
   DateTimeRange,
   EmptyAnalysis,
-  ProjectPicker,
 } from "@/features/analytics/analytics-ui";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -26,6 +25,7 @@ import {
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api, QueryDimension, QueryFilter } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { useProjectStore } from "@/stores/project-store";
 
 type DraftFilter = {
   id: string;
@@ -38,7 +38,7 @@ type DraftFilter = {
 const DRAFT_STORAGE_KEY = "aerolog:query-builder:draft";
 
 export default function QueryBuilderPage() {
-  const [projectId, setProjectId] = useState<number | undefined>();
+  const projectId = useProjectStore((s) => s.projectId);
   const [range, setRange] = useState<[Dayjs, Dayjs]>([
     dayjs().subtract(7, "day").startOf("day"),
     dayjs().endOf("day"),
@@ -50,15 +50,6 @@ export default function QueryBuilderPage() {
   ]);
   const [draftReady, setDraftReady] = useState(false);
 
-  const { data: projects } = useQuery({
-    queryKey: ["projects"],
-    queryFn: () => api.listProjects(),
-  });
-
-  useEffect(() => {
-    if (!projectId && projects?.data?.length) setProjectId(projects.data[0].id);
-  }, [projects, projectId]);
-
   useEffect(() => {
     try {
       const raw = window.localStorage.getItem(DRAFT_STORAGE_KEY);
@@ -67,14 +58,12 @@ export default function QueryBuilderPage() {
         return;
       }
       const draft = JSON.parse(raw) as {
-        projectId?: number;
         from?: number;
         to?: number;
         events?: string[];
         dimensions?: QueryDimension[];
         filters?: DraftFilter[];
       };
-      if (draft.projectId) setProjectId(draft.projectId);
       if (draft.from && draft.to) setRange([dayjs(draft.from), dayjs(draft.to)]);
       if (Array.isArray(draft.events)) setEvents(draft.events);
       if (Array.isArray(draft.dimensions) && draft.dimensions.length) setDimensions(draft.dimensions);
@@ -93,7 +82,6 @@ export default function QueryBuilderPage() {
     window.localStorage.setItem(
       DRAFT_STORAGE_KEY,
       JSON.stringify({
-        projectId,
         from: range[0].valueOf(),
         to: range[1].valueOf(),
         events,
@@ -101,7 +89,7 @@ export default function QueryBuilderPage() {
         filters,
       }),
     );
-  }, [projectId, range, events, dimensions, filters, draftReady]);
+  }, [range, events, dimensions, filters, draftReady]);
 
   const tsRange = useMemo(() => ({ from: range[0].valueOf(), to: range[1].valueOf() }), [range]);
 
@@ -179,10 +167,6 @@ export default function QueryBuilderPage() {
         <div className="grid gap-5">
           <Card>
             <CardContent className="grid gap-4 pt-4 sm:pt-4">
-              <div className="grid gap-1.5">
-                <div className="text-sm font-medium">项目</div>
-                <ProjectPicker projects={projects?.data || []} value={projectId} onChange={setProjectId} className="sm:w-full" />
-              </div>
               <DateTimeRange value={range} onChange={setRange} />
               <div>
                 <div className="mb-2 flex items-center justify-between gap-3">
