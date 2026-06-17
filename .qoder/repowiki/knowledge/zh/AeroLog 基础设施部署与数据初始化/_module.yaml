@@ -1,0 +1,19 @@
+schema_version: 1
+module_path: infra_deploy
+title: AeroLog 基础设施部署与数据初始化
+scope:
+    - deploy/
+source_files: []
+depends_on: []
+related_to:
+    - path: backend_services
+    - path: backend_services/api_service
+    - path: backend_services/consumer_service
+    - path: backend_services/shared_pkg
+    - path: web_console/admin
+    - path: sdk_multi_platform/ios_sdk
+    - path: web_console
+    - path: sdk_multi_platform/android_sdk
+    - path: sdk_multi_platform/web_sdk
+    - path: web_console/console
+    - path: web_console/shared_ui

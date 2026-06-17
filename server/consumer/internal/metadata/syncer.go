@@ -3,6 +3,7 @@ package metadata
 
 import (
 	"context"
+	"encoding/json"
 	"math"
 	"strings"
 	"time"
@@ -26,6 +27,20 @@ func New(pg *pgxpool.Pool) *Syncer {
 func (s *Syncer) Sync(ctx context.Context, events []*model.EnvelopedEvent) error {
 	if s == nil || s.pg == nil || len(events) == 0 {
 		return nil
+	}
+	if err := s.ensureSchemaSupport(ctx); err != nil {
+		return err
+	}
+
+	issuesByIndex, issues, err := s.validateSchemas(ctx, events)
+	if err != nil {
+		return err
+	}
+	if err := s.insertDebugEvents(ctx, events, issuesByIndex); err != nil {
+		return err
+	}
+	if err := s.insertSchemaIssues(ctx, issues); err != nil {
+		return err
 	}
 
 	eventDefs := map[eventKey]seenAt{}
@@ -122,6 +137,322 @@ type seenProp struct {
 	first    time.Time
 	last     time.Time
 	dataType string
+}
+
+type schemaProperty struct {
+	name     string
+	dataType string
+	required bool
+	enums    []string
+	locked   bool
+}
+
+type schemaIssue struct {
+	projectID    uint32
+	event        string
+	property     string
+	expectedType string
+	actualType   string
+	severity     string
+	message      string
+	payload      []byte
+	observedAt   time.Time
+}
+
+func (s *Syncer) ensureSchemaSupport(ctx context.Context) error {
+	_, err := s.pg.Exec(ctx, `
+		ALTER TABLE property_definitions ADD COLUMN IF NOT EXISTS schema_required BOOLEAN NOT NULL DEFAULT false;
+		ALTER TABLE property_definitions ADD COLUMN IF NOT EXISTS schema_locked BOOLEAN NOT NULL DEFAULT false;
+		ALTER TABLE property_definitions ADD COLUMN IF NOT EXISTS enum_values JSONB NOT NULL DEFAULT '[]'::jsonb;
+
+		CREATE TABLE IF NOT EXISTS debug_events (
+			id           BIGSERIAL PRIMARY KEY,
+			project_id   BIGINT       NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+			event        VARCHAR(128),
+			event_type   VARCHAR(32)   NOT NULL,
+			distinct_id  VARCHAR(255),
+			user_id      VARCHAR(255),
+			anonymous_id VARCHAR(255),
+			result       VARCHAR(32)   NOT NULL DEFAULT 'accepted',
+			reason       TEXT,
+			payload      JSONB         NOT NULL,
+			received_at  TIMESTAMPTZ,
+			created_at   TIMESTAMPTZ   NOT NULL DEFAULT now()
+		);
+
+		CREATE INDEX IF NOT EXISTS idx_debug_events_project_created
+			ON debug_events(project_id, created_at DESC);
+		CREATE INDEX IF NOT EXISTS idx_debug_events_project_event
+			ON debug_events(project_id, event, created_at DESC);
+
+		CREATE TABLE IF NOT EXISTS schema_issues (
+			id            BIGSERIAL PRIMARY KEY,
+			project_id    BIGINT       NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+			event         VARCHAR(128),
+			property      VARCHAR(128),
+			expected_type VARCHAR(32),
+			actual_type   VARCHAR(32),
+			severity      VARCHAR(16)   NOT NULL DEFAULT 'warning',
+			message       TEXT          NOT NULL,
+			payload       JSONB         NOT NULL,
+			observed_at   TIMESTAMPTZ,
+			created_at    TIMESTAMPTZ   NOT NULL DEFAULT now()
+		);
+
+		CREATE INDEX IF NOT EXISTS idx_schema_issues_project_created
+			ON schema_issues(project_id, created_at DESC);
+		CREATE INDEX IF NOT EXISTS idx_schema_issues_project_property
+			ON schema_issues(project_id, property, created_at DESC);
+	`)
+	return err
+}
+
+func (s *Syncer) validateSchemas(ctx context.Context, events []*model.EnvelopedEvent) (map[int][]schemaIssue, []schemaIssue, error) {
+	projectIDs := map[uint32]struct{}{}
+	for _, env := range events {
+		if env != nil {
+			projectIDs[env.ProjectID] = struct{}{}
+		}
+	}
+	defsByProject := map[uint32]map[string]schemaProperty{}
+	for projectID := range projectIDs {
+		defs, err := s.loadSchemaProperties(ctx, projectID)
+		if err != nil {
+			return nil, nil, err
+		}
+		defsByProject[projectID] = defs
+	}
+
+	byIndex := map[int][]schemaIssue{}
+	all := []schemaIssue{}
+	for idx, env := range events {
+		if env == nil || env.Event.Type != model.EventTypeTrack {
+			continue
+		}
+		defs := defsByProject[env.ProjectID]
+		if len(defs) == 0 {
+			continue
+		}
+		payload, _ := json.Marshal(env)
+		at := observedAt(env)
+		props := env.Event.Properties
+		if props == nil {
+			props = map[string]interface{}{}
+		}
+
+		for name, def := range defs {
+			_, ok := props[name]
+			if def.required && !ok {
+				issue := schemaIssue{
+					projectID:    env.ProjectID,
+					event:        env.Event.Event,
+					property:     name,
+					expectedType: def.dataType,
+					actualType:   "missing",
+					severity:     "error",
+					message:      "必填参数缺失",
+					payload:      payload,
+					observedAt:   at,
+				}
+				byIndex[idx] = append(byIndex[idx], issue)
+				all = append(all, issue)
+			}
+		}
+
+		for name, value := range props {
+			def, ok := defs[name]
+			if !ok {
+				continue
+			}
+			actual := inferType(value)
+			if isStrictExpectedType(def.dataType) && actual != "unknown" && actual != def.dataType {
+				issue := schemaIssue{
+					projectID:    env.ProjectID,
+					event:        env.Event.Event,
+					property:     name,
+					expectedType: def.dataType,
+					actualType:   actual,
+					severity:     severityForProperty(def),
+					message:      "参数类型不符合 Schema",
+					payload:      payload,
+					observedAt:   at,
+				}
+				byIndex[idx] = append(byIndex[idx], issue)
+				all = append(all, issue)
+			}
+			if len(def.enums) > 0 && !valueInEnum(value, def.enums) {
+				issue := schemaIssue{
+					projectID:    env.ProjectID,
+					event:        env.Event.Event,
+					property:     name,
+					expectedType: def.dataType,
+					actualType:   actual,
+					severity:     "warning",
+					message:      "参数值不在允许枚举内",
+					payload:      payload,
+					observedAt:   at,
+				}
+				byIndex[idx] = append(byIndex[idx], issue)
+				all = append(all, issue)
+			}
+		}
+	}
+	return byIndex, all, nil
+}
+
+func (s *Syncer) loadSchemaProperties(ctx context.Context, projectID uint32) (map[string]schemaProperty, error) {
+	rows, err := s.pg.Query(ctx, `
+		SELECT name, data_type, schema_required, enum_values, schema_locked
+		FROM property_definitions
+		WHERE project_id=$1 AND scope='event' AND status=1
+	`, int64(projectID))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := map[string]schemaProperty{}
+	for rows.Next() {
+		var p schemaProperty
+		var raw []byte
+		if err := rows.Scan(&p.name, &p.dataType, &p.required, &raw, &p.locked); err != nil {
+			return nil, err
+		}
+		p.enums = parseStringEnums(raw)
+		out[p.name] = p
+	}
+	return out, rows.Err()
+}
+
+func (s *Syncer) insertDebugEvents(ctx context.Context, events []*model.EnvelopedEvent, issuesByIndex map[int][]schemaIssue) error {
+	var batch pgx.Batch
+	queued := 0
+	for idx, env := range events {
+		if env == nil {
+			continue
+		}
+		payload, _ := json.Marshal(env)
+		result := "accepted"
+		reason := ""
+		if issues := issuesByIndex[idx]; len(issues) > 0 {
+			result = "schema_warning"
+			reason = summarizeIssues(issues)
+		}
+		batch.Queue(`
+			INSERT INTO debug_events(project_id, event, event_type, distinct_id, user_id, anonymous_id, result, reason, payload, received_at)
+			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+		`, int64(env.ProjectID), env.Event.Event, string(env.Event.Type), env.Event.DistinctID, env.Event.UserID, env.Event.AnonymousID, result, reason, payload, observedAt(env))
+		queued++
+	}
+	if queued == 0 {
+		return nil
+	}
+	br := s.pg.SendBatch(ctx, &batch)
+	defer br.Close()
+	for i := 0; i < queued; i++ {
+		if _, err := br.Exec(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Syncer) insertSchemaIssues(ctx context.Context, issues []schemaIssue) error {
+	if len(issues) == 0 {
+		return nil
+	}
+	var batch pgx.Batch
+	for _, issue := range issues {
+		batch.Queue(`
+			INSERT INTO schema_issues(project_id, event, property, expected_type, actual_type, severity, message, payload, observed_at)
+			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
+		`, int64(issue.projectID), issue.event, issue.property, issue.expectedType, issue.actualType, issue.severity, issue.message, issue.payload, issue.observedAt)
+	}
+	br := s.pg.SendBatch(ctx, &batch)
+	defer br.Close()
+	for range issues {
+		if _, err := br.Exec(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func parseStringEnums(raw []byte) []string {
+	if len(raw) == 0 {
+		return nil
+	}
+	var values []string
+	if err := json.Unmarshal(raw, &values); err == nil {
+		return values
+	}
+	var loose []interface{}
+	if err := json.Unmarshal(raw, &loose); err != nil {
+		return nil
+	}
+	out := make([]string, 0, len(loose))
+	for _, v := range loose {
+		out = append(out, strings.TrimSpace(toSchemaString(v)))
+	}
+	return out
+}
+
+func toSchemaString(v interface{}) string {
+	switch x := v.(type) {
+	case nil:
+		return ""
+	case string:
+		return x
+	case bool:
+		if x {
+			return "true"
+		}
+		return "false"
+	default:
+		raw, _ := json.Marshal(x)
+		return string(raw)
+	}
+}
+
+func valueInEnum(v interface{}, enums []string) bool {
+	actual := strings.TrimSpace(toSchemaString(v))
+	for _, allowed := range enums {
+		if strings.TrimSpace(allowed) == actual {
+			return true
+		}
+	}
+	return false
+}
+
+func isStrictExpectedType(dataType string) bool {
+	switch dataType {
+	case "", "unknown", "mixed":
+		return false
+	default:
+		return true
+	}
+}
+
+func severityForProperty(def schemaProperty) string {
+	if def.locked || def.required {
+		return "error"
+	}
+	return "warning"
+}
+
+func summarizeIssues(issues []schemaIssue) string {
+	if len(issues) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(issues))
+	for i, issue := range issues {
+		if i >= 3 {
+			parts = append(parts, "...")
+			break
+		}
+		parts = append(parts, issue.property+":"+issue.message)
+	}
+	return strings.Join(parts, "; ")
 }
 
 func mergeSeen[T comparable](m map[T]seenAt, k T, at time.Time) {
@@ -252,6 +583,7 @@ INSERT INTO property_definitions(project_id, name, scope, data_type, first_seen,
 VALUES($1, $2, $3, $4, $5, $6)
 ON CONFLICT (project_id, name, scope) DO UPDATE SET
 	data_type = CASE
+		WHEN property_definitions.schema_locked THEN property_definitions.data_type
 		WHEN property_definitions.data_type = EXCLUDED.data_type THEN property_definitions.data_type
 		WHEN property_definitions.data_type = 'unknown' THEN EXCLUDED.data_type
 		WHEN EXCLUDED.data_type = 'unknown' THEN property_definitions.data_type

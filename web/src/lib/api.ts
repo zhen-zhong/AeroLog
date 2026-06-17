@@ -42,9 +42,37 @@ export interface PropertyDefinition {
     data_type: string;
     scope: "event" | "user";
     description: string;
+    schema_required: boolean;
+    schema_locked: boolean;
+    enum_values: string[];
     status: number;
     first_seen?: string;
     last_seen?: string;
+}
+export interface DebugEvent {
+    id: number;
+    event: string;
+    event_type: string;
+    distinct_id: string;
+    user_id: string;
+    anonymous_id: string;
+    result: "accepted" | "schema_warning" | "rejected";
+    reason: string;
+    payload: Record<string, unknown>;
+    received_at?: string;
+    created_at: string;
+}
+export interface SchemaIssue {
+    id: number;
+    event: string;
+    property: string;
+    expected_type: string;
+    actual_type: string;
+    severity: "warning" | "error";
+    message: string;
+    payload: Record<string, unknown>;
+    observed_at?: string;
+    created_at: string;
 }
 export interface IdentityMapping {
     id: number;
@@ -151,6 +179,46 @@ export const api = {
         const q = new URLSearchParams();
         if (params?.scope) q.set("scope", params.scope);
         return req<ApiList<PropertyDefinition>>(`/projects/${id}/properties?${q}`);
+    },
+    updatePropertySchema: (
+        id: number | string,
+        property: string,
+        body: {
+            scope?: "event" | "user";
+            data_type: string;
+            schema_required?: boolean;
+            enum_values?: string[];
+            display_name?: string;
+            description?: string;
+        },
+    ) =>
+        req<ApiOne<PropertyDefinition>>(
+            `/projects/${id}/properties/${encodeURIComponent(property)}/schema`,
+            {
+                method: "PUT",
+                body: JSON.stringify(body),
+            },
+        ),
+    debugEvents: (
+        id: number | string,
+        params?: { event?: string; result?: string; distinct_id?: string; limit?: number },
+    ) => {
+        const q = new URLSearchParams();
+        if (params?.event) q.set("event", params.event);
+        if (params?.result) q.set("result", params.result);
+        if (params?.distinct_id) q.set("distinct_id", params.distinct_id);
+        if (params?.limit) q.set("limit", String(params.limit));
+        return req<ApiList<DebugEvent>>(`/projects/${id}/debug/events?${q}`);
+    },
+    schemaIssues: (
+        id: number | string,
+        params?: { event?: string; property?: string; limit?: number },
+    ) => {
+        const q = new URLSearchParams();
+        if (params?.event) q.set("event", params.event);
+        if (params?.property) q.set("property", params.property);
+        if (params?.limit) q.set("limit", String(params.limit));
+        return req<ApiList<SchemaIssue>>(`/projects/${id}/debug/schema_issues?${q}`);
     },
     listIdentities: (
         id: number | string,

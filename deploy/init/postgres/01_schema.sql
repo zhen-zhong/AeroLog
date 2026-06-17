@@ -59,6 +59,9 @@ CREATE TABLE IF NOT EXISTS property_definitions (
     data_type    VARCHAR(32)  NOT NULL DEFAULT 'string', -- string|number|bool|datetime|list|object|mixed|unknown
     scope        VARCHAR(32)  NOT NULL DEFAULT 'event',  -- event|user
     description  TEXT,
+    schema_required BOOLEAN   NOT NULL DEFAULT false,
+    schema_locked   BOOLEAN   NOT NULL DEFAULT false,
+    enum_values  JSONB        NOT NULL DEFAULT '[]'::jsonb,
     status       SMALLINT     NOT NULL DEFAULT 1,
     first_seen   TIMESTAMPTZ,
     last_seen    TIMESTAMPTZ,
@@ -71,6 +74,9 @@ ALTER TABLE property_definitions ADD COLUMN IF NOT EXISTS status SMALLINT NOT NU
 ALTER TABLE property_definitions ADD COLUMN IF NOT EXISTS first_seen TIMESTAMPTZ;
 ALTER TABLE property_definitions ADD COLUMN IF NOT EXISTS last_seen TIMESTAMPTZ;
 ALTER TABLE property_definitions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
+ALTER TABLE property_definitions ADD COLUMN IF NOT EXISTS schema_required BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE property_definitions ADD COLUMN IF NOT EXISTS schema_locked BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE property_definitions ADD COLUMN IF NOT EXISTS enum_values JSONB NOT NULL DEFAULT '[]'::jsonb;
 
 -- 匿名 ID 与登录用户 ID 绑定关系，用于查询时把匿名行为归并到同一真实用户。
 CREATE TABLE IF NOT EXISTS identity_mappings (
@@ -99,6 +105,48 @@ CREATE TABLE IF NOT EXISTS event_dlq (
     reason      TEXT      NOT NULL,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- SDK Debugger：保留最近消费到的 SDK 上报，用于排查 SDK 是否正常、属性是否符合 Schema。
+CREATE TABLE IF NOT EXISTS debug_events (
+    id           BIGSERIAL PRIMARY KEY,
+    project_id   BIGINT       NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    event        VARCHAR(128),
+    event_type   VARCHAR(32)   NOT NULL,
+    distinct_id  VARCHAR(255),
+    user_id      VARCHAR(255),
+    anonymous_id VARCHAR(255),
+    result       VARCHAR(32)   NOT NULL DEFAULT 'accepted', -- accepted|schema_warning|rejected
+    reason       TEXT,
+    payload      JSONB         NOT NULL,
+    received_at  TIMESTAMPTZ,
+    created_at   TIMESTAMPTZ   NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_debug_events_project_created
+    ON debug_events(project_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_debug_events_project_event
+    ON debug_events(project_id, event, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS schema_issues (
+    id            BIGSERIAL PRIMARY KEY,
+    project_id    BIGINT       NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    event         VARCHAR(128),
+    property      VARCHAR(128),
+    expected_type VARCHAR(32),
+    actual_type   VARCHAR(32),
+    severity      VARCHAR(16)   NOT NULL DEFAULT 'warning',
+    message       TEXT          NOT NULL,
+    payload       JSONB         NOT NULL,
+    observed_at   TIMESTAMPTZ,
+    created_at    TIMESTAMPTZ   NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_schema_issues_project_created
+    ON schema_issues(project_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_schema_issues_project_property
+    ON schema_issues(project_id, property, created_at DESC);
 
 -- 看板
 CREATE TABLE IF NOT EXISTS dashboards (

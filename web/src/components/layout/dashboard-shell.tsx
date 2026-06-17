@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import {
   BarChart3,
   Boxes,
+  Bug,
   CircleDot,
   FolderKanban,
   GitBranch,
@@ -29,6 +30,7 @@ const navGroups = [
       { href: "/console/realtime", label: "实时", icon: CircleDot },
       { href: "/console/event", label: "事件", icon: BarChart3 },
       { href: "/console/query", label: "查询", icon: Boxes },
+      { href: "/console/debugger", label: "调试器", icon: Bug },
       { href: "/console/conversions", label: "转化", icon: Waypoints },
       { href: "/console/funnel", label: "漏斗", icon: GitBranch },
       { href: "/console/retention", label: "留存", icon: Route },
