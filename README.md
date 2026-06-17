@@ -44,6 +44,9 @@ docker compose up -d
 
 ## 文档
 
+- [Android SDK 接入](sdk/android/README.md)
+- [Web SDK 接入](sdk/web/README.md)
+- [iOS SDK 接入](sdk/ios/README.md)
 - [上报协议](docs/protocol.md)
 - [事件 JSON Schema](docs/event.schema.json)
 - [架构详解](docs/architecture.md)

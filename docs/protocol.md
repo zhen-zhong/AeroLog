@@ -47,6 +47,31 @@ X-AeroLog-Ts:   {unix_ms}        # 时间戳，5 分钟外拒绝
 
 字段定义见 [event.schema.json](./event.schema.json)。
 
+### Android SDK 示例
+
+Android 端无需手写 HTTP 请求，业务侧通过 SDK API 上报自定义事件和自定义参数：
+
+```kotlin
+AeroLog.init(
+    application,
+    AeroConfig(
+        serverUrl = "https://collector.aerolog.example",
+        token = "PROJECT_TOKEN",
+    ),
+)
+
+AeroLog.track(
+    "pay_success",
+    mapOf(
+        "order_id" to "ord_1024",
+        "amount" to 299.0,
+        "payment_method" to "wechat_pay",
+    ),
+)
+```
+
+SDK 会自动补充 `anonymous_id`、`distinct_id`、`time`、`lib`、`$insert_id`、`$session_id`、`$os`、`$model`、`$network_type`、`$screen_width`、`$screen_height` 等字段，并批量提交到 `/v1/track?token=...`。
+
 ## 3. 预置属性（自动采集）
 
 约定以 `$` 开头，三端 SDK 应自动尽量采集：
