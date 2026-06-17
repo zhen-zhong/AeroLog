@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import dayjs, { Dayjs } from "dayjs";
-import { BadgeCheck, BookmarkPlus, Flag, Play, RotateCcw } from "lucide-react";
+import { BadgeCheck, BookmarkPlus, Flag, Play, RotateCcw, Trash2 } from "lucide-react";
 import {
   AnalyticsHeader,
   ChartPanel,
@@ -70,6 +70,7 @@ export default function ConversionsPage() {
     queryKey: ["conversion_goals", projectId],
     queryFn: () => api.listConversionGoals(projectId!),
     enabled: !!projectId,
+    placeholderData: (previousData) => previousData,
   });
 
   const eventRows = top.data?.data || [];
@@ -106,6 +107,21 @@ export default function ConversionsPage() {
     },
   });
 
+  const deleteGoal = useMutation({
+    mutationFn: (goalId: number) => api.deleteConversionGoal(projectId!, goalId),
+    onSuccess: (_data, goalId) => {
+      const deleted = (goals.data?.data || []).find((goal) => goal.id === goalId);
+      if (deleted?.name === name) {
+        setName("购买转化");
+        setEvents([]);
+        setBreakdownProperty("");
+        setWindowSeconds(7 * 24 * 3600);
+        analyze.reset();
+      }
+      void queryClient.invalidateQueries({ queryKey: ["conversion_goals", projectId] });
+    },
+  });
+
   const steps = analyze.data?.data.steps || [];
   const breakdown = analyze.data?.data.breakdown || [];
   const firstUsers = steps[0]?.users || 0;
@@ -114,6 +130,7 @@ export default function ConversionsPage() {
   const avgDropoff = steps.length > 1
     ? Math.round((steps.slice(1).reduce((sum, step) => sum + step.dropoff, 0) / (steps.length - 1)) * 10000) / 100
     : 0;
+  const breakdownTableMinWidth = Math.max(820, events.length * 180 + 360);
 
   function loadGoal(goal: ConversionGoal) {
     setName(goal.name);
@@ -132,7 +149,7 @@ export default function ConversionsPage() {
       />
 
       <div className="grid gap-5 xl:grid-cols-[430px_minmax(0,1fr)]">
-        <div className="grid gap-5">
+        <div className="min-w-0 grid gap-5">
           <Card>
             <CardContent className="grid gap-4 pt-4 sm:pt-4">
               <div className="grid gap-1.5">
@@ -198,33 +215,52 @@ export default function ConversionsPage() {
                   重置
                 </Button>
               </div>
-              {analyze.error ? <Badge variant="danger" className="items-center">{String(analyze.error.message || analyze.error)}</Badge> : null}
-              {saveGoal.error ? <Badge variant="danger" className="items-center">{String(saveGoal.error.message || saveGoal.error)}</Badge> : null}
-              {saveGoal.isSuccess ? <Badge variant="success" className="items-center">已保存</Badge> : null}
+              <div className="min-h-6">
+                {analyze.error ? <Badge variant="danger" className="items-center">{String(analyze.error.message || analyze.error)}</Badge> : null}
+                {saveGoal.error ? <Badge variant="danger" className="items-center">{String(saveGoal.error.message || saveGoal.error)}</Badge> : null}
+                {saveGoal.isSuccess ? <Badge variant="success" className="items-center">已保存，已更新目标列表</Badge> : null}
+              </div>
             </CardContent>
           </Card>
 
-          <Card>
+          <Card className="overflow-hidden">
             <CardContent className="grid gap-3 pt-4 sm:pt-4">
               <div className="text-sm font-medium">已保存目标</div>
               {(goals.data?.data || []).length ? (
-                <div className="grid gap-2">
+                <div className="grid max-h-80 gap-2 overflow-y-auto pr-1">
                   {(goals.data?.data || []).map((goal) => (
-                    <button
+                    <div
                       key={goal.id}
-                      type="button"
-                      onClick={() => loadGoal(goal)}
                       className={cn(
-                        "rounded-md border bg-background p-3 text-left transition-colors hover:border-primary/40 hover:bg-accent/60",
+                        "grid gap-2 rounded-md border bg-background p-3 transition-colors",
                         name === goal.name && "border-primary/50 bg-accent/50",
                       )}
                     >
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="truncate text-sm font-medium">{goal.name}</span>
-                        <Badge variant="secondary">{goal.events.length} 步</Badge>
+                      <div className="flex min-w-0 items-start justify-between gap-3">
+                        <button
+                          type="button"
+                          onClick={() => loadGoal(goal)}
+                          className="min-w-0 flex-1 text-left"
+                        >
+                          <span className="block truncate text-sm font-medium">{goal.name}</span>
+                          <span className="mt-1 block truncate text-xs text-muted-foreground">{goal.events.join(" → ")}</span>
+                        </button>
+                        <div className="flex shrink-0 items-center gap-2">
+                          <Badge variant="secondary">{goal.events.length} 步</Badge>
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="ghost"
+                            disabled={deleteGoal.isPending}
+                            onClick={() => deleteGoal.mutate(goal.id)}
+                            aria-label={`删除 ${goal.name}`}
+                            className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
                       </div>
-                      <div className="mt-1 truncate text-xs text-muted-foreground">{goal.events.join(" → ")}</div>
-                    </button>
+                    </div>
                   ))}
                 </div>
               ) : (
@@ -232,18 +268,19 @@ export default function ConversionsPage() {
                   暂无保存目标。配置路径后点击保存目标。
                 </p>
               )}
+              {deleteGoal.error ? <Badge variant="danger" className="items-center">{String(deleteGoal.error.message || deleteGoal.error)}</Badge> : null}
             </CardContent>
           </Card>
         </div>
 
-        <div className="grid gap-5">
-          <div className="grid gap-3 sm:grid-cols-3">
+        <div className="min-w-0 grid gap-5">
+          <div className="grid min-w-0 gap-3 sm:grid-cols-3 [&>*]:min-w-0">
             <MetricTile label="首步用户" value={firstUsers} loading={analyze.isPending} />
             <MetricTile label="完成用户" value={lastUsers} loading={analyze.isPending} />
             <MetricTile label="总转化率" value={finalRate} hint={`平均流失 ${avgDropoff.toFixed(2)}%`} loading={analyze.isPending} />
           </div>
 
-          <ChartPanel title="转化路径" description={events.length ? events.join(" → ") : "请选择至少两个事件"} contentClassName="pt-3 sm:pt-3">
+          <ChartPanel title="转化路径" description={events.length ? events.join(" → ") : "请选择至少两个事件"} className="min-w-0" contentClassName="pt-3 sm:pt-3">
             {steps.length ? (
               <div className="grid gap-3">
                 {steps.map((step, index) => (
@@ -272,17 +309,17 @@ export default function ConversionsPage() {
             )}
           </ChartPanel>
 
-          <ChartPanel title="参数拆解" description={breakdownProperty ? `按 ${breakdownProperty} 拆解` : "选择拆解参数后可比较不同参数值的转化"} contentClassName="p-0 sm:p-0">
+          <ChartPanel title="参数拆解" description={breakdownProperty ? `按 ${breakdownProperty} 拆解` : "选择拆解参数后可比较不同参数值的转化"} className="min-w-0" contentClassName="p-0 sm:p-0">
             {breakdown.length ? (
-              <div className="overflow-x-auto">
-                <Table className="min-w-[760px]">
+              <div className="max-w-full overflow-x-auto">
+                <Table style={{ minWidth: breakdownTableMinWidth }}>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>{breakdownProperty}</TableHead>
-                      <TableHead className="text-right">首步用户</TableHead>
-                      <TableHead className="text-right">总转化率</TableHead>
+                      <TableHead className="w-56 whitespace-nowrap">{breakdownProperty}</TableHead>
+                      <TableHead className="w-28 whitespace-nowrap text-right">首步用户</TableHead>
+                      <TableHead className="w-28 whitespace-nowrap text-right">总转化率</TableHead>
                       {events.map((event, index) => (
-                        <TableHead key={`${event}:${index}`} className="text-right">{index + 1}. {event}</TableHead>
+                        <TableHead key={`${event}:${index}`} className="w-44 whitespace-nowrap text-right">{index + 1}. {event}</TableHead>
                       ))}
                     </TableRow>
                   </TableHeader>
@@ -307,7 +344,7 @@ export default function ConversionsPage() {
             )}
           </ChartPanel>
 
-          <ChartPanel title="关键事件" description="当前目标的最后一步会被视作本路径的关键转化事件" contentClassName="pt-3 sm:pt-3">
+          <ChartPanel title="关键事件" description="当前目标的最后一步会被视作本路径的关键转化事件" className="min-w-0" contentClassName="pt-3 sm:pt-3">
             {events.length ? (
               <div className="rounded-md border bg-background p-3">
                 <div className="flex items-center gap-2">

@@ -133,16 +133,19 @@ export function DateTimeRange({
   value,
   onChange,
   compact = false,
+  stacked = false,
 }: {
   value: [Dayjs, Dayjs];
   onChange: (value: [Dayjs, Dayjs]) => void;
   compact?: boolean;
+  stacked?: boolean;
 }) {
   return (
-    <div className={cn("grid gap-3 sm:grid-cols-2", compact && "gap-2")}>
+    <div className={cn("grid gap-3", !stacked && "sm:grid-cols-2", compact && "gap-2")}>
       <div className="grid gap-1.5">
         <Label htmlFor="from-time">开始时间</Label>
         <Input
+          className="min-w-0"
           id="from-time"
           type="datetime-local"
           value={toInputDateTime(value[0])}
@@ -152,6 +155,7 @@ export function DateTimeRange({
       <div className="grid gap-1.5">
         <Label htmlFor="to-time">结束时间</Label>
         <Input
+          className="min-w-0"
           id="to-time"
           type="datetime-local"
           value={toInputDateTime(value[1])}

@@ -10,6 +10,7 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -35,6 +36,7 @@ func (h *AnalyticsHandler) Register(r *gin.RouterGroup) {
 	r.POST("/projects/:id/analytics/query_table", h.queryTable)
 	r.GET("/projects/:id/conversion_goals", h.listConversionGoals)
 	r.POST("/projects/:id/conversion_goals", h.createConversionGoal)
+	r.DELETE("/projects/:id/conversion_goals/:goal_id", h.deleteConversionGoal)
 	r.POST("/projects/:id/analytics/conversion", h.conversion)
 	r.POST("/projects/:id/analytics/funnel", h.funnel)
 	r.GET("/projects/:id/analytics/retention", h.retention)
@@ -265,10 +267,15 @@ func (h *AnalyticsHandler) listConversionGoals(c *gin.Context) {
 	}
 	pid, _ := strconv.ParseInt(c.Param("id"), 10, 64)
 	rows, err := h.PG.Query(c, `
-		SELECT id, project_id, name, COALESCE(description, ''), events, window_seconds,
-		       COALESCE(breakdown_property, ''), status, created_at, updated_at
-		FROM conversion_goals
-		WHERE project_id = $1 AND status = 1
+		SELECT *
+		FROM (
+			SELECT DISTINCT ON (name)
+			       id, project_id, name, COALESCE(description, '') AS description, events, window_seconds,
+			       COALESCE(breakdown_property, '') AS breakdown_property, status, created_at, updated_at
+			FROM conversion_goals
+			WHERE project_id = $1 AND status = 1
+			ORDER BY name, updated_at DESC, id DESC
+		) AS latest
 		ORDER BY updated_at DESC, id DESC
 		LIMIT 100
 	`, pid)
@@ -321,18 +328,59 @@ func (h *AnalyticsHandler) createConversionGoal(c *gin.Context) {
 	var item conversionGoal
 	var raw []byte
 	err := h.PG.QueryRow(c, `
+		UPDATE conversion_goals
+		SET description = $3,
+		    events = $4::jsonb,
+		    window_seconds = $5,
+		    breakdown_property = NULLIF($6, ''),
+		    updated_at = now()
+		WHERE project_id = $1 AND name = $2 AND status = 1
+		RETURNING id, project_id, name, COALESCE(description, ''), events, window_seconds,
+		          COALESCE(breakdown_property, ''), status, created_at, updated_at
+	`, pid, body.Name, body.Description, string(rawEvents), body.WindowSeconds, body.BreakdownProperty).
+		Scan(&item.ID, &item.ProjectID, &item.Name, &item.Description, &raw, &item.WindowSeconds, &item.BreakdownProperty, &item.Status, &item.CreatedAt, &item.UpdatedAt)
+	if err == pgx.ErrNoRows {
+		err = h.PG.QueryRow(c, `
 		INSERT INTO conversion_goals(project_id, name, description, events, window_seconds, breakdown_property)
 		VALUES($1, $2, $3, $4::jsonb, $5, NULLIF($6, ''))
 		RETURNING id, project_id, name, COALESCE(description, ''), events, window_seconds,
 		          COALESCE(breakdown_property, ''), status, created_at, updated_at
 	`, pid, body.Name, body.Description, string(rawEvents), body.WindowSeconds, body.BreakdownProperty).
-		Scan(&item.ID, &item.ProjectID, &item.Name, &item.Description, &raw, &item.WindowSeconds, &item.BreakdownProperty, &item.Status, &item.CreatedAt, &item.UpdatedAt)
+			Scan(&item.ID, &item.ProjectID, &item.Name, &item.Description, &raw, &item.WindowSeconds, &item.BreakdownProperty, &item.Status, &item.CreatedAt, &item.UpdatedAt)
+	}
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
 		return
 	}
 	_ = json.Unmarshal(raw, &item.Events)
 	c.JSON(http.StatusOK, gin.H{"data": item})
+}
+
+func (h *AnalyticsHandler) deleteConversionGoal(c *gin.Context) {
+	if err := h.ensureConversionGoalTable(c.Request.Context()); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
+		return
+	}
+	pid, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	goalID, _ := strconv.ParseInt(c.Param("goal_id"), 10, 64)
+	if goalID <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"err": "goal_id required"})
+		return
+	}
+	tag, err := h.PG.Exec(c, `
+		UPDATE conversion_goals
+		SET status = 0, updated_at = now()
+		WHERE project_id = $1 AND id = $2 AND status = 1
+	`, pid, goalID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"err": "not found"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"deleted": true}})
 }
 
 func (h *AnalyticsHandler) conversion(c *gin.Context) {

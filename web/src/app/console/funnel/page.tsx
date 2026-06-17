@@ -124,7 +124,7 @@ export default function FunnelPage() {
                 <span className="text-sm font-medium">项目</span>
                 <ProjectPicker projects={projects?.data || []} value={projectId} onChange={setProjectId} className="sm:w-full" />
               </div>
-              <DateTimeRange value={range} onChange={setRange} />
+              <DateTimeRange value={range} onChange={setRange} stacked />
               <NumberField
                 label="转化窗口（秒）"
                 min={60}

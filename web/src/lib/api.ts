@@ -243,6 +243,11 @@ export const api = {
             method: "POST",
             body: JSON.stringify(body),
         }),
+    deleteConversionGoal: (id: number | string, goalId: number | string) =>
+        req<ApiOne<{ deleted: boolean }>>(
+            `/projects/${id}/conversion_goals/${goalId}`,
+            { method: "DELETE" },
+        ),
     conversion: (
         id: number | string,
         body: {
