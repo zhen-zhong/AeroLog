@@ -1,0 +1,14 @@
+schema_version: 1
+module_path: web/shared
+title: AeroLog Web Console
+scope:
+    - web/src/components/
+    - web/src/lib/
+    - web/next.config.js
+    - web/package.json
+    - web/tsconfig.json
+    - web/README.md
+source_files: []
+depends_on: []
+related_to:
+    - path: web/console

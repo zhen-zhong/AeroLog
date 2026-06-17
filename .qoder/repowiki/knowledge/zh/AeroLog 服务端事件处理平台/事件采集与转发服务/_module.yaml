@@ -1,0 +1,12 @@
+schema_version: 1
+module_path: server/collector_service
+title: 事件采集与转发服务
+scope:
+    - server/collector/
+source_files: []
+depends_on: []
+related_to:
+    - path: sdk
+    - path: server/consumer_service
+    - path: deploy
+    - path: server/shared_pkg

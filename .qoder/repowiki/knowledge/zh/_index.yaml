@@ -1,0 +1,200 @@
+# 知识卡导出索引文件
+schema_version: 1
+locale: zh-CN
+branch: Q0DeR-MaG1C-BrAnCh-Fo2-NoN-GiT-Or-No-C0MmIt
+exported_at: "2026-06-16T05:47:38Z"
+modules:
+    "":
+        dir_name: AeroLog 全链路埋点分析平台
+        title: AeroLog 全链路埋点分析平台
+        scope:
+            - README.md
+            - .gitignore
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    deploy:
+        dir_name: AeroLog 基础设施编排与监控部署
+        title: AeroLog 基础设施编排与监控部署
+        scope:
+            - deploy/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: server/collector_service
+            - path: server/consumer_service
+            - path: server/api_service
+            - path: web/console
+            - path: docs
+    docs:
+        dir_name: AeroLog 系统架构与协议规范
+        title: AeroLog 系统架构与协议规范
+        scope:
+            - docs/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: sdk
+            - path: server
+            - path: web/console
+            - path: deploy
+    sdk:
+        dir_name: AeroLog 多端埋点 SDK
+        title: AeroLog 多端埋点 SDK
+        scope:
+            - sdk/
+        source_files: []
+        children:
+            - sdk/ios
+            - sdk/web
+            - sdk/android
+        depends_on: []
+        related_to:
+            - path: server/collector_service
+            - path: docs
+            - path: web
+    sdk/android:
+        dir_name: AeroLog Android 埋点 SDK
+        title: AeroLog Android 埋点 SDK
+        scope:
+            - sdk/android/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: sdk/ios
+            - path: sdk/web
+    sdk/ios:
+        dir_name: AeroLog iOS 埋点 SDK
+        title: AeroLog iOS 埋点 SDK
+        scope:
+            - sdk/ios/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: sdk/android
+            - path: sdk/web
+    sdk/web:
+        dir_name: Web端埋点SDK
+        title: Web端埋点SDK
+        scope:
+            - sdk/web/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: sdk/android
+            - path: sdk/ios
+            - path: web/console
+    server:
+        dir_name: AeroLog 服务端事件处理平台
+        title: AeroLog 服务端事件处理平台
+        scope:
+            - server/
+        source_files: []
+        children:
+            - server/shared_pkg
+            - server/collector_service
+            - server/consumer_service
+            - server/api_service
+        depends_on: []
+        related_to:
+            - path: docs
+            - path: web
+    server/api_service:
+        dir_name: API 服务与数据分析接口
+        title: API 服务与数据分析接口
+        scope:
+            - server/api/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: server/consumer_service
+            - path: web/console
+            - path: deploy
+            - path: server/shared_pkg
+    server/collector_service:
+        dir_name: 事件采集与转发服务
+        title: 事件采集与转发服务
+        scope:
+            - server/collector/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: sdk
+            - path: server/consumer_service
+            - path: deploy
+            - path: server/shared_pkg
+    server/consumer_service:
+        dir_name: Kafka 事件消费与 ClickHouse 写入服务
+        title: Kafka 事件消费与 ClickHouse 写入服务
+        scope:
+            - server/consumer/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: server/collector_service
+            - path: server/api_service
+            - path: deploy
+            - path: server/shared_pkg
+    server/shared_pkg:
+        dir_name: 服务端共享基础组件库
+        title: 服务端共享基础组件库
+        scope:
+            - server/pkg/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: server/collector_service
+            - path: server/consumer_service
+            - path: server/api_service
+    web:
+        dir_name: AeroLog 前端控制台
+        title: AeroLog 前端控制台
+        scope:
+            - web/
+        source_files: []
+        children:
+            - web/shared
+            - web/console
+        depends_on: []
+        related_to:
+            - path: sdk
+            - path: server
+    web/console:
+        dir_name: 数据分析控制台
+        title: 数据分析控制台
+        scope:
+            - web/src/app/console/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: server/api_service
+            - path: web/shared
+            - path: deploy
+            - path: sdk/web
+            - path: docs
+    web/shared:
+        dir_name: AeroLog Web Console
+        title: AeroLog Web Console
+        scope:
+            - web/src/components/
+            - web/src/lib/
+            - web/next.config.js
+            - web/package.json
+            - web/tsconfig.json
+            - web/README.md
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: web/console

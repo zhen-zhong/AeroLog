@@ -1,0 +1,43 @@
+# ===== Common =====
+.DS_Store
+*.log
+*.swp
+.idea/
+.vscode/
+*.iml
+
+# ===== Go =====
+server/**/bin/
+server/**/*.exe
+server/vendor/
+
+# ===== Node / Next.js =====
+node_modules/
+.next/
+out/
+dist/
+.env.local
+.env.*.local
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# ===== Android =====
+sdk/android/.gradle/
+sdk/android/build/
+sdk/android/**/build/
+sdk/android/local.properties
+sdk/android/.idea/
+sdk/android/captures/
+
+# ===== iOS =====
+sdk/ios/.build/
+sdk/ios/build/
+sdk/ios/DerivedData/
+sdk/ios/*.xcworkspace/xcuserdata/
+sdk/ios/*.xcodeproj/xcuserdata/
+sdk/ios/Pods/
+
+# ===== Deploy =====
+deploy/data/
+deploy/.env

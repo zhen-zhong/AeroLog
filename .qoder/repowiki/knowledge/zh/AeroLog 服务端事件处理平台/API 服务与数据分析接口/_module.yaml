@@ -1,0 +1,12 @@
+schema_version: 1
+module_path: server/api_service
+title: API 服务与数据分析接口
+scope:
+    - server/api/
+source_files: []
+depends_on: []
+related_to:
+    - path: server/consumer_service
+    - path: web/console
+    - path: deploy
+    - path: server/shared_pkg

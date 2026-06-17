@@ -1,0 +1,13 @@
+schema_version: 1
+module_path: web/console
+title: 数据分析控制台
+scope:
+    - web/src/app/console/
+source_files: []
+depends_on: []
+related_to:
+    - path: server/api_service
+    - path: web/shared
+    - path: deploy
+    - path: sdk/web
+    - path: docs

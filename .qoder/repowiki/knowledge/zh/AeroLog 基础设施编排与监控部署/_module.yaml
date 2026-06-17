@@ -1,0 +1,13 @@
+schema_version: 1
+module_path: deploy
+title: AeroLog 基础设施编排与监控部署
+scope:
+    - deploy/
+source_files: []
+depends_on: []
+related_to:
+    - path: server/collector_service
+    - path: server/consumer_service
+    - path: server/api_service
+    - path: web/console
+    - path: docs

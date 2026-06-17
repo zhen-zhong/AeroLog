@@ -1,0 +1,31 @@
+# AeroLog Prometheus 配置
+# 通过 host.docker.internal 抓取宿主机上以本地进程形式运行的 collector/consumer/api。
+# 当后端打包成容器时，应改为对应 service 名 + 内部端口。
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: aerolog-dev
+
+scrape_configs:
+  - job_name: aerolog-collector
+    static_configs:
+      - targets: ["host.docker.internal:9101"]
+        labels:
+          service: collector
+
+  - job_name: aerolog-consumer
+    static_configs:
+      - targets: ["host.docker.internal:9102"]
+        labels:
+          service: consumer
+
+  - job_name: aerolog-api
+    static_configs:
+      - targets: ["host.docker.internal:9103"]
+        labels:
+          service: api
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]

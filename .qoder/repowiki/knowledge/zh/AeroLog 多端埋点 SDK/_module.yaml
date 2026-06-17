@@ -1,0 +1,11 @@
+schema_version: 1
+module_path: sdk
+title: AeroLog 多端埋点 SDK
+scope:
+    - sdk/
+source_files: []
+depends_on: []
+related_to:
+    - path: server/collector_service
+    - path: docs
+    - path: web

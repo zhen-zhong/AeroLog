@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aerolog.dev/schemas/event.schema.json",
+  "title": "AeroLog Event",
+  "description": "三端 SDK 上报至 Collector 的统一事件结构",
+  "type": "object",
+  "required": ["type", "event", "time", "distinct_id"],
+  "additionalProperties": false,
+  "properties": {
+    "type": {
+      "type": "string",
+      "enum": ["track", "profile_set", "profile_set_once", "profile_increment", "profile_unset", "profile_delete"],
+      "description": "事件类型；track 为普通行为事件，profile_* 为用户属性操作"
+    },
+    "event": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "事件名称；profile_* 类型可填空字符串"
+    },
+    "distinct_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255,
+      "description": "用户主标识（登录后通常为 user_id，未登录时为 anonymous_id）"
+    },
+    "anonymous_id": {
+      "type": "string",
+      "maxLength": 255,
+      "description": "匿名 ID（设备/浏览器维度）"
+    },
+    "user_id": {
+      "type": "string",
+      "maxLength": 255,
+      "description": "登录用户 ID"
+    },
+    "time": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "事件发生时间戳（毫秒）"
+    },
+    "lib": {
+      "type": "object",
+      "description": "SDK 信息",
+      "properties": {
+        "name":    { "type": "string", "enum": ["web", "android", "ios", "server"] },
+        "version": { "type": "string" }
+      },
+      "required": ["name"]
+    },
+    "properties": {
+      "type": "object",
+      "description": "事件自定义属性 + 自动采集属性。属性名以 $ 开头为预置属性。",
+      "additionalProperties": true
+    }
+  }
+}
