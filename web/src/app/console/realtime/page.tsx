@@ -14,11 +14,14 @@ import {
   ToolbarPanel,
 } from "@/features/analytics/analytics-ui";
 import { Badge } from "@/components/ui/badge";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api } from "@/lib/api";
+import { formatDateTime } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
 export default function RealtimePage() {
   const [projectId, setProjectId] = useState<number | undefined>();
+  const [selectedEvent, setSelectedEvent] = useState<string | undefined>();
+  const [selectedProperty, setSelectedProperty] = useState<string | undefined>();
   const [range, setRange] = useState<[Dayjs, Dayjs]>([
     dayjs().subtract(30, "minute"),
     dayjs(),
@@ -45,7 +48,32 @@ export default function RealtimePage() {
   const rows = top?.data || [];
   const totalEvents = rows.reduce((sum, item) => sum + item.count, 0);
   const activeUsers = rows.reduce((sum, item) => sum + item.users, 0);
-  const primary = rows[0]?.event;
+  const activeEvent = rows.find((item) => item.event === selectedEvent) || rows[0];
+
+  useEffect(() => {
+    if (!selectedEvent && rows.length) setSelectedEvent(rows[0].event);
+  }, [rows, selectedEvent]);
+
+  const eventProps = useQuery({
+    queryKey: ["realtime_event_properties", projectId],
+    queryFn: () => api.listProperties(projectId!, { scope: "event" }),
+    enabled: !!projectId,
+  });
+
+  const propertyRows = eventProps.data?.data || [];
+
+  const propertyValues = useQuery({
+    queryKey: ["realtime_property_values", projectId, activeEvent?.event, selectedProperty, tsRange],
+    queryFn: () =>
+      api.propertyValues(projectId!, {
+        property: selectedProperty!,
+        event: activeEvent!.event,
+        ...tsRange,
+        limit: 8,
+      }),
+    enabled: !!projectId && !!activeEvent?.event && !!selectedProperty,
+    refetchInterval: 15_000,
+  });
 
   return (
     <div>
@@ -58,11 +86,15 @@ export default function RealtimePage() {
       <ReportControls
         projects={projects?.data || []}
         projectId={projectId}
-        onProjectChange={setProjectId}
+        onProjectChange={(next) => {
+          setProjectId(next);
+          setSelectedEvent(undefined);
+          setSelectedProperty(undefined);
+        }}
         range={range}
         onRangeChange={setRange}
         comparison="上一窗口"
-        filters={["近实时刷新", "全部平台"]}
+        filters={activeEvent?.event ? ["近实时刷新", `event = ${activeEvent.event}`] : ["近实时刷新", "全部平台"]}
       />
 
       <div className="mb-5 grid gap-3 sm:grid-cols-3">
@@ -72,44 +104,116 @@ export default function RealtimePage() {
       </div>
 
       <div className="grid gap-5 xl:grid-cols-[420px_minmax(0,1fr)]">
-        <ChartPanel title="实时事件排行" description="点击排行可作为后续分析入口">
+        <ChartPanel title="实时事件排行" description="点击排行可作为后续分析入口" contentClassName="pt-3 sm:pt-3">
           {rows.length ? (
-            <EventRankList events={rows} active={primary} onSelect={() => undefined} loading={isFetching} />
+            <EventRankList
+              events={rows}
+              active={activeEvent?.event}
+              onSelect={(next) => {
+                setSelectedEvent(next);
+                setSelectedProperty(undefined);
+              }}
+              loading={isFetching}
+            />
           ) : (
             <EmptyAnalysis title="当前窗口暂无事件" description="等待 SDK 上报，或扩大时间范围查看。" />
           )}
         </ChartPanel>
 
-        <ChartPanel title="实时事件流" description="按事件热度展示当前窗口内的流量构成">
-          {rows.length ? (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>事件</TableHead>
-                    <TableHead className="text-right">次数</TableHead>
-                    <TableHead className="text-right">用户</TableHead>
-                    <TableHead>热度</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {rows.map((item) => {
-                    const width = totalEvents ? Math.max(6, Math.round((item.count / totalEvents) * 100)) : 0;
+        <ChartPanel
+          title={activeEvent?.event ? `实时事件：${activeEvent.event}` : "实时事件详情"}
+          description="展示选中事件的次数、用户、热度和多个自定义参数"
+          contentClassName="pt-3 sm:pt-3"
+        >
+          {activeEvent ? (
+            <div className="grid gap-4">
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div className="rounded-md border bg-background p-3">
+                  <div className="text-xs text-muted-foreground">次数</div>
+                  <div className="mt-1 font-mono text-xl font-semibold">{activeEvent.count.toLocaleString()}</div>
+                </div>
+                <div className="rounded-md border bg-background p-3">
+                  <div className="text-xs text-muted-foreground">用户</div>
+                  <div className="mt-1 font-mono text-xl font-semibold">{activeEvent.users.toLocaleString()}</div>
+                </div>
+                <div className="rounded-md border bg-background p-3">
+                  <div className="text-xs text-muted-foreground">热度</div>
+                  <div className="mt-1 font-mono text-xl font-semibold">
+                    {totalEvents ? ((activeEvent.count / totalEvents) * 100).toFixed(1) : "0.0"}%
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <div className="text-sm font-medium">事件参数</div>
+                  <Badge variant="secondary">{propertyRows.length} keys</Badge>
+                </div>
+                <div className="grid gap-2">
+                  {propertyRows.slice(0, 12).map((prop) => {
+                    const active = selectedProperty === prop.name;
                     return (
-                      <TableRow key={item.event}>
-                        <TableCell className="font-medium">{item.event}</TableCell>
-                        <TableCell className="text-right font-mono">{item.count.toLocaleString()}</TableCell>
-                        <TableCell className="text-right font-mono">{item.users.toLocaleString()}</TableCell>
-                        <TableCell>
-                          <div className="h-2 overflow-hidden rounded-full bg-secondary">
-                            <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${width}%` }} />
+                      <div
+                        key={prop.id}
+                        className={cn(
+                          "overflow-hidden rounded-md border bg-background transition-colors",
+                          active && "border-primary/50 bg-accent/45",
+                        )}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => setSelectedProperty((current) => (current === prop.name ? undefined : prop.name))}
+                          className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm transition-colors hover:bg-accent/60"
+                        >
+                          <span className="min-w-0">
+                            <span className="block truncate font-medium">{prop.name}</span>
+                            <span className="text-xs text-muted-foreground">{formatDateTime(prop.last_seen)}</span>
+                          </span>
+                          <Badge variant={prop.data_type === "mixed" ? "danger" : "info"}>{prop.data_type}</Badge>
+                        </button>
+
+                        {active ? (
+                          <div className="border-t bg-card px-3 py-3">
+                            {propertyValues.isFetching ? (
+                              <div className="grid gap-2">
+                                {Array.from({ length: 4 }).map((_, index) => (
+                                  <div key={index} className="h-9 animate-pulse rounded-md bg-secondary" />
+                                ))}
+                              </div>
+                            ) : propertyValues.data?.data.length ? (
+                              <div className="grid gap-2">
+                                {propertyValues.data.data.map((item) => (
+                                  <div key={item.raw} className="grid gap-1.5">
+                                    <div className="flex items-center justify-between gap-3 text-xs">
+                                      <span className="min-w-0 truncate font-medium">{item.label}</span>
+                                      <span className="shrink-0 font-mono text-muted-foreground">
+                                        {item.count.toLocaleString()} 次 · {item.users.toLocaleString()} 用户
+                                      </span>
+                                    </div>
+                                    <div className="h-2 overflow-hidden rounded-full bg-secondary">
+                                      <div
+                                        className="h-full rounded-full bg-primary"
+                                        style={{ width: `${Math.max(4, item.share * 100)}%` }}
+                                      />
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="rounded-md border border-dashed bg-secondary/30 px-3 py-4 text-center text-xs text-muted-foreground">
+                                当前窗口下没有这个参数。
+                              </div>
+                            )}
                           </div>
-                        </TableCell>
-                      </TableRow>
+                        ) : null}
+                      </div>
                     );
                   })}
-                </TableBody>
-              </Table>
+                  {!eventProps.isLoading && !propertyRows.length ? (
+                    <EmptyAnalysis title="暂无参数字典" description="上报带自定义参数的事件后会自动发现。" />
+                  ) : null}
+                </div>
+              </div>
             </div>
           ) : (
             <EmptyAnalysis title="暂无实时明细" />

@@ -118,14 +118,14 @@ export default function RetentionPage() {
       </div>
 
       <div className="grid gap-5 xl:grid-cols-[360px_minmax(0,1fr)]">
-        <ChartPanel title="Cohort 总览" description="每个同期日的用户规模和 Day1 留存">
+        <ChartPanel title="Cohort 总览" description="每个同期日的用户规模和 Day1 留存" contentClassName="pt-3 sm:pt-3">
           {rows.length ? <CohortOverview rows={rows} /> : <EmptyAnalysis title="暂无同期批次" />}
         </ChartPanel>
         <ChartPanel title="留存热力矩阵" description="每行是一个同期日，每列是 DayN 回访比例">
           {!initEvent || !retEvent ? (
             <EmptyAnalysis title="请选择事件" description="选择初始事件和返回事件后，留存矩阵会自动计算。" />
           ) : isFetching ? (
-            <div className="space-y-2">
+            <div className="grid gap-2">
               {Array.from({ length: 8 }).map((_, index) => (
                 <Skeleton key={index} className="h-10 w-full" />
               ))}
@@ -144,7 +144,7 @@ export default function RetentionPage() {
 function CohortOverview({ rows }: { rows: RetRow[] }) {
   const maxSize = rows.reduce((max, row) => Math.max(max, row.size), 0);
   return (
-    <div className="space-y-3">
+    <div className="grid gap-3">
       {rows.map((row) => {
         const dayOne = row.values[1] || 0;
         const rate = row.size ? (dayOne / row.size) * 100 : 0;

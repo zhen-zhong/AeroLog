@@ -2,8 +2,9 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import dayjs, { Dayjs } from "dayjs";
 import { Search } from "lucide-react";
-import { api, IdentityMapping, UserProfile } from "@/lib/api";
+import { api, IdentityMapping, UserEvent, UserProfile } from "@/lib/api";
 import { compactProps, compactValue, formatDateTime } from "@/lib/format";
 import { PageHeader } from "@/components/layout/page-header";
 import { ProjectSelect } from "@/features/common/project-select";
@@ -186,6 +187,7 @@ export function UsersPage() {
       )}
 
       <ProfileSheet
+        projectId={projectId}
         selected={selected}
         identities={identities.data?.data || []}
         identityLoading={identities.isLoading}
@@ -210,18 +212,44 @@ function MetricCard({ label, value, loading }: { label: string; value: number; l
 }
 
 function ProfileSheet({
+  projectId,
   selected,
   identities,
   identityLoading,
   profileRows,
   onClose,
 }: {
+  projectId?: number;
   selected: UserProfile | null;
   identities: IdentityMapping[];
   identityLoading: boolean;
   profileRows: { key: string; value: string }[];
   onClose: () => void;
 }) {
+  const [from, setFrom] = useState<Dayjs>(() => dayjs().subtract(7, "day").startOf("day"));
+  const [to, setTo] = useState<Dayjs>(() => dayjs().endOf("day"));
+  const [eventFilter, setEventFilter] = useState("");
+
+  useEffect(() => {
+    if (selected) {
+      setFrom(dayjs().subtract(7, "day").startOf("day"));
+      setTo(dayjs().endOf("day"));
+      setEventFilter("");
+    }
+  }, [selected?.distinct_id]);
+
+  const userEvents = useQuery({
+    queryKey: ["user_events", projectId, selected?.distinct_id, from.valueOf(), to.valueOf(), eventFilter],
+    queryFn: () =>
+      api.userEvents(projectId!, selected!.distinct_id, {
+        from: from.valueOf(),
+        to: to.valueOf(),
+        event: eventFilter.trim() || undefined,
+        limit: 100,
+      }),
+    enabled: !!projectId && !!selected,
+  });
+
   return (
     <Sheet open={!!selected} onOpenChange={(open) => !open && onClose()}>
       <SheetContent className="overflow-y-auto sm:max-w-2xl">
@@ -234,7 +262,7 @@ function ProfileSheet({
 
             <div className="mt-6 space-y-6">
               <Card>
-                <CardContent className="grid gap-3 pt-5 text-sm">
+                <CardContent className="grid gap-3 pt-3 text-sm sm:pt-3">
                   <InfoRow label="Distinct ID" value={selected.distinct_id} code />
                   <InfoRow label="User ID" value={selected.user_id || "-"} />
                   <InfoRow label="Anonymous ID" value={selected.anonymous_id || "-"} code />
@@ -245,23 +273,35 @@ function ProfileSheet({
               <section>
                 <h3 className="mb-2 text-sm font-semibold">用户时间线</h3>
                 <Card>
-                  <CardContent className="space-y-3 pt-5">
-                    <TimelineItem
-                      title="画像快照更新"
-                      description={compactProps(selected.properties)}
-                      time={formatDateTime(selected.updated_at)}
-                    />
-                    {identities.slice(0, 4).map((item) => (
-                      <TimelineItem
-                        key={item.id}
-                        title="身份合并"
-                        description={`${item.anonymous_id} → ${item.user_id}`}
-                        time={formatDateTime(item.last_seen)}
+                  <CardContent className="grid gap-3 pt-3 sm:pt-3">
+                    <div className="grid gap-2 sm:grid-cols-[1fr_1fr_160px]">
+                      <Input
+                        type="datetime-local"
+                        value={toInputDateTime(from)}
+                        onChange={(event) => setFrom(fromInputDateTime(event.target.value, from))}
                       />
-                    ))}
-                    {!identities.length && !identityLoading ? (
-                      <p className="text-sm text-muted-foreground">暂无更多行为时间线。后续可接入用户事件明细接口。</p>
-                    ) : null}
+                      <Input
+                        type="datetime-local"
+                        value={toInputDateTime(to)}
+                        onChange={(event) => setTo(fromInputDateTime(event.target.value, to))}
+                      />
+                      <Input
+                        value={eventFilter}
+                        onChange={(event) => setEventFilter(event.target.value)}
+                        placeholder="事件名过滤"
+                      />
+                    </div>
+                    {userEvents.isLoading ? (
+                      Array.from({ length: 4 }).map((_, index) => <Skeleton key={index} className="h-20 w-full" />)
+                    ) : userEvents.data?.data.length ? (
+                      userEvents.data.data.map((item) => (
+                        <EventTimelineItem key={`${item.event}:${item.time}:${item.properties?.$insert_id || ""}`} item={item} />
+                      ))
+                    ) : (
+                      <p className="rounded-md border border-dashed bg-secondary/30 px-3 py-4 text-center text-sm text-muted-foreground">
+                        当前时间范围内暂无事件。
+                      </p>
+                    )}
                   </CardContent>
                 </Card>
               </section>
@@ -336,6 +376,25 @@ function ProfileSheet({
         )}
       </SheetContent>
     </Sheet>
+  );
+}
+
+function toInputDateTime(value: Dayjs) {
+  return value.format("YYYY-MM-DDTHH:mm");
+}
+
+function fromInputDateTime(value: string, fallback: Dayjs) {
+  const parsed = dayjs(value);
+  return parsed.isValid() ? parsed : fallback;
+}
+
+function EventTimelineItem({ item }: { item: UserEvent }) {
+  return (
+    <TimelineItem
+      title={item.event}
+      description={`${item.lib || "-"} / ${item.os || "-"} · ${compactProps(item.properties, 6)}`}
+      time={formatDateTime(item.time)}
+    />
   );
 }
 

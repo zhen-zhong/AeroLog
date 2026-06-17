@@ -126,6 +126,7 @@ export default function ConsolePage() {
           <ChartPanel
             title="Top 事件"
             description="点击事件切换右侧趋势图"
+            contentClassName="pt-3 sm:pt-3"
           >
             <EventRankList events={topRows} active={event} onSelect={setEvent} loading={topLoading} />
           </ChartPanel>

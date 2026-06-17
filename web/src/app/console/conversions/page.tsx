@@ -127,9 +127,13 @@ export default function ConversionsPage() {
           )}
         </ChartPanel>
 
-        <ChartPanel title="默认转化路径" description={funnelEvents.length >= 2 ? funnelEvents.join(" → ") : "等待可用事件"}>
+        <ChartPanel
+          title="默认转化路径"
+          description={funnelEvents.length >= 2 ? funnelEvents.join(" → ") : "等待可用事件"}
+          contentClassName="pt-3 sm:pt-3"
+        >
           {funnelSteps.length ? (
-            <div className="space-y-4">
+            <div className="grid gap-4">
               {funnelSteps.map((step, index) => (
                 <div key={step.event} className="rounded-md border bg-background p-3">
                   <div className="mb-2 flex items-center justify-between gap-3">
@@ -154,8 +158,13 @@ export default function ConversionsPage() {
         </ChartPanel>
       </div>
 
-      <ChartPanel title="转化解释" description="当前为轻量启发式识别，后续可扩展为可配置的 Key Event 标记。" className="mt-5">
-        <div className="grid gap-3 text-sm md:grid-cols-3">
+      <ChartPanel
+        title="转化解释"
+        description="当前为轻量启发式识别，后续可扩展为可配置的 Key Event 标记。"
+        className="mt-5"
+        contentClassName="pt-3 sm:pt-3"
+      >
+        <div className="grid gap-3 text-sm md:grid-cols-3 [&>*]:mt-0">
           <div className="rounded-md border bg-background p-3">
             <TrendingUp className="mb-2 h-4 w-4 text-primary" />
             <div className="font-medium">事件命名即治理入口</div>

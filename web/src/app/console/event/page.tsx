@@ -25,6 +25,7 @@ const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
 export default function EventAnalysisPage() {
   const [projectId, setProjectId] = useState<number | undefined>();
   const [event, setEvent] = useState<string | undefined>();
+  const [selectedProperty, setSelectedProperty] = useState<string | undefined>();
   const [interval, setInterval] = useState<"hour" | "day">("day");
   const [range, setRange] = useState<[Dayjs, Dayjs]>([
     dayjs().subtract(7, "day").startOf("day"),
@@ -65,6 +66,20 @@ export default function EventAnalysisPage() {
     queryKey: ["event_properties_for_analysis", projectId],
     queryFn: () => api.listProperties(projectId!, { scope: "event" }),
     enabled: !!projectId,
+  });
+
+  const propertyRows = eventProps.data?.data || [];
+
+  const propertyValues = useQuery({
+    queryKey: ["event_property_values", projectId, event, selectedProperty, tsRange],
+    queryFn: () =>
+      api.propertyValues(projectId!, {
+        property: selectedProperty!,
+        event,
+        ...tsRange,
+        limit: 12,
+      }),
+    enabled: !!projectId && !!selectedProperty,
   });
 
   const option = useMemo(() => {
@@ -112,6 +127,7 @@ export default function EventAnalysisPage() {
         onProjectChange={(next) => {
           setProjectId(next);
           setEvent(undefined);
+          setSelectedProperty(undefined);
         }}
         range={range}
         onRangeChange={setRange}
@@ -163,18 +179,77 @@ export default function EventAnalysisPage() {
           )}
         </ChartPanel>
 
-        <ChartPanel title="事件参数" description="自动发现的事件属性，可作为维度拆解基础">
-          <div className="space-y-2">
-            {(eventProps.data?.data || []).slice(0, 10).map((prop) => (
-              <div key={prop.id} className="flex items-center justify-between gap-3 rounded-md border bg-background px-3 py-2 text-sm">
-                <div className="min-w-0">
-                  <div className="truncate font-medium">{prop.name}</div>
-                  <div className="text-xs text-muted-foreground">{formatDateTime(prop.last_seen)}</div>
-                </div>
-                <Badge variant={prop.data_type === "mixed" ? "danger" : "info"}>{prop.data_type}</Badge>
-              </div>
-            ))}
-            {!eventProps.isLoading && !eventProps.data?.data.length ? (
+        <ChartPanel title="事件参数" description="点击参数 key 查看当前事件下的 value 分布" contentClassName="pt-3 sm:pt-3">
+          <div className="grid gap-2">
+            <div className="grid gap-2">
+              {propertyRows.slice(0, 10).map((prop) => {
+                const active = selectedProperty === prop.name;
+                return (
+                  <div
+                    key={prop.id}
+                    className={cn(
+                      "overflow-hidden rounded-md border bg-background transition-colors",
+                      active && "border-primary/50 bg-accent/45",
+                    )}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setSelectedProperty((current) => (current === prop.name ? undefined : prop.name))}
+                      className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm transition-colors hover:bg-accent/60"
+                    >
+                      <span className="min-w-0">
+                        <span className="block truncate font-medium">{prop.name}</span>
+                        <span className="text-xs text-muted-foreground">{formatDateTime(prop.last_seen)}</span>
+                      </span>
+                      <Badge variant={prop.data_type === "mixed" ? "danger" : "info"}>{prop.data_type}</Badge>
+                    </button>
+
+                    {active ? (
+                      <div className="border-t bg-card px-3 py-3">
+                        <div className="mb-2 flex items-center justify-between gap-3">
+                          <span className="truncate text-xs font-medium text-muted-foreground">
+                            {event ? `事件 ${event}` : "全部事件"} · Top values
+                          </span>
+                          <Badge variant="secondary">{propertyValues.data?.data.length || 0} values</Badge>
+                        </div>
+                        {propertyValues.isFetching ? (
+                          <div className="grid gap-2">
+                            {Array.from({ length: 4 }).map((_, index) => (
+                              <div key={index} className="h-9 animate-pulse rounded-md bg-secondary" />
+                            ))}
+                          </div>
+                        ) : propertyValues.data?.data.length ? (
+                          <div className="grid gap-2">
+                            {propertyValues.data.data.map((item) => (
+                              <div key={item.raw} className="grid gap-1.5">
+                                <div className="flex items-center justify-between gap-3 text-xs">
+                                  <span className="min-w-0 truncate font-medium">{item.label}</span>
+                                  <span className="shrink-0 font-mono text-muted-foreground">
+                                    {item.count.toLocaleString()} 次 · {item.users.toLocaleString()} 用户
+                                  </span>
+                                </div>
+                                <div className="h-2 overflow-hidden rounded-full bg-secondary">
+                                  <div
+                                    className="h-full rounded-full bg-primary"
+                                    style={{ width: `${Math.max(4, item.share * 100)}%` }}
+                                  />
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="rounded-md border border-dashed bg-secondary/30 px-3 py-4 text-center text-xs text-muted-foreground">
+                            当前时间范围或事件下没有这个参数。
+                          </div>
+                        )}
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+
+            {!eventProps.isLoading && !propertyRows.length ? (
               <EmptyAnalysis title="暂无参数字典" description="上报带自定义参数的事件后会自动发现。" />
             ) : null}
           </div>

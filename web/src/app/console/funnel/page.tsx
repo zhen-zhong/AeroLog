@@ -117,9 +117,9 @@ export default function FunnelPage() {
       />
 
       <div className="grid gap-5 xl:grid-cols-[390px_minmax(0,1fr)]">
-        <div className="space-y-5">
+        <div className="grid gap-5">
           <ToolbarPanel className="mb-0">
-            <div className="space-y-4">
+            <div className="grid gap-4">
               <div className="grid gap-1.5">
                 <span className="text-sm font-medium">项目</span>
                 <ProjectPicker projects={projects?.data || []} value={projectId} onChange={setProjectId} className="sm:w-full" />
@@ -172,7 +172,7 @@ export default function FunnelPage() {
           </div>
         </div>
 
-        <div className="space-y-5">
+        <div className="grid gap-5">
           {result.length === 0 ? (
             <EmptyAnalysis title="选择步骤并点击计算" description="建议先选择 search、view_product、add_to_cart、pay_success 这类连续事件。" />
           ) : (

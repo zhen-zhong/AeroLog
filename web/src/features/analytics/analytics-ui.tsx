@@ -301,11 +301,13 @@ export function ChartPanel({
   description,
   children,
   className,
+  contentClassName,
 }: {
   title: string;
   description?: string;
   children: ReactNode;
   className?: string;
+  contentClassName?: string;
 }) {
   return (
     <AnimatedContent delay={90}>
@@ -314,7 +316,7 @@ export function ChartPanel({
           <CardTitle>{title}</CardTitle>
           {description ? <CardDescription>{description}</CardDescription> : null}
         </CardHeader>
-        <CardContent className="pt-5">{children}</CardContent>
+        <CardContent className={cn("pt-5", contentClassName)}>{children}</CardContent>
       </Card>
     </AnimatedContent>
   );
@@ -333,7 +335,7 @@ export function EventRankList({
 }) {
   if (loading) {
     return (
-      <div className="space-y-2">
+      <div className="grid gap-2">
         {Array.from({ length: 7 }).map((_, index) => (
           <Skeleton key={index} className="h-12 w-full" />
         ))}
@@ -342,7 +344,7 @@ export function EventRankList({
   }
 
   return (
-    <div className="space-y-2">
+    <div className="grid gap-2">
       {events.map((item, index) => {
         const selected = active === item.event;
         return (

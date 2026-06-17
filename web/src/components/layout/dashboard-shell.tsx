@@ -28,6 +28,7 @@ const navGroups = [
       { href: "/console", label: "概览", icon: LayoutDashboard },
       { href: "/console/realtime", label: "实时", icon: CircleDot },
       { href: "/console/event", label: "事件", icon: BarChart3 },
+      { href: "/console/query", label: "查询", icon: Boxes },
       { href: "/console/conversions", label: "转化", icon: Waypoints },
       { href: "/console/funnel", label: "漏斗", icon: GitBranch },
       { href: "/console/retention", label: "留存", icon: Route },

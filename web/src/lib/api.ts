@@ -61,6 +61,45 @@ export interface UserProfile {
     properties: Record<string, unknown>;
     updated_at: string;
 }
+export interface PropertyValueStat {
+    raw: string;
+    value: unknown;
+    label: string;
+    count: number;
+    users: number;
+    share: number;
+}
+export interface UserEvent {
+    event: string;
+    distinct_id: string;
+    user_id: string;
+    anonymous_id: string;
+    time: string;
+    lib: string;
+    os: string;
+    properties: Record<string, unknown>;
+}
+export interface QueryDimension {
+    type: "event" | "property";
+    key: string;
+}
+export interface QueryFilter {
+    event?: string;
+    property?: string;
+    op?: "eq" | "neq" | "exists";
+    value?: unknown;
+}
+export interface QueryTableRow {
+    dimensions: {
+        type: "event" | "property";
+        key: string;
+        raw: string;
+        label: string;
+        value: unknown;
+    }[];
+    count: number;
+    users: number;
+}
 export interface ApiList<T> {
     data: T[];
 }
@@ -110,6 +149,20 @@ export const api = {
         req<ApiOne<UserProfile>>(
             `/projects/${id}/users/${encodeURIComponent(distinctId)}/profile`,
         ),
+    userEvents: (
+        id: number | string,
+        distinctId: string,
+        params?: { from?: number; to?: number; event?: string; limit?: number },
+    ) => {
+        const q = new URLSearchParams();
+        if (params?.from) q.set("from", String(params.from));
+        if (params?.to) q.set("to", String(params.to));
+        if (params?.event) q.set("event", params.event);
+        if (params?.limit) q.set("limit", String(params.limit));
+        return req<ApiList<UserEvent>>(
+            `/projects/${id}/users/${encodeURIComponent(distinctId)}/events?${q}`,
+        );
+    },
     topEvents: (
         id: number | string,
         params?: { from?: number; to?: number; limit?: number },
@@ -135,6 +188,37 @@ export const api = {
             `/projects/${id}/analytics/trend?${q}`,
         );
     },
+    propertyValues: (
+        id: number | string,
+        params: { property: string; event?: string; from?: number; to?: number; limit?: number },
+    ) => {
+        const q = new URLSearchParams({ property: params.property });
+        if (params.event) q.set("event", params.event);
+        if (params.from) q.set("from", String(params.from));
+        if (params.to) q.set("to", String(params.to));
+        if (params.limit) q.set("limit", String(params.limit));
+        return req<ApiList<PropertyValueStat>>(
+            `/projects/${id}/analytics/property_values?${q}`,
+        );
+    },
+    queryTable: (
+        id: number | string,
+        body: {
+            events?: string[];
+            from?: number;
+            to?: number;
+            limit?: number;
+            dimensions: QueryDimension[];
+            filters?: QueryFilter[];
+        },
+    ) =>
+        req<ApiOne<{ dimensions: QueryDimension[]; rows: QueryTableRow[] }>>(
+            `/projects/${id}/analytics/query_table`,
+            {
+                method: "POST",
+                body: JSON.stringify(body),
+            },
+        ),
     funnel: (
         id: number | string,
         body: {
