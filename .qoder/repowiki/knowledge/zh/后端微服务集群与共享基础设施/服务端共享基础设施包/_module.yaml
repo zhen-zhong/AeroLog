@@ -1,0 +1,14 @@
+schema_version: 1
+module_path: backend_services/shared_pkg
+title: 服务端共享基础设施包
+scope:
+    - server/pkg/
+source_files: []
+depends_on: []
+related_to:
+    - path: docs
+    - path: backend_services/collector_service
+    - path: backend_services/consumer_service
+    - path: infra_deploy
+    - path: sdk_multi_platform
+    - path: sdk_multi_platform/ios_sdk

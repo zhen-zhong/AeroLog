@@ -26,6 +26,41 @@ export interface Project {
     status: number;
     created_at: string;
 }
+export interface EventDefinition {
+    id: number;
+    name: string;
+    display_name: string;
+    description: string;
+    status: number;
+    first_seen?: string;
+    last_seen?: string;
+}
+export interface PropertyDefinition {
+    id: number;
+    name: string;
+    display_name: string;
+    data_type: string;
+    scope: "event" | "user";
+    description: string;
+    status: number;
+    first_seen?: string;
+    last_seen?: string;
+}
+export interface IdentityMapping {
+    id: number;
+    anonymous_id: string;
+    user_id: string;
+    first_seen?: string;
+    last_seen?: string;
+    updated_at: string;
+}
+export interface UserProfile {
+    distinct_id: string;
+    user_id: string;
+    anonymous_id: string;
+    properties: Record<string, unknown>;
+    updated_at: string;
+}
 export interface ApiList<T> {
     data: T[];
 }
@@ -42,6 +77,39 @@ export const api = {
             body: JSON.stringify(body),
         }),
     getProject: (id: number | string) => req<ApiOne<Project>>(`/projects/${id}`),
+    listEvents: (id: number | string) =>
+        req<ApiList<EventDefinition>>(`/projects/${id}/events`),
+    listProperties: (
+        id: number | string,
+        params?: { scope?: "event" | "user" },
+    ) => {
+        const q = new URLSearchParams();
+        if (params?.scope) q.set("scope", params.scope);
+        return req<ApiList<PropertyDefinition>>(`/projects/${id}/properties?${q}`);
+    },
+    listIdentities: (
+        id: number | string,
+        params?: { user_id?: string; anonymous_id?: string; limit?: number },
+    ) => {
+        const q = new URLSearchParams();
+        if (params?.user_id) q.set("user_id", params.user_id);
+        if (params?.anonymous_id) q.set("anonymous_id", params.anonymous_id);
+        if (params?.limit) q.set("limit", String(params.limit));
+        return req<ApiList<IdentityMapping>>(`/projects/${id}/identities?${q}`);
+    },
+    listUsers: (
+        id: number | string,
+        params?: { query?: string; limit?: number },
+    ) => {
+        const q = new URLSearchParams();
+        if (params?.query) q.set("query", params.query);
+        if (params?.limit) q.set("limit", String(params.limit));
+        return req<ApiList<UserProfile>>(`/projects/${id}/users?${q}`);
+    },
+    getUserProfile: (id: number | string, distinctId: string) =>
+        req<ApiOne<UserProfile>>(
+            `/projects/${id}/users/${encodeURIComponent(distinctId)}/profile`,
+        ),
     topEvents: (
         id: number | string,
         params?: { from?: number; to?: number; limit?: number },

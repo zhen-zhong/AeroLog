@@ -1,9 +1,7 @@
 schema_version: 1
 module_path: ""
 title: AeroLog 全链路埋点分析平台
-scope:
-    - README.md
-    - .gitignore
+scope: []
 source_files: []
 depends_on: []
 related_to: []

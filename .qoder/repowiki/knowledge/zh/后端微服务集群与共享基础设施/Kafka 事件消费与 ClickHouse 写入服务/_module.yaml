@@ -1,0 +1,16 @@
+schema_version: 1
+module_path: backend_services/consumer_service
+title: Kafka 事件消费与 ClickHouse 写入服务
+scope:
+    - server/consumer/
+source_files: []
+depends_on: []
+related_to:
+    - path: backend_services/collector_service
+    - path: backend_services/api_service
+    - path: backend_services/shared_pkg
+    - path: docs
+    - path: infra_deploy
+    - path: web_console/console
+    - path: sdk_multi_platform/android_sdk
+    - path: sdk_multi_platform/ios_sdk

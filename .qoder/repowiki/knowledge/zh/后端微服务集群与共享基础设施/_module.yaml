@@ -5,4 +5,8 @@ scope:
     - server/
 source_files: []
 depends_on: []
-related_to: []
+related_to:
+    - path: infra_deploy
+    - path: docs
+    - path: web_console/shared
+    - path: web_console

@@ -1,0 +1,34 @@
+SHELL := /bin/bash
+
+.PHONY: dev infra api collector consumer web test smoke
+
+dev:
+	./scripts/dev.sh
+
+infra:
+	docker compose -f deploy/docker-compose.yml up -d
+
+api:
+	cd server/api && go run ./cmd
+
+collector:
+	cd server/collector && go run ./cmd
+
+consumer:
+	cd server/consumer && go run ./cmd
+
+web:
+	cd web && npm run dev
+
+test:
+	cd server/api && GOCACHE=/private/tmp/aerolog-go-cache go test ./...
+	cd server/collector && GOCACHE=/private/tmp/aerolog-go-cache go test ./...
+	cd server/consumer && GOCACHE=/private/tmp/aerolog-go-cache go test ./...
+	cd server/pkg && GOCACHE=/private/tmp/aerolog-go-cache go test ./...
+	cd web && npm run build
+
+smoke:
+	./scripts/smoke.sh
+
+seed:
+	node scripts/seed-data.mjs

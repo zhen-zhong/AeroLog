@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { AppShell } from "@/components/AppShell";
 import "antd/dist/reset.css";
+import "./globals.css";
 
 export const metadata: Metadata = {
   title: "AeroLog 控制台",

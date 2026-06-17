@@ -8,4 +8,10 @@ scope:
     - web/src/app/page.tsx
 source_files: []
 depends_on: []
-related_to: []
+related_to:
+    - path: web_console/console
+    - path: backend_services/api_service
+    - path: backend_services
+    - path: sdk_multi_platform
+    - path: infra_deploy
+    - path: backend_services/collector_service

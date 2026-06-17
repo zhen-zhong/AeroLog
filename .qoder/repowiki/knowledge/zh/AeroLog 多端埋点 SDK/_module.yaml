@@ -7,3 +7,8 @@ source_files: []
 depends_on: []
 related_to:
     - path: docs
+    - path: backend_services/collector_service
+    - path: web_console
+    - path: infra_deploy
+    - path: backend_services/shared_pkg
+    - path: web_console/shared

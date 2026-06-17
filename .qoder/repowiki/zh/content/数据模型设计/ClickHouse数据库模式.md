@@ -6,8 +6,16 @@
 - [event.go](file://server/pkg/model/event.go)
 - [sink.go](file://server/consumer/internal/chsink/sink.go)
 - [etl.go](file://server/consumer/internal/etl/etl.go)
-- [analytics.go](file://server/api/internal/handler/analytics.go)
+- [governance.go](file://server/api/internal/handler/governance.go)
+- [users-page.tsx](file://web/src/features/users/users-page.tsx)
 </cite>
+
+## 更新摘要
+**所做更改**
+- 新增用户维度表(users表)章节，详细说明用户识别机制
+- 更新事件事实表设计，增加用户维度相关列定义
+- 新增用户身份映射与识别流程说明
+- 补充用户画像管理功能的技术实现
 
 ## 目录
 1. [简介](#简介)
@@ -24,6 +32,8 @@
 ## 简介
 本文件聚焦于AeroLog在ClickHouse中的OLAP数据库模式设计与实现，围绕事件事实表的表结构、MergeTree引擎选择与分区策略、时间与用户维度建模、分区键与排序键设计原则、稀疏索引与压缩策略、物化视图与预计算表、ClickHouse特有数据类型与函数、以及查询优化与性能调优进行系统化说明。内容基于仓库中ClickHouse初始化脚本、事件模型、消费者ETL流程与分析接口等关键文件进行归纳总结。
 
+**更新** 新增用户维度表(users表)设计，支持直接用户识别与身份映射功能。
+
 ## 项目结构
 AeroLog的ClickHouse模式主要通过部署脚本初始化，事件模型在后端服务中定义，消费链路负责将事件写入ClickHouse，分析接口提供查询能力。下图展示了与数据库模式直接相关的模块关系：
 
@@ -31,15 +41,19 @@ AeroLog的ClickHouse模式主要通过部署脚本初始化，事件模型在后
 graph TB
 subgraph "部署与初始化"
 SCHEMA["01_schema.sql<br/>ClickHouse初始化脚本"]
-end
+END
 subgraph "后端服务"
 MODEL["event.go<br/>事件模型定义"]
 CONSUMER["consumer<br/>ETL与写入"]
-API["analytics.go<br/>分析接口"]
-end
+API["governance.go<br/>治理与用户管理"]
+END
+subgraph "前端界面"
+WEB["users-page.tsx<br/>用户画像管理"]
+END
 SCHEMA --> CONSUMER
 MODEL --> CONSUMER
 CONSUMER --> API
+WEB --> API
 ```
 
 **图表来源**
@@ -47,25 +61,28 @@ CONSUMER --> API
 - [event.go](file://server/pkg/model/event.go)
 - [sink.go](file://server/consumer/internal/chsink/sink.go)
 - [etl.go](file://server/consumer/internal/etl/etl.go)
-- [analytics.go](file://server/api/internal/handler/analytics.go)
+- [governance.go](file://server/api/internal/handler/governance.go)
+- [users-page.tsx](file://web/src/features/users/users-page.tsx)
 
 **章节来源**
 - [01_schema.sql](file://deploy/init/clickhouse/01_schema.sql)
 - [event.go](file://server/pkg/model/event.go)
 - [sink.go](file://server/consumer/internal/chsink/sink.go)
 - [etl.go](file://server/consumer/internal/etl/etl.go)
-- [analytics.go](file://server/api/internal/handler/analytics.go)
+- [governance.go](file://server/api/internal/handler/governance.go)
+- [users-page.tsx](file://web/src/features/users/users-page.tsx)
 
 ## 核心组件
 - 事件事实表：承载事件明细，采用MergeTree系列引擎，按天分区，按时间与维度组合排序，支持稀疏索引与列式压缩。
-- 维度表（可选）：用于存储用户、设备、页面等维度信息，便于关联分析与去重统计。
+- 用户维度表：存储用户身份信息，包含user_id和anonymous_id列，支持直接用户识别与身份映射。
+- 维度表（可选）：用于存储设备、页面等维度信息，便于关联分析与去重统计。
 - 物化视图/预计算表：基于高频查询构建，加速漏斗、留存、趋势等分析场景。
 - 分析接口：提供聚合查询、分组统计与时间序列分析能力。
 
 **章节来源**
 - [01_schema.sql](file://deploy/init/clickhouse/01_schema.sql)
 - [event.go](file://server/pkg/model/event.go)
-- [analytics.go](file://server/api/internal/handler/analytics.go)
+- [governance.go](file://server/api/internal/handler/governance.go)
 
 ## 架构总览
 下图展示从事件采集到ClickHouse写入再到分析查询的整体流程，体现OLAP模式下的数据流向与处理阶段：
@@ -87,7 +104,7 @@ CH-->>API : "返回分析结果"
 **图表来源**
 - [sink.go](file://server/consumer/internal/chsink/sink.go)
 - [etl.go](file://server/consumer/internal/etl/etl.go)
-- [analytics.go](file://server/api/internal/handler/analytics.go)
+- [governance.go](file://server/api/internal/handler/analytics.go)
 
 ## 详细组件分析
 
@@ -102,7 +119,7 @@ CH-->>API : "返回分析结果"
 
 ### 事件事实表设计
 - 时间维度：包含事件发生时间戳与分区键，支撑按日/小时粒度分析与滑动窗口。
-- 用户维度：包含用户唯一标识、会话标识等，便于去重与用户行为追踪。
+- 用户维度：包含用户唯一标识、匿名标识等，便于去重与用户行为追踪。
 - 属性维度：包含事件类别、页面路径、设备信息、地理位置等，支持多维交叉分析。
 - 列式存储：数值型与低基数字符串使用紧凑编码，日期时间统一使用UTC与时区无关的列名约定。
 
@@ -110,9 +127,22 @@ CH-->>API : "返回分析结果"
 - [event.go](file://server/pkg/model/event.go)
 - [01_schema.sql](file://deploy/init/clickhouse/01_schema.sql)
 
+### 用户维度表设计
+- 表结构：users表专门存储用户身份信息，包含distinct_id、user_id、anonymous_id、properties等核心列。
+- 用户识别：支持直接user_id识别与anonymous_id映射，提供灵活的用户身份管理。
+- 身份映射：通过identity_mappings表维护anonymous_id到user_id的映射关系，支持用户身份绑定历史追踪。
+- 数据同步：消费者ETL流程自动提取事件中的用户标识，写入users表并维护身份映射关系。
+
+**更新** 新增用户维度表设计，支持直接用户识别与身份映射功能。
+
+**章节来源**
+- [sink.go](file://server/consumer/internal/chsink/sink.go)
+- [governance.go](file://server/api/internal/handler/governance.go)
+- [users-page.tsx](file://web/src/features/users/users-page.tsx)
+
 ### 分区键与排序键设计原则
 - 分区键优先匹配最频繁的过滤条件（如日期），避免全表扫描。
-- 排序键遵循“过滤-排序-聚合”的访问模式，将高选择性维度前置，缩短二分查找范围。
+- 排序键遵循"过滤-排序-聚合"的访问模式，将高选择性维度前置，缩短二分查找范围。
 - 对高频分组字段建立前缀索引，结合稀疏索引提升点查与范围查询性能。
 - 避免过度排序键导致写入膨胀与合并压力。
 
@@ -167,7 +197,19 @@ CH-->>API : "返回分析结果"
 - 指标与监控：结合ClickHouse系统表与外部监控，持续评估查询延迟与资源占用。
 
 **章节来源**
-- [analytics.go](file://server/api/internal/handler/analytics.go)
+- [governance.go](file://server/api/internal/handler/governance.go)
+
+### 用户身份管理与识别流程
+- 身份识别：支持直接user_id识别与anonymous_id映射，提供灵活的用户身份管理。
+- 身份映射：通过identity_mappings表维护anonymous_id到user_id的映射关系，支持用户身份绑定历史追踪。
+- 数据同步：消费者ETL流程自动提取事件中的用户标识，写入users表并维护身份映射关系。
+- 前端展示：用户页面实时展示用户画像，包括distinct_id、user_id、anonymous_id等信息。
+
+**更新** 新增用户身份管理与识别流程说明，涵盖身份映射与用户画像展示功能。
+
+**章节来源**
+- [governance.go](file://server/api/internal/handler/governance.go)
+- [users-page.tsx](file://web/src/features/users/users-page.tsx)
 
 ## 依赖关系分析
 事件事实表与维度表之间存在潜在的关联关系，分析接口依赖于事实表与物化视图/预计算表。下图给出概念性依赖关系示意：
@@ -194,23 +236,18 @@ FACT --> QUERY
 - 存储成本：压缩比与索引开销的平衡，定期清理过期分区与历史数据。
 - 可靠性：写入重试、幂等、备份与恢复策略，监控慢查询与资源瓶颈。
 
-[本节为通用指导，无需章节来源]
-
 ## 故障排查指南
 - 写入失败：检查消息格式、字段映射与分区键合法性；查看消费者错误日志与重试队列。
 - 查询缓慢：确认WHERE条件是否命中分区键与排序键前缀；评估物化视图是否过期。
 - 存储膨胀：检查重复值与低效排序键；调整压缩参数与合并策略。
 - 监控指标：关注写入延迟、查询QPS、内存与磁盘使用率，结合系统表定位问题。
 
-[本节为通用指导，无需章节来源]
-
 ## 结论
-AeroLog的ClickHouse模式以事件事实表为核心，结合MergeTree引擎、合理的分区与排序键设计、稀疏索引与压缩策略，以及物化视图与预计算表，实现了高吞吐写入与高效OLAP分析。通过规范的数据类型与函数使用、严格的ETL流程与查询优化实践，可在保证性能的同时满足多样化的分析需求。
-
-[本节为总结性内容，无需章节来源]
+AeroLog的ClickHouse模式以事件事实表为核心，结合MergeTree引擎、合理的分区与排序键设计、稀疏索引与压缩策略，以及物化视图与预计算表，实现了高吞吐写入与高效OLAP分析。通过规范的数据类型与函数使用、严格的ETL流程与查询优化实践，可在保证性能的同时满足多样化的分析需求。新增的用户维度表进一步增强了用户识别与身份管理能力，为精细化运营提供了坚实的数据基础。
 
 ## 附录
 - 初始化脚本位置：[01_schema.sql](file://deploy/init/clickhouse/01_schema.sql)
 - 事件模型定义：[event.go](file://server/pkg/model/event.go)
 - 写入与ETL实现：[sink.go](file://server/consumer/internal/chsink/sink.go)、[etl.go](file://server/consumer/internal/etl/etl.go)
-- 分析接口实现：[analytics.go](file://server/api/internal/handler/analytics.go)
+- 治理与用户管理：[governance.go](file://server/api/internal/handler/governance.go)
+- 用户画像管理：[users-page.tsx](file://web/src/features/users/users-page.tsx)
