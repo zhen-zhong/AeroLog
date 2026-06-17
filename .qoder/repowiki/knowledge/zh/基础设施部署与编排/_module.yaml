@@ -1,0 +1,8 @@
+schema_version: 1
+module_path: infra_deploy
+title: 基础设施部署与编排
+scope:
+    - deploy/
+source_files: []
+depends_on: []
+related_to: []

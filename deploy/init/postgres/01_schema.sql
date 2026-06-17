@@ -56,12 +56,40 @@ CREATE TABLE IF NOT EXISTS property_definitions (
     project_id   BIGINT      NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     name         VARCHAR(128) NOT NULL,
     display_name VARCHAR(128),
-    data_type    VARCHAR(32)  NOT NULL DEFAULT 'string', -- string|number|bool|datetime|list
+    data_type    VARCHAR(32)  NOT NULL DEFAULT 'string', -- string|number|bool|datetime|list|object|mixed|unknown
     scope        VARCHAR(32)  NOT NULL DEFAULT 'event',  -- event|user
     description  TEXT,
+    status       SMALLINT     NOT NULL DEFAULT 1,
+    first_seen   TIMESTAMPTZ,
+    last_seen    TIMESTAMPTZ,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (project_id, name, scope)
 );
+
+ALTER TABLE property_definitions ADD COLUMN IF NOT EXISTS status SMALLINT NOT NULL DEFAULT 1;
+ALTER TABLE property_definitions ADD COLUMN IF NOT EXISTS first_seen TIMESTAMPTZ;
+ALTER TABLE property_definitions ADD COLUMN IF NOT EXISTS last_seen TIMESTAMPTZ;
+ALTER TABLE property_definitions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
+
+-- 匿名 ID 与登录用户 ID 绑定关系，用于查询时把匿名行为归并到同一真实用户。
+CREATE TABLE IF NOT EXISTS identity_mappings (
+    id           BIGSERIAL PRIMARY KEY,
+    project_id   BIGINT       NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    anonymous_id VARCHAR(255) NOT NULL,
+    user_id      VARCHAR(255) NOT NULL,
+    first_seen   TIMESTAMPTZ,
+    last_seen    TIMESTAMPTZ,
+    created_at   TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    updated_at   TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    UNIQUE (project_id, anonymous_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_identity_mappings_user
+    ON identity_mappings(project_id, user_id);
+
+CREATE INDEX IF NOT EXISTS idx_identity_mappings_anonymous
+    ON identity_mappings(project_id, anonymous_id);
 
 -- 死信队列：消费失败的事件留底
 CREATE TABLE IF NOT EXISTS event_dlq (

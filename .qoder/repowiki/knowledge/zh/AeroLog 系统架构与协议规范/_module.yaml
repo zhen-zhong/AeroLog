@@ -6,7 +6,5 @@ scope:
 source_files: []
 depends_on: []
 related_to:
-    - path: sdk
-    - path: server
-    - path: web/console
-    - path: deploy
+    - path: sdk_multi_platform
+    - path: backend_services/shared_pkg

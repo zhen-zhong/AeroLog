@@ -12,6 +12,7 @@ import (
 
 	"github.com/aerolog/server/consumer/internal/chsink"
 	"github.com/aerolog/server/consumer/internal/config"
+	"github.com/aerolog/server/consumer/internal/metadata"
 	"github.com/aerolog/server/consumer/internal/worker"
 )
 
@@ -31,7 +32,7 @@ func main() {
 	}
 	defer sink.Close()
 
-	w := worker.New(cfg.KafkaBrokers, cfg.KafkaTopic, cfg.GroupID, cfg.BatchSize, cfg.BatchMs, sink, pool)
+	w := worker.New(cfg.KafkaBrokers, cfg.KafkaTopic, cfg.GroupID, cfg.BatchSize, cfg.BatchMs, sink, metadata.New(pool), pool)
 
 	metricsSrv := metrics.Serve(cfg.MetricsAddr)
 	defer metrics.Shutdown(metricsSrv)

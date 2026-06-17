@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/aerolog/server/consumer/internal/chsink"
+	"github.com/aerolog/server/consumer/internal/metadata"
 )
 
 var (
@@ -45,14 +46,15 @@ type Worker struct {
 	batchSize int
 	batchMs   int
 	sink      *chsink.Sink
+	meta      *metadata.Syncer
 	pgPool    *pgxpool.Pool
 }
 
 // New 构造 Worker
-func New(brokers []string, topic, group string, batchSize, batchMs int, sink *chsink.Sink, pg *pgxpool.Pool) *Worker {
+func New(brokers []string, topic, group string, batchSize, batchMs int, sink *chsink.Sink, meta *metadata.Syncer, pg *pgxpool.Pool) *Worker {
 	return &Worker{
 		brokers: brokers, topic: topic, groupID: group,
-		batchSize: batchSize, batchMs: batchMs, sink: sink, pgPool: pg,
+		batchSize: batchSize, batchMs: batchMs, sink: sink, meta: meta, pgPool: pg,
 	}
 }
 
@@ -105,9 +107,9 @@ func (h *handler) ConsumeClaim(sess sarama.ConsumerGroupSession, claim sarama.Co
 		ctx, cancel := context.WithTimeout(sess.Context(), 5*time.Second)
 		defer cancel()
 		result := "ok"
-		if err := h.w.sink.WriteBatch(ctx, batch); err != nil {
+		if err := h.w.flushBatch(ctx, batch); err != nil {
 			result = "error"
-			log.Printf("write CH err: %v", err)
+			log.Printf("flush batch err: %v", err)
 			h.w.toDLQ(ctx, batch, err.Error())
 		}
 		mFlushDuration.WithLabelValues(result).Observe(time.Since(start).Seconds())
@@ -151,6 +153,42 @@ func (h *handler) ConsumeClaim(sess sarama.ConsumerGroupSession, claim sarama.Co
 			return nil
 		}
 	}
+}
+
+func (w *Worker) flushBatch(ctx context.Context, batch []*model.EnvelopedEvent) error {
+	if len(batch) == 0 {
+		return nil
+	}
+	if w.meta != nil {
+		if err := w.meta.Sync(ctx, batch); err != nil {
+			return err
+		}
+	}
+
+	tracks := make([]*model.EnvelopedEvent, 0, len(batch))
+	profiles := make([]*model.EnvelopedEvent, 0)
+	for _, e := range batch {
+		if e == nil {
+			continue
+		}
+		switch e.Event.Type {
+		case model.EventTypeTrack:
+			tracks = append(tracks, e)
+		case model.EventTypeProfileSet,
+			model.EventTypeProfileSetOnce,
+			model.EventTypeProfileIncrement,
+			model.EventTypeProfileUnset,
+			model.EventTypeProfileDelete:
+			profiles = append(profiles, e)
+		}
+	}
+	if err := w.sink.WriteBatch(ctx, tracks); err != nil {
+		return err
+	}
+	if err := w.sink.WriteProfiles(ctx, profiles); err != nil {
+		return err
+	}
+	return nil
 }
 
 // toDLQ 落到 Postgres event_dlq 表

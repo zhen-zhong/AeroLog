@@ -53,8 +53,13 @@ CREATE TABLE IF NOT EXISTS aerolog.users
 (
     project_id   UInt32,
     distinct_id  String,
+    user_id      String DEFAULT '',
+    anonymous_id String DEFAULT '',
     properties   String DEFAULT '{}',
     updated_at   DateTime64(3, 'UTC')
 )
 ENGINE = ReplacingMergeTree(updated_at)
 ORDER BY (project_id, distinct_id);
+
+ALTER TABLE aerolog.users ADD COLUMN IF NOT EXISTS user_id String DEFAULT '';
+ALTER TABLE aerolog.users ADD COLUMN IF NOT EXISTS anonymous_id String DEFAULT '';
