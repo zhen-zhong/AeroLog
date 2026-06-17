@@ -100,6 +100,32 @@ export interface QueryTableRow {
     count: number;
     users: number;
 }
+export interface ConversionGoal {
+    id: number;
+    project_id: number;
+    name: string;
+    description: string;
+    events: string[];
+    window_seconds: number;
+    breakdown_property: string;
+    status: number;
+    created_at: string;
+    updated_at: string;
+}
+export interface ConversionStep {
+    event: string;
+    users: number;
+    conversion: number;
+    dropoff: number;
+}
+export interface ConversionBreakdownRow {
+    raw: string;
+    value: unknown;
+    label: string;
+    steps: ConversionStep[];
+    users: number;
+    conversion: number;
+}
 export interface ApiList<T> {
     data: T[];
 }
@@ -201,6 +227,39 @@ export const api = {
             `/projects/${id}/analytics/property_values?${q}`,
         );
     },
+    listConversionGoals: (id: number | string) =>
+        req<ApiList<ConversionGoal>>(`/projects/${id}/conversion_goals`),
+    createConversionGoal: (
+        id: number | string,
+        body: {
+            name: string;
+            description?: string;
+            events: string[];
+            window_seconds: number;
+            breakdown_property?: string;
+        },
+    ) =>
+        req<ApiOne<ConversionGoal>>(`/projects/${id}/conversion_goals`, {
+            method: "POST",
+            body: JSON.stringify(body),
+        }),
+    conversion: (
+        id: number | string,
+        body: {
+            events: string[];
+            from?: number;
+            to?: number;
+            window_seconds?: number;
+            breakdown_property?: string;
+        },
+    ) =>
+        req<ApiOne<{ steps: ConversionStep[]; breakdown: ConversionBreakdownRow[] }>>(
+            `/projects/${id}/analytics/conversion`,
+            {
+                method: "POST",
+                body: JSON.stringify(body),
+            },
+        ),
     queryTable: (
         id: number | string,
         body: {

@@ -1,6 +1,6 @@
 schema_version: 1
 module_path: web_console/shared_ui
-title: 通用 UI 组件与布局系统
+title: 共享 UI 组件与基础库
 scope:
     - web/src/components/
     - web/src/features/

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -9,10 +10,12 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // AnalyticsHandler 提供事件趋势/Top 事件等查询。
 type AnalyticsHandler struct {
+	PG *pgxpool.Pool
 	CH driver.Conn
 }
 
@@ -30,6 +33,9 @@ func (h *AnalyticsHandler) Register(r *gin.RouterGroup) {
 	r.GET("/projects/:id/analytics/top_events", h.topEvents)
 	r.GET("/projects/:id/analytics/property_values", h.propertyValues)
 	r.POST("/projects/:id/analytics/query_table", h.queryTable)
+	r.GET("/projects/:id/conversion_goals", h.listConversionGoals)
+	r.POST("/projects/:id/conversion_goals", h.createConversionGoal)
+	r.POST("/projects/:id/analytics/conversion", h.conversion)
 	r.POST("/projects/:id/analytics/funnel", h.funnel)
 	r.GET("/projects/:id/analytics/retention", h.retention)
 	r.GET("/projects/:id/users/:distinct_id/events", h.userEvents)
@@ -216,6 +222,296 @@ func parsePropertyValue(raw string) (any, string) {
 	}
 }
 
+type conversionGoal struct {
+	ID                int64     `json:"id"`
+	ProjectID         int64     `json:"project_id"`
+	Name              string    `json:"name"`
+	Description       string    `json:"description"`
+	Events            []string  `json:"events"`
+	WindowSeconds     int       `json:"window_seconds"`
+	BreakdownProperty string    `json:"breakdown_property"`
+	Status            int16     `json:"status"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
+}
+
+func (h *AnalyticsHandler) ensureConversionGoalTable(ctx context.Context) error {
+	if h.PG == nil {
+		return nil
+	}
+	_, err := h.PG.Exec(ctx, `
+		CREATE TABLE IF NOT EXISTS conversion_goals (
+			id                 BIGSERIAL PRIMARY KEY,
+			project_id          BIGINT       NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+			name                VARCHAR(128) NOT NULL,
+			description         TEXT,
+			events              JSONB        NOT NULL DEFAULT '[]'::jsonb,
+			window_seconds      INTEGER      NOT NULL DEFAULT 604800,
+			breakdown_property  VARCHAR(128),
+			status              SMALLINT     NOT NULL DEFAULT 1,
+			created_at          TIMESTAMPTZ  NOT NULL DEFAULT now(),
+			updated_at          TIMESTAMPTZ  NOT NULL DEFAULT now()
+		);
+		CREATE INDEX IF NOT EXISTS idx_conversion_goals_project
+			ON conversion_goals(project_id, status, updated_at DESC);
+	`)
+	return err
+}
+
+func (h *AnalyticsHandler) listConversionGoals(c *gin.Context) {
+	if err := h.ensureConversionGoalTable(c.Request.Context()); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
+		return
+	}
+	pid, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	rows, err := h.PG.Query(c, `
+		SELECT id, project_id, name, COALESCE(description, ''), events, window_seconds,
+		       COALESCE(breakdown_property, ''), status, created_at, updated_at
+		FROM conversion_goals
+		WHERE project_id = $1 AND status = 1
+		ORDER BY updated_at DESC, id DESC
+		LIMIT 100
+	`, pid)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
+		return
+	}
+	defer rows.Close()
+	out := []conversionGoal{}
+	for rows.Next() {
+		var item conversionGoal
+		var raw []byte
+		if err := rows.Scan(&item.ID, &item.ProjectID, &item.Name, &item.Description, &raw, &item.WindowSeconds, &item.BreakdownProperty, &item.Status, &item.CreatedAt, &item.UpdatedAt); err == nil {
+			_ = json.Unmarshal(raw, &item.Events)
+			out = append(out, item)
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out})
+}
+
+func (h *AnalyticsHandler) createConversionGoal(c *gin.Context) {
+	if err := h.ensureConversionGoalTable(c.Request.Context()); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
+		return
+	}
+	pid, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	var body struct {
+		Name              string   `json:"name"`
+		Description       string   `json:"description"`
+		Events            []string `json:"events"`
+		WindowSeconds     int      `json:"window_seconds"`
+		BreakdownProperty string   `json:"breakdown_property"`
+	}
+	if err := c.BindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
+		return
+	}
+	if body.Name == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"err": "name required"})
+		return
+	}
+	if len(body.Events) < 2 || len(body.Events) > 12 {
+		c.JSON(http.StatusBadRequest, gin.H{"err": "events length must be 2..12"})
+		return
+	}
+	if body.WindowSeconds <= 0 {
+		body.WindowSeconds = 7 * 24 * 3600
+	}
+	rawEvents, _ := json.Marshal(body.Events)
+	var item conversionGoal
+	var raw []byte
+	err := h.PG.QueryRow(c, `
+		INSERT INTO conversion_goals(project_id, name, description, events, window_seconds, breakdown_property)
+		VALUES($1, $2, $3, $4::jsonb, $5, NULLIF($6, ''))
+		RETURNING id, project_id, name, COALESCE(description, ''), events, window_seconds,
+		          COALESCE(breakdown_property, ''), status, created_at, updated_at
+	`, pid, body.Name, body.Description, string(rawEvents), body.WindowSeconds, body.BreakdownProperty).
+		Scan(&item.ID, &item.ProjectID, &item.Name, &item.Description, &raw, &item.WindowSeconds, &item.BreakdownProperty, &item.Status, &item.CreatedAt, &item.UpdatedAt)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
+		return
+	}
+	_ = json.Unmarshal(raw, &item.Events)
+	c.JSON(http.StatusOK, gin.H{"data": item})
+}
+
+func (h *AnalyticsHandler) conversion(c *gin.Context) {
+	pid, _ := strconv.ParseUint(c.Param("id"), 10, 32)
+	var body struct {
+		Events            []string `json:"events"`
+		From              int64    `json:"from"`
+		To                int64    `json:"to"`
+		WindowSeconds     int64    `json:"window_seconds"`
+		BreakdownProperty string   `json:"breakdown_property"`
+	}
+	if err := c.BindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
+		return
+	}
+	if len(body.Events) < 2 || len(body.Events) > 12 {
+		c.JSON(http.StatusBadRequest, gin.H{"err": "events length must be 2..12"})
+		return
+	}
+	if body.To == 0 {
+		body.To = time.Now().UnixMilli()
+	}
+	if body.From == 0 {
+		body.From = body.To - 7*24*3600*1000
+	}
+	if body.WindowSeconds <= 0 {
+		body.WindowSeconds = 7 * 24 * 3600
+	}
+
+	ctx := c.Request.Context()
+	steps, err := h.computeFunnel(ctx, uint32(pid), body.Events, body.From, body.To, body.WindowSeconds)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
+		return
+	}
+	breakdown := []conversionBreakdownRow{}
+	if body.BreakdownProperty != "" {
+		breakdown, err = h.computeFunnelBreakdown(ctx, uint32(pid), body.Events, body.From, body.To, body.WindowSeconds, body.BreakdownProperty)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
+			return
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"steps": steps, "breakdown": breakdown}})
+}
+
+type funnelStep struct {
+	Event      string  `json:"event"`
+	Users      uint64  `json:"users"`
+	Conversion float64 `json:"conversion"`
+	Dropoff    float64 `json:"dropoff"`
+}
+
+type conversionBreakdownRow struct {
+	Raw        string       `json:"raw"`
+	Value      any          `json:"value"`
+	Label      string       `json:"label"`
+	Steps      []funnelStep `json:"steps"`
+	Users      uint64       `json:"users"`
+	Conversion float64      `json:"conversion"`
+}
+
+func (h *AnalyticsHandler) computeFunnel(ctx context.Context, pid uint32, events []string, from, to, windowSeconds int64) ([]funnelStep, error) {
+	conds := make([]string, 0, len(events))
+	args := make([]any, 0, len(events)+3)
+	for _, ev := range events {
+		conds = append(conds, "event = ?")
+		args = append(args, ev)
+	}
+	args = append(args, pid, from, to)
+
+	inner := `SELECT distinct_id, windowFunnel(` + strconv.FormatInt(windowSeconds, 10) + `)(toDateTime(time), ` + joinStrs(conds, ", ") + `) AS level
+	          FROM events
+	          WHERE project_id = ? AND time BETWEEN fromUnixTimestamp64Milli(?) AND fromUnixTimestamp64Milli(?)
+	          GROUP BY distinct_id`
+	q := `SELECT level, count() FROM (` + inner + `) GROUP BY level ORDER BY level`
+	rows, err := h.CH.Query(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	levelCounts := make(map[uint8]uint64)
+	for rows.Next() {
+		var lv uint8
+		var cnt uint64
+		if err := rows.Scan(&lv, &cnt); err == nil {
+			levelCounts[lv] = cnt
+		}
+	}
+	return buildFunnelSteps(events, levelCounts), nil
+}
+
+func (h *AnalyticsHandler) computeFunnelBreakdown(ctx context.Context, pid uint32, events []string, from, to, windowSeconds int64, property string) ([]conversionBreakdownRow, error) {
+	conds := make([]string, 0, len(events))
+	args := []any{property, pid, events[0], from, to}
+	for _, ev := range events {
+		conds = append(conds, "e.event = ?")
+		args = append(args, ev)
+	}
+	args = append(args, pid, from, to)
+	q := `
+		WITH first_dims AS (
+			SELECT distinct_id, argMin(JSONExtractRaw(properties, ?), time) AS dim
+			FROM events
+			WHERE project_id = ? AND event = ? AND time BETWEEN fromUnixTimestamp64Milli(?) AND fromUnixTimestamp64Milli(?)
+			GROUP BY distinct_id
+		)
+		SELECT dim, level, count()
+		FROM (
+			SELECT e.distinct_id, f.dim AS dim,
+			       windowFunnel(` + strconv.FormatInt(windowSeconds, 10) + `)(toDateTime(e.time), ` + joinStrs(conds, ", ") + `) AS level
+			FROM events AS e
+			INNER JOIN first_dims AS f ON e.distinct_id = f.distinct_id
+			WHERE e.project_id = ? AND e.time BETWEEN fromUnixTimestamp64Milli(?) AND fromUnixTimestamp64Milli(?)
+			GROUP BY e.distinct_id, f.dim
+		)
+		WHERE dim != ''
+		GROUP BY dim, level
+		ORDER BY count() DESC
+	`
+	rows, err := h.CH.Query(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	type dimCounts map[uint8]uint64
+	byDim := map[string]dimCounts{}
+	for rows.Next() {
+		var dim string
+		var lv uint8
+		var cnt uint64
+		if err := rows.Scan(&dim, &lv, &cnt); err != nil {
+			continue
+		}
+		if byDim[dim] == nil {
+			byDim[dim] = dimCounts{}
+		}
+		byDim[dim][lv] += cnt
+	}
+	out := make([]conversionBreakdownRow, 0, len(byDim))
+	for raw, counts := range byDim {
+		steps := buildFunnelSteps(events, counts)
+		value, label := parsePropertyValue(raw)
+		users := uint64(0)
+		conversion := 0.0
+		if len(steps) > 0 {
+			users = steps[0].Users
+			conversion = steps[len(steps)-1].Conversion
+		}
+		out = append(out, conversionBreakdownRow{Raw: raw, Value: value, Label: label, Steps: steps, Users: users, Conversion: conversion})
+	}
+	return out, nil
+}
+
+func buildFunnelSteps(events []string, levelCounts map[uint8]uint64) []funnelStep {
+	n := len(events)
+	cum := make([]uint64, n+1)
+	for lv, cnt := range levelCounts {
+		for i := 0; i <= int(lv) && i <= n; i++ {
+			cum[i] += cnt
+		}
+	}
+	steps := make([]funnelStep, n)
+	first := cum[1]
+	for i := 0; i < n; i++ {
+		users := cum[i+1]
+		conversion := 0.0
+		if first > 0 {
+			conversion = float64(users) / float64(first)
+		}
+		dropoff := 0.0
+		if i > 0 && cum[i] > 0 {
+			dropoff = 1 - float64(users)/float64(cum[i])
+		}
+		steps[i] = funnelStep{Event: events[i], Users: users, Conversion: conversion, Dropoff: dropoff}
+	}
+	return steps
+}
+
 // /v1/projects/:id/users/:distinct_id/events?from=ts&to=ts&event=xxx&limit=100
 func (h *AnalyticsHandler) userEvents(c *gin.Context) {
 	pid, _ := strconv.ParseUint(c.Param("id"), 10, 32)
@@ -328,10 +624,6 @@ func (h *AnalyticsHandler) queryTable(c *gin.Context) {
 			Type string `json:"type"`
 			Key  string `json:"key"`
 		}{Type: "event", Key: "event"})
-	}
-	if len(body.Dimensions) > 6 {
-		c.JSON(http.StatusBadRequest, gin.H{"err": "dimensions length must be <= 6"})
-		return
 	}
 
 	selectArgs := []any{}

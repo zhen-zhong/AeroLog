@@ -114,7 +114,7 @@ func newRouter(cfg *config.Config, pool *pgxpool.Pool, chConn driver.Conn) *gin.
 	(&handler.ProjectHandler{PG: pool}).Register(v1)
 	(&handler.EventDefHandler{PG: pool}).Register(v1)
 	(&handler.GovernanceHandler{PG: pool, CH: chConn}).Register(v1)
-	(&handler.AnalyticsHandler{CH: chConn}).Register(v1)
+	(&handler.AnalyticsHandler{PG: pool, CH: chConn}).Register(v1)
 	return r
 }
 

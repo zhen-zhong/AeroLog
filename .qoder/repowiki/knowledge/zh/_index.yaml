@@ -2,7 +2,7 @@
 schema_version: 1
 locale: zh-CN
 branch: main
-exported_at: "2026-06-17T07:27:19Z"
+exported_at: "2026-06-17T09:26:47Z"
 modules:
     "":
         dir_name: AeroLog 实时事件分析平台
@@ -13,16 +13,16 @@ modules:
         depends_on: []
         related_to: []
     backend_services:
-        dir_name: AeroLog 后端微服务集群
-        title: AeroLog 后端微服务集群
+        dir_name: 后端微服务集群与共享基础设施
+        title: 后端微服务集群与共享基础设施
         scope:
             - server/
         source_files: []
         children:
-            - backend_services/collector_service
-            - backend_services/shared_pkg
-            - backend_services/api_service
             - backend_services/consumer_service
+            - backend_services/collector_service
+            - backend_services/api_service
+            - backend_services/shared_pkg
         depends_on: []
         related_to:
             - path: infra_deploy
@@ -157,9 +157,9 @@ modules:
             - sdk/
         source_files: []
         children:
+            - sdk_multi_platform/ios_sdk
             - sdk_multi_platform/android_sdk
             - sdk_multi_platform/web_sdk
-            - sdk_multi_platform/ios_sdk
         depends_on: []
         related_to:
             - path: docs
@@ -233,15 +233,15 @@ modules:
             - path: backend_services
             - path: web_console
     web_console:
-        dir_name: AeroLog Web 控制台
-        title: AeroLog Web 控制台
+        dir_name: AeroLog 数据洞察控制台
+        title: AeroLog 数据洞察控制台
         scope:
             - web/
         source_files: []
         children:
             - web_console/console
-            - web_console/admin
             - web_console/shared_ui
+            - web_console/admin
         depends_on: []
         related_to:
             - path: backend_services
@@ -291,8 +291,8 @@ modules:
             - path: backend_services/consumer_service
             - path: infra_deploy
     web_console/shared_ui:
-        dir_name: 通用 UI 组件与布局系统
-        title: 通用 UI 组件与布局系统
+        dir_name: 共享 UI 组件与基础库
+        title: 共享 UI 组件与基础库
         scope:
             - web/src/components/
             - web/src/features/

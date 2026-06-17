@@ -34,6 +34,8 @@ type DraftFilter = {
   value: string;
 };
 
+const DRAFT_STORAGE_KEY = "aerolog:query-builder:draft";
+
 export default function QueryBuilderPage() {
   const [projectId, setProjectId] = useState<number | undefined>();
   const [range, setRange] = useState<[Dayjs, Dayjs]>([
@@ -45,6 +47,7 @@ export default function QueryBuilderPage() {
   const [filters, setFilters] = useState<DraftFilter[]>([
     { id: crypto.randomUUID(), event: "", property: "", op: "eq", value: "" },
   ]);
+  const [draftReady, setDraftReady] = useState(false);
 
   const { data: projects } = useQuery({
     queryKey: ["projects"],
@@ -55,18 +58,64 @@ export default function QueryBuilderPage() {
     if (!projectId && projects?.data?.length) setProjectId(projects.data[0].id);
   }, [projects, projectId]);
 
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(DRAFT_STORAGE_KEY);
+      if (!raw) {
+        setDraftReady(true);
+        return;
+      }
+      const draft = JSON.parse(raw) as {
+        projectId?: number;
+        from?: number;
+        to?: number;
+        events?: string[];
+        dimensions?: QueryDimension[];
+        filters?: DraftFilter[];
+      };
+      if (draft.projectId) setProjectId(draft.projectId);
+      if (draft.from && draft.to) setRange([dayjs(draft.from), dayjs(draft.to)]);
+      if (Array.isArray(draft.events)) setEvents(draft.events);
+      if (Array.isArray(draft.dimensions) && draft.dimensions.length) setDimensions(draft.dimensions);
+      if (Array.isArray(draft.filters) && draft.filters.length) {
+        setFilters(draft.filters.map((item) => ({ ...item, id: item.id || crypto.randomUUID() })));
+      }
+    } catch {
+      // ignore broken local draft
+    } finally {
+      setDraftReady(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!draftReady) return;
+    window.localStorage.setItem(
+      DRAFT_STORAGE_KEY,
+      JSON.stringify({
+        projectId,
+        from: range[0].valueOf(),
+        to: range[1].valueOf(),
+        events,
+        dimensions,
+        filters,
+      }),
+    );
+  }, [projectId, range, events, dimensions, filters, draftReady]);
+
   const tsRange = useMemo(() => ({ from: range[0].valueOf(), to: range[1].valueOf() }), [range]);
 
   const top = useQuery({
     queryKey: ["query_top_events", projectId, tsRange],
     queryFn: () => api.topEvents(projectId!, { ...tsRange, limit: 80 }),
     enabled: !!projectId,
+    placeholderData: (previousData) => previousData,
   });
 
   const props = useQuery({
     queryKey: ["query_properties", projectId],
     queryFn: () => api.listProperties(projectId!, { scope: "event" }),
     enabled: !!projectId,
+    placeholderData: (previousData) => previousData,
   });
 
   const eventRows = top.data?.data || [];
@@ -92,6 +141,8 @@ export default function QueryBuilderPage() {
 
   const rows = query.data?.data.rows || [];
   const selectedEventLabel = events.length ? `${events.length} 个事件` : "全部事件";
+  const resultDimensions = query.data?.data.dimensions || dimensions;
+  const tableMinWidth = Math.max(760, resultDimensions.length * 220 + 180);
 
   function toggleEvent(event: string) {
     setEvents((current) =>
@@ -107,7 +158,6 @@ export default function QueryBuilderPage() {
         const next = current.filter((item) => `${item.type}:${item.key}` !== key);
         return next.length ? next : [{ type: "event", key: "event" }];
       }
-      if (current.length >= 6) return current;
       return [...current, dim];
     });
   }
@@ -228,7 +278,7 @@ export default function QueryBuilderPage() {
                   label="事件名"
                   onClick={() => toggleDimension({ type: "event", key: "event" })}
                 />
-                {propertyRows.slice(0, 24).map((item) => (
+                {propertyRows.map((item) => (
                   <DimensionButton
                     key={item.id}
                     active={dimensions.some((dim) => dim.type === "property" && dim.key === item.name)}
@@ -249,6 +299,7 @@ export default function QueryBuilderPage() {
                     setEvents([]);
                     setDimensions([{ type: "event", key: "event" }]);
                     setFilters([{ id: crypto.randomUUID(), event: "", property: "", op: "eq", value: "" }]);
+                    window.localStorage.removeItem(DRAFT_STORAGE_KEY);
                     query.reset();
                   }}
                 >
@@ -263,22 +314,24 @@ export default function QueryBuilderPage() {
 
         <ChartPanel title="查询结果" description="按所选维度聚合，指标为事件次数和去重用户数" contentClassName="p-0 sm:p-0">
           {rows.length ? (
-            <div className="overflow-x-auto">
-              <Table>
+            <div className="max-w-full overflow-x-auto">
+              <Table style={{ minWidth: tableMinWidth }}>
                 <TableHeader>
                   <TableRow>
-                    {query.data?.data.dimensions.map((dim) => (
-                      <TableHead key={`${dim.type}:${dim.key}`}>{dim.type === "event" ? "事件" : dim.key}</TableHead>
+                    {resultDimensions.map((dim) => (
+                      <TableHead key={`${dim.type}:${dim.key}`} className="w-56 whitespace-nowrap">
+                        {dim.type === "event" ? "事件" : dim.key}
+                      </TableHead>
                     ))}
-                    <TableHead className="text-right">次数</TableHead>
-                    <TableHead className="text-right">用户</TableHead>
+                    <TableHead className="w-24 whitespace-nowrap text-right">次数</TableHead>
+                    <TableHead className="w-24 whitespace-nowrap text-right">用户</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {rows.map((row, index) => (
                     <TableRow key={index}>
                       {row.dimensions.map((dim) => (
-                        <TableCell key={`${index}:${dim.type}:${dim.key}`} className="max-w-[260px] truncate font-medium">
+                        <TableCell key={`${index}:${dim.type}:${dim.key}`} className="max-w-56 truncate font-medium">
                           {dim.label}
                         </TableCell>
                       ))}

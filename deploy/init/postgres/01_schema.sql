@@ -111,6 +111,23 @@ CREATE TABLE IF NOT EXISTS dashboards (
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- 转化目标：保存核心业务路径，计算仍走 ClickHouse 实时分析。
+CREATE TABLE IF NOT EXISTS conversion_goals (
+    id                 BIGSERIAL PRIMARY KEY,
+    project_id          BIGINT       NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    name                VARCHAR(128) NOT NULL,
+    description         TEXT,
+    events              JSONB        NOT NULL DEFAULT '[]'::jsonb,
+    window_seconds      INTEGER      NOT NULL DEFAULT 604800,
+    breakdown_property  VARCHAR(128),
+    status              SMALLINT     NOT NULL DEFAULT 1,
+    created_at          TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    updated_at          TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_conversion_goals_project
+    ON conversion_goals(project_id, status, updated_at DESC);
+
 -- 默认管理员（密码：aerolog123，bcrypt，请上线后立即改）
 INSERT INTO users (email, name, password_hash, role)
 VALUES ('admin@aerolog.local', 'admin',

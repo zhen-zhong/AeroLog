@@ -1,6 +1,6 @@
 schema_version: 1
 module_path: web_console
-title: AeroLog Web 控制台
+title: AeroLog 数据洞察控制台
 scope:
     - web/
 source_files: []
