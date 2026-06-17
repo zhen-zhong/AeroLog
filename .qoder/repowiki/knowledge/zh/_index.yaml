@@ -2,7 +2,7 @@
 schema_version: 1
 locale: zh-CN
 branch: main
-exported_at: "2026-06-17T03:22:26Z"
+exported_at: "2026-06-17T03:46:29Z"
 modules:
     "":
         dir_name: AeroLog 全链路埋点分析平台
@@ -19,10 +19,10 @@ modules:
             - server/
         source_files: []
         children:
-            - backend_services/consumer_service
-            - backend_services/api_service
-            - backend_services/collector_service
             - backend_services/shared_pkg
+            - backend_services/collector_service
+            - backend_services/api_service
+            - backend_services/consumer_service
         depends_on: []
         related_to:
             - path: infra_deploy
@@ -210,8 +210,8 @@ modules:
             - web/
         source_files: []
         children:
-            - web_console/shared
             - web_console/console
+            - web_console/shared
         depends_on: []
         related_to:
             - path: sdk_multi_platform
