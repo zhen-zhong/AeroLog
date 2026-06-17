@@ -31,6 +31,8 @@ export interface EventDefinition {
     name: string;
     display_name: string;
     description: string;
+    schema_required_props: string[];
+    schema_locked: boolean;
     status: number;
     first_seen?: string;
     last_seen?: string;
@@ -51,6 +53,7 @@ export interface PropertyDefinition {
 }
 export interface DebugEvent {
     id: number;
+    project_id: number;
     event: string;
     event_type: string;
     distinct_id: string;
@@ -127,6 +130,7 @@ export interface QueryTableRow {
     }[];
     count: number;
     users: number;
+    sample_users: string[];
 }
 export interface ConversionGoal {
     id: number;
@@ -172,6 +176,23 @@ export const api = {
     getProject: (id: number | string) => req<ApiOne<Project>>(`/projects/${id}`),
     listEvents: (id: number | string) =>
         req<ApiList<EventDefinition>>(`/projects/${id}/events`),
+    updateEventSchema: (
+        id: number | string,
+        event: string,
+        body: {
+            schema_required_props: string[];
+            status?: number;
+            display_name?: string;
+            description?: string;
+        },
+    ) =>
+        req<ApiOne<EventDefinition>>(
+            `/projects/${id}/events/${encodeURIComponent(event)}/schema`,
+            {
+                method: "PUT",
+                body: JSON.stringify(body),
+            },
+        ),
     listProperties: (
         id: number | string,
         params?: { scope?: "event" | "user" },
@@ -201,13 +222,14 @@ export const api = {
         ),
     debugEvents: (
         id: number | string,
-        params?: { event?: string; result?: string; distinct_id?: string; limit?: number },
+        params?: { event?: string; result?: string; distinct_id?: string; limit?: number; include_global?: boolean },
     ) => {
         const q = new URLSearchParams();
         if (params?.event) q.set("event", params.event);
         if (params?.result) q.set("result", params.result);
         if (params?.distinct_id) q.set("distinct_id", params.distinct_id);
         if (params?.limit) q.set("limit", String(params.limit));
+        if (params?.include_global) q.set("include_global", "1");
         return req<ApiList<DebugEvent>>(`/projects/${id}/debug/events?${q}`);
     },
     schemaIssues: (

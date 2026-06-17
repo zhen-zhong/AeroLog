@@ -11,6 +11,3 @@ related_to:
     - path: backend_services/api_service
     - path: docs
     - path: infra_deploy
-    - path: sdk_multi_platform/ios_sdk
-    - path: sdk_multi_platform/android_sdk
-    - path: sdk_multi_platform/web_sdk

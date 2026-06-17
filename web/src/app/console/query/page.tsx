@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import dayjs, { Dayjs } from "dayjs";
 import { Filter, Play, Plus, RotateCcw, X } from "lucide-react";
@@ -142,7 +143,7 @@ export default function QueryBuilderPage() {
   const rows = query.data?.data.rows || [];
   const selectedEventLabel = events.length ? `${events.length} 个事件` : "全部事件";
   const resultDimensions = query.data?.data.dimensions || dimensions;
-  const tableMinWidth = Math.max(760, resultDimensions.length * 220 + 180);
+  const tableMinWidth = Math.max(920, resultDimensions.length * 220 + 340);
 
   function toggleEvent(event: string) {
     setEvents((current) =>
@@ -325,6 +326,7 @@ export default function QueryBuilderPage() {
                     ))}
                     <TableHead className="w-24 whitespace-nowrap text-right">次数</TableHead>
                     <TableHead className="w-24 whitespace-nowrap text-right">用户</TableHead>
+                    <TableHead className="w-44 whitespace-nowrap">样例用户</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -337,6 +339,22 @@ export default function QueryBuilderPage() {
                       ))}
                       <TableCell className="text-right font-mono">{row.count.toLocaleString()}</TableCell>
                       <TableCell className="text-right font-mono">{row.users.toLocaleString()}</TableCell>
+                      <TableCell>
+                        {row.sample_users?.length ? (
+                          <div className="flex max-w-44 flex-wrap gap-1">
+                            {row.sample_users.slice(0, 3).map((user) => (
+                              <Link
+                                key={user}
+                                href={`/console/users?project_id=${projectId}&distinct_id=${encodeURIComponent(user)}&from=${tsRange.from}&to=${tsRange.to}`}
+                                className="max-w-full truncate rounded-md bg-secondary px-2 py-1 text-xs text-primary hover:bg-accent hover:text-accent-foreground"
+                                title="查看用户时间线"
+                              >
+                                {user}
+                              </Link>
+                            ))}
+                          </div>
+                        ) : "-"}
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>

@@ -5,4 +5,7 @@ scope:
     - web/
 source_files: []
 depends_on: []
-related_to: []
+related_to:
+    - path: infra_deploy
+    - path: backend_services/api_service
+    - path: docs

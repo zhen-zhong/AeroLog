@@ -7,11 +7,4 @@ source_files: []
 depends_on: []
 related_to:
     - path: infra_deploy
-    - path: web_console
-    - path: web_console/console
     - path: docs
-    - path: web_console/shared_ui
-    - path: web_console/admin
-    - path: sdk_multi_platform/web_sdk
-    - path: sdk_multi_platform/android_sdk
-    - path: sdk_multi_platform/ios_sdk

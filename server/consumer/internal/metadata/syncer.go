@@ -147,6 +147,13 @@ type schemaProperty struct {
 	locked   bool
 }
 
+type eventSchema struct {
+	name          string
+	status        int16
+	requiredProps []string
+	locked        bool
+}
+
 type schemaIssue struct {
 	projectID    uint32
 	event        string
@@ -164,10 +171,12 @@ func (s *Syncer) ensureSchemaSupport(ctx context.Context) error {
 		ALTER TABLE property_definitions ADD COLUMN IF NOT EXISTS schema_required BOOLEAN NOT NULL DEFAULT false;
 		ALTER TABLE property_definitions ADD COLUMN IF NOT EXISTS schema_locked BOOLEAN NOT NULL DEFAULT false;
 		ALTER TABLE property_definitions ADD COLUMN IF NOT EXISTS enum_values JSONB NOT NULL DEFAULT '[]'::jsonb;
+		ALTER TABLE event_definitions ADD COLUMN IF NOT EXISTS schema_required_props JSONB NOT NULL DEFAULT '[]'::jsonb;
+		ALTER TABLE event_definitions ADD COLUMN IF NOT EXISTS schema_locked BOOLEAN NOT NULL DEFAULT false;
 
 		CREATE TABLE IF NOT EXISTS debug_events (
 			id           BIGSERIAL PRIMARY KEY,
-			project_id   BIGINT       NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+			project_id   BIGINT       REFERENCES projects(id) ON DELETE CASCADE,
 			event        VARCHAR(128),
 			event_type   VARCHAR(32)   NOT NULL,
 			distinct_id  VARCHAR(255),
@@ -179,6 +188,7 @@ func (s *Syncer) ensureSchemaSupport(ctx context.Context) error {
 			received_at  TIMESTAMPTZ,
 			created_at   TIMESTAMPTZ   NOT NULL DEFAULT now()
 		);
+		ALTER TABLE debug_events ALTER COLUMN project_id DROP NOT NULL;
 
 		CREATE INDEX IF NOT EXISTS idx_debug_events_project_created
 			ON debug_events(project_id, created_at DESC);
@@ -215,12 +225,18 @@ func (s *Syncer) validateSchemas(ctx context.Context, events []*model.EnvelopedE
 		}
 	}
 	defsByProject := map[uint32]map[string]schemaProperty{}
+	eventDefsByProject := map[uint32]map[string]eventSchema{}
 	for projectID := range projectIDs {
 		defs, err := s.loadSchemaProperties(ctx, projectID)
 		if err != nil {
 			return nil, nil, err
 		}
 		defsByProject[projectID] = defs
+		eventDefs, err := s.loadEventSchemas(ctx, projectID)
+		if err != nil {
+			return nil, nil, err
+		}
+		eventDefsByProject[projectID] = eventDefs
 	}
 
 	byIndex := map[int][]schemaIssue{}
@@ -238,6 +254,45 @@ func (s *Syncer) validateSchemas(ctx context.Context, events []*model.EnvelopedE
 		props := env.Event.Properties
 		if props == nil {
 			props = map[string]interface{}{}
+		}
+
+		if eventDef, ok := eventDefsByProject[env.ProjectID][env.Event.Event]; ok {
+			if eventDef.status == 0 {
+				issue := schemaIssue{
+					projectID:    env.ProjectID,
+					event:        env.Event.Event,
+					property:     "",
+					expectedType: "enabled_event",
+					actualType:   "disabled_event",
+					severity:     "error",
+					message:      "事件已被禁用",
+					payload:      payload,
+					observedAt:   at,
+				}
+				byIndex[idx] = append(byIndex[idx], issue)
+				all = append(all, issue)
+			}
+			for _, requiredProp := range eventDef.requiredProps {
+				if requiredProp == "" {
+					continue
+				}
+				if _, ok := props[requiredProp]; ok {
+					continue
+				}
+				issue := schemaIssue{
+					projectID:    env.ProjectID,
+					event:        env.Event.Event,
+					property:     requiredProp,
+					expectedType: "required",
+					actualType:   "missing",
+					severity:     "error",
+					message:      "事件必带参数缺失",
+					payload:      payload,
+					observedAt:   at,
+				}
+				byIndex[idx] = append(byIndex[idx], issue)
+				all = append(all, issue)
+			}
 		}
 
 		for name, def := range defs {
@@ -320,6 +375,30 @@ func (s *Syncer) loadSchemaProperties(ctx context.Context, projectID uint32) (ma
 		}
 		p.enums = parseStringEnums(raw)
 		out[p.name] = p
+	}
+	return out, rows.Err()
+}
+
+func (s *Syncer) loadEventSchemas(ctx context.Context, projectID uint32) (map[string]eventSchema, error) {
+	rows, err := s.pg.Query(ctx, `
+		SELECT name, status, schema_required_props, schema_locked
+		FROM event_definitions
+		WHERE project_id=$1
+	`, int64(projectID))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := map[string]eventSchema{}
+	for rows.Next() {
+		var item eventSchema
+		var raw []byte
+		if err := rows.Scan(&item.name, &item.status, &raw, &item.locked); err != nil {
+			return nil, err
+		}
+		item.requiredProps = parseStringEnums(raw)
+		out[item.name] = item
 	}
 	return out, rows.Err()
 }

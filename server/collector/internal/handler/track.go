@@ -3,9 +3,13 @@ package handler
 import (
 	"compress/gzip"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"strings"
@@ -15,6 +19,7 @@ import (
 	"github.com/aerolog/server/pkg/model"
 	"github.com/aerolog/server/pkg/mq"
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/aerolog/server/collector/internal/projectcache"
 )
@@ -40,6 +45,7 @@ var (
 type TrackHandler struct {
 	Cache    *projectcache.Cache
 	Producer *mq.Producer
+	PG       *pgxpool.Pool
 	Topic    string
 	MaxBody  int64
 }
@@ -68,9 +74,10 @@ func (h *TrackHandler) handle(c *gin.Context) {
 	if token == "" {
 		token = c.GetHeader("X-AeroLog-Token")
 	}
-	pid, err := h.Cache.Resolve(c.Request.Context(), token)
+	pid, secret, err := h.Cache.ResolveProject(c.Request.Context(), token)
 	if err != nil {
 		status = "unauthorized"
+		h.recordRejected(c.Request.Context(), nil, nil, token, "invalid token", nil, c)
 		c.JSON(http.StatusUnauthorized, trackResp{Code: 4001, Msg: "invalid token"})
 		return
 	}
@@ -78,13 +85,21 @@ func (h *TrackHandler) handle(c *gin.Context) {
 	body, err := readBody(c.Request, h.MaxBody)
 	if err != nil {
 		status = "bad_request"
+		h.recordRejected(c.Request.Context(), &pid, nil, token, err.Error(), nil, c)
 		c.JSON(http.StatusBadRequest, trackResp{Code: 4004, Msg: err.Error()})
+		return
+	}
+	if !validSignature(c, secret, body) {
+		status = "unauthorized"
+		h.recordRejected(c.Request.Context(), &pid, nil, token, "invalid signature", body, c)
+		c.JSON(http.StatusUnauthorized, trackResp{Code: 4002, Msg: "invalid signature"})
 		return
 	}
 
 	events, err := parseBody(body)
 	if err != nil {
 		status = "bad_request"
+		h.recordRejected(c.Request.Context(), &pid, nil, token, err.Error(), body, c)
 		c.JSON(http.StatusBadRequest, trackResp{Code: 4004, Msg: err.Error()})
 		return
 	}
@@ -101,6 +116,7 @@ func (h *TrackHandler) handle(c *gin.Context) {
 		if err := e.Validate(); err != nil {
 			rejected++
 			mEventsReceived.WithLabelValues(projectLabel, "rejected").Inc()
+			h.recordRejected(c.Request.Context(), &pid, e, token, err.Error(), nil, c)
 			continue
 		}
 		env := model.EnvelopedEvent{
@@ -114,6 +130,7 @@ func (h *TrackHandler) handle(c *gin.Context) {
 		if err != nil {
 			rejected++
 			mEventsReceived.WithLabelValues(projectLabel, "rejected").Inc()
+			h.recordRejected(c.Request.Context(), &pid, e, token, err.Error(), nil, c)
 			continue
 		}
 		// 用 distinct_id 做 key，保证同用户事件落到同分区
@@ -130,6 +147,105 @@ func (h *TrackHandler) handle(c *gin.Context) {
 		mEventsReceived.WithLabelValues(projectLabel, "accepted").Inc()
 	}
 	c.JSON(http.StatusOK, trackResp{Code: 0, Msg: "ok", Accepted: accepted, Rejected: rejected})
+}
+
+func validSignature(c *gin.Context, secret string, body []byte) bool {
+	signature := strings.TrimSpace(c.GetHeader("X-AeroLog-Signature"))
+	if signature == "" {
+		return true
+	}
+	if secret == "" {
+		return false
+	}
+	signature = strings.TrimPrefix(signature, "sha256=")
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write(body)
+	expected := hex.EncodeToString(mac.Sum(nil))
+	return hmac.Equal([]byte(strings.ToLower(signature)), []byte(expected))
+}
+
+func (h *TrackHandler) recordRejected(ctx context.Context, projectID *uint32, event *model.Event, token string, reason string, rawBody []byte, c *gin.Context) {
+	if h == nil || h.PG == nil {
+		return
+	}
+	debugCtx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	if err := h.ensureDebugSchema(debugCtx); err != nil {
+		log.Printf("debug schema ensure err: %v", err)
+		return
+	}
+
+	payload := map[string]interface{}{
+		"reason": reason,
+		"token":  token,
+		"ip":     clientIP(c),
+		"ua":     c.GetHeader("User-Agent"),
+	}
+	if event != nil {
+		payload["event"] = event
+	}
+	if len(rawBody) > 0 {
+		payload["raw_body"] = string(limitBytes(rawBody, 4096))
+	}
+	rawPayload, _ := json.Marshal(payload)
+
+	var projectArg interface{}
+	if projectID != nil {
+		projectArg = int64(*projectID)
+	}
+	eventName := ""
+	eventType := "track"
+	distinctID := ""
+	userID := ""
+	anonymousID := ""
+	if event != nil {
+		eventName = event.Event
+		eventType = string(event.Type)
+		if eventType == "" {
+			eventType = "track"
+		}
+		distinctID = event.DistinctID
+		userID = event.UserID
+		anonymousID = event.AnonymousID
+	}
+	if _, err := h.PG.Exec(debugCtx, `
+		INSERT INTO debug_events(project_id, event, event_type, distinct_id, user_id, anonymous_id, result, reason, payload, received_at)
+		VALUES($1,$2,$3,$4,$5,$6,'rejected',$7,$8,now())
+	`, projectArg, eventName, eventType, distinctID, userID, anonymousID, reason, rawPayload); err != nil {
+		log.Printf("debug rejected insert err: %v", err)
+	}
+}
+
+func (h *TrackHandler) ensureDebugSchema(ctx context.Context) error {
+	_, err := h.PG.Exec(ctx, `
+		CREATE TABLE IF NOT EXISTS debug_events (
+			id           BIGSERIAL PRIMARY KEY,
+			project_id   BIGINT       REFERENCES projects(id) ON DELETE CASCADE,
+			event        VARCHAR(128),
+			event_type   VARCHAR(32)   NOT NULL,
+			distinct_id  VARCHAR(255),
+			user_id      VARCHAR(255),
+			anonymous_id VARCHAR(255),
+			result       VARCHAR(32)   NOT NULL DEFAULT 'accepted',
+			reason       TEXT,
+			payload      JSONB         NOT NULL,
+			received_at  TIMESTAMPTZ,
+			created_at   TIMESTAMPTZ   NOT NULL DEFAULT now()
+		);
+		ALTER TABLE debug_events ALTER COLUMN project_id DROP NOT NULL;
+		CREATE INDEX IF NOT EXISTS idx_debug_events_project_created
+			ON debug_events(project_id, created_at DESC);
+		CREATE INDEX IF NOT EXISTS idx_debug_events_project_event
+			ON debug_events(project_id, event, created_at DESC);
+	`)
+	return err
+}
+
+func limitBytes(raw []byte, limit int) []byte {
+	if len(raw) <= limit {
+		return raw
+	}
+	return raw[:limit]
 }
 
 func strconvUint32(v uint32) string {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"net/http"
 	"time"
 
@@ -102,12 +103,17 @@ type EventDefHandler struct {
 
 func (h *EventDefHandler) Register(r *gin.RouterGroup) {
 	r.GET("/projects/:id/events", h.list)
+	r.PUT("/projects/:id/events/:event/schema", h.updateSchema)
 }
 
 func (h *EventDefHandler) list(c *gin.Context) {
+	if err := h.ensureEventSchema(c); err != nil {
+		c.JSON(500, gin.H{"err": err.Error()})
+		return
+	}
 	id := c.Param("id")
 	rows, err := h.PG.Query(context.Background(),
-		`SELECT id, name, COALESCE(display_name,''), COALESCE(description,''), status, first_seen, last_seen
+		`SELECT id, name, COALESCE(display_name,''), COALESCE(description,''), schema_required_props, schema_locked, status, first_seen, last_seen
 		 FROM event_definitions WHERE project_id=$1 ORDER BY id DESC LIMIT 500`, id)
 	if err != nil {
 		c.JSON(500, gin.H{"err": err.Error()})
@@ -115,22 +121,94 @@ func (h *EventDefHandler) list(c *gin.Context) {
 	}
 	defer rows.Close()
 	type EvDef struct {
-		ID          int64      `json:"id"`
-		Name        string     `json:"name"`
-		DisplayName string     `json:"display_name"`
-		Description string     `json:"description"`
-		Status      int16      `json:"status"`
-		FirstSeen   *time.Time `json:"first_seen,omitempty"`
-		LastSeen    *time.Time `json:"last_seen,omitempty"`
+		ID            int64      `json:"id"`
+		Name          string     `json:"name"`
+		DisplayName   string     `json:"display_name"`
+		Description   string     `json:"description"`
+		RequiredProps []string   `json:"schema_required_props"`
+		SchemaLocked  bool       `json:"schema_locked"`
+		Status        int16      `json:"status"`
+		FirstSeen     *time.Time `json:"first_seen,omitempty"`
+		LastSeen      *time.Time `json:"last_seen,omitempty"`
 	}
 	out := []EvDef{}
 	for rows.Next() {
 		var e EvDef
-		if err := rows.Scan(&e.ID, &e.Name, &e.DisplayName, &e.Description, &e.Status, &e.FirstSeen, &e.LastSeen); err == nil {
+		var rawProps []byte
+		if err := rows.Scan(&e.ID, &e.Name, &e.DisplayName, &e.Description, &rawProps, &e.SchemaLocked, &e.Status, &e.FirstSeen, &e.LastSeen); err == nil {
+			e.RequiredProps = parseStringList(rawProps)
 			out = append(out, e)
 		}
 	}
 	c.JSON(200, gin.H{"data": out})
+}
+
+func (h *EventDefHandler) updateSchema(c *gin.Context) {
+	if err := h.ensureEventSchema(c); err != nil {
+		c.JSON(500, gin.H{"err": err.Error()})
+		return
+	}
+	projectID := c.Param("id")
+	eventName := c.Param("event")
+	if eventName == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"err": "event is required"})
+		return
+	}
+	var req struct {
+		RequiredProps []string `json:"schema_required_props"`
+		Status        *int16   `json:"status"`
+		DisplayName   string   `json:"display_name"`
+		Description   string   `json:"description"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
+		return
+	}
+	props := cleanStringList(req.RequiredProps)
+	rawProps, _ := json.Marshal(props)
+	status := int16(1)
+	if req.Status != nil {
+		status = *req.Status
+	}
+
+	type EvDef struct {
+		ID            int64    `json:"id"`
+		Name          string   `json:"name"`
+		DisplayName   string   `json:"display_name"`
+		Description   string   `json:"description"`
+		RequiredProps []string `json:"schema_required_props"`
+		SchemaLocked  bool     `json:"schema_locked"`
+		Status        int16    `json:"status"`
+	}
+	var out EvDef
+	var returnedProps []byte
+	err := h.PG.QueryRow(c, `
+		INSERT INTO event_definitions(project_id, name, display_name, description, schema_required_props, schema_locked, status)
+		VALUES($1,$2,$3,$4,$5,true,$6)
+		ON CONFLICT (project_id, name) DO UPDATE SET
+			display_name = COALESCE(NULLIF(EXCLUDED.display_name, ''), event_definitions.display_name),
+			description = COALESCE(NULLIF(EXCLUDED.description, ''), event_definitions.description),
+			schema_required_props = EXCLUDED.schema_required_props,
+			schema_locked = true,
+			status = EXCLUDED.status,
+			updated_at = now()
+		RETURNING id, name, COALESCE(display_name,''), COALESCE(description,''), schema_required_props, schema_locked, status
+	`, projectID, eventName, req.DisplayName, req.Description, rawProps, status).
+		Scan(&out.ID, &out.Name, &out.DisplayName, &out.Description, &returnedProps, &out.SchemaLocked, &out.Status)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
+		return
+	}
+	out.RequiredProps = parseStringList(returnedProps)
+	c.JSON(http.StatusOK, gin.H{"data": out})
+}
+
+func (h *EventDefHandler) ensureEventSchema(ctx context.Context) error {
+	_, err := h.PG.Exec(ctx, `
+		ALTER TABLE event_definitions ADD COLUMN IF NOT EXISTS schema_required_props JSONB NOT NULL DEFAULT '[]'::jsonb;
+		ALTER TABLE event_definitions ADD COLUMN IF NOT EXISTS schema_locked BOOLEAN NOT NULL DEFAULT false;
+	`)
+	return err
 }
 
 func randHex(n int) (string, error) {

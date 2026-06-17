@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import dayjs, { Dayjs } from "dayjs";
 import { Search } from "lucide-react";
@@ -20,15 +21,41 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 export function UsersPage() {
+  const searchParams = useSearchParams();
   const [projectId, setProjectId] = useState<number | undefined>();
   const [query, setQuery] = useState("");
   const [submittedQuery, setSubmittedQuery] = useState("");
   const [selected, setSelected] = useState<UserProfile | null>(null);
+  const [deepLinkReady, setDeepLinkReady] = useState(false);
+  const [timelinePreset, setTimelinePreset] = useState<{ from?: number; to?: number; event?: string; distinctId?: string }>({});
 
   const { data: projects } = useQuery({
     queryKey: ["projects"],
     queryFn: () => api.listProjects(),
   });
+
+  useEffect(() => {
+    if (deepLinkReady) return;
+    const nextProjectID = Number(searchParams.get("project_id") || 0);
+    const distinctId = searchParams.get("distinct_id") || "";
+    const from = Number(searchParams.get("from") || 0);
+    const to = Number(searchParams.get("to") || 0);
+    const event = searchParams.get("event") || "";
+    if (nextProjectID > 0) {
+      setProjectId(nextProjectID);
+    }
+    if (distinctId) {
+      setQuery(distinctId);
+      setSubmittedQuery(distinctId);
+      setTimelinePreset({
+        distinctId,
+        from: Number.isFinite(from) && from > 0 ? from : undefined,
+        to: Number.isFinite(to) && to > 0 ? to : undefined,
+        event: event || undefined,
+      });
+    }
+    setDeepLinkReady(true);
+  }, [deepLinkReady, searchParams]);
 
   useEffect(() => {
     if (!projectId && projects?.data?.length) {
@@ -61,6 +88,18 @@ export function UsersPage() {
       value: compactValue(value),
     }));
   }, [selected]);
+
+  useEffect(() => {
+    if (!timelinePreset.distinctId || selected || !rows.length) return;
+    const matched = rows.find((user) =>
+      user.distinct_id === timelinePreset.distinctId ||
+      user.user_id === timelinePreset.distinctId ||
+      user.anonymous_id === timelinePreset.distinctId,
+    );
+    if (matched) {
+      setSelected(matched);
+    }
+  }, [rows, selected, timelinePreset.distinctId]);
 
   function submitSearch(e: React.FormEvent) {
     e.preventDefault();
@@ -192,6 +231,7 @@ export function UsersPage() {
         identities={identities.data?.data || []}
         identityLoading={identities.isLoading}
         profileRows={profileRows}
+        timelinePreset={timelinePreset}
         onClose={() => setSelected(null)}
       />
     </AnimatedContent>
@@ -217,6 +257,7 @@ function ProfileSheet({
   identities,
   identityLoading,
   profileRows,
+  timelinePreset,
   onClose,
 }: {
   projectId?: number;
@@ -224,6 +265,7 @@ function ProfileSheet({
   identities: IdentityMapping[];
   identityLoading: boolean;
   profileRows: { key: string; value: string }[];
+  timelinePreset: { from?: number; to?: number; event?: string; distinctId?: string };
   onClose: () => void;
 }) {
   const [from, setFrom] = useState<Dayjs>(() => dayjs().subtract(7, "day").startOf("day"));
@@ -232,11 +274,11 @@ function ProfileSheet({
 
   useEffect(() => {
     if (selected) {
-      setFrom(dayjs().subtract(7, "day").startOf("day"));
-      setTo(dayjs().endOf("day"));
-      setEventFilter("");
+      setFrom(timelinePreset.distinctId === selected.distinct_id && timelinePreset.from ? dayjs(timelinePreset.from) : dayjs().subtract(7, "day").startOf("day"));
+      setTo(timelinePreset.distinctId === selected.distinct_id && timelinePreset.to ? dayjs(timelinePreset.to) : dayjs().endOf("day"));
+      setEventFilter(timelinePreset.distinctId === selected.distinct_id ? timelinePreset.event || "" : "");
     }
-  }, [selected?.distinct_id]);
+  }, [selected?.distinct_id, timelinePreset]);
 
   const userEvents = useQuery({
     queryKey: ["user_events", projectId, selected?.distinct_id, from.valueOf(), to.valueOf(), eventFilter],
@@ -249,6 +291,8 @@ function ProfileSheet({
       }),
     enabled: !!projectId && !!selected,
   });
+
+  const sessionGroups = useMemo(() => groupEventsBySession(userEvents.data?.data || []), [userEvents.data]);
 
   return (
     <Sheet open={!!selected} onOpenChange={(open) => !open && onClose()}>
@@ -293,9 +337,22 @@ function ProfileSheet({
                     </div>
                     {userEvents.isLoading ? (
                       Array.from({ length: 4 }).map((_, index) => <Skeleton key={index} className="h-20 w-full" />)
-                    ) : userEvents.data?.data.length ? (
-                      userEvents.data.data.map((item) => (
-                        <EventTimelineItem key={`${item.event}:${item.time}:${item.properties?.$insert_id || ""}`} item={item} />
+                    ) : sessionGroups.length ? (
+                      sessionGroups.map((group) => (
+                        <div key={group.sessionId} className="rounded-md border bg-background p-3">
+                          <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                            <div className="flex min-w-0 items-center gap-2">
+                              <Badge variant={group.sessionId === "未分组" ? "secondary" : "info"}>{group.sessionId}</Badge>
+                              <span className="text-xs text-muted-foreground">{group.items.length} 个事件</span>
+                            </div>
+                            <div className="text-xs text-muted-foreground">{formatDateTime(group.start)} - {formatDateTime(group.end)}</div>
+                          </div>
+                          <div className="grid gap-3">
+                            {group.items.map((item) => (
+                              <EventTimelineItem key={`${item.event}:${item.time}:${item.properties?.$insert_id || ""}`} item={item} />
+                            ))}
+                          </div>
+                        </div>
                       ))
                     ) : (
                       <p className="rounded-md border border-dashed bg-secondary/30 px-3 py-4 text-center text-sm text-muted-foreground">
@@ -386,6 +443,33 @@ function toInputDateTime(value: Dayjs) {
 function fromInputDateTime(value: string, fallback: Dayjs) {
   const parsed = dayjs(value);
   return parsed.isValid() ? parsed : fallback;
+}
+
+function groupEventsBySession(items: UserEvent[]) {
+  const groups = new Map<string, UserEvent[]>();
+  for (const item of items) {
+    const sessionID = getSessionID(item);
+    groups.set(sessionID, [...(groups.get(sessionID) || []), item]);
+  }
+  return Array.from(groups.entries()).map(([sessionId, events]) => {
+    const ordered = [...events].sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime());
+    const times = ordered.map((item) => new Date(item.time).getTime()).filter(Number.isFinite);
+    const start = times.length ? new Date(Math.min(...times)).toISOString() : ordered[ordered.length - 1]?.time || "";
+    const end = times.length ? new Date(Math.max(...times)).toISOString() : ordered[0]?.time || "";
+    return {
+      sessionId,
+      items: ordered,
+      start,
+      end,
+    };
+  }).sort((a, b) => new Date(b.end).getTime() - new Date(a.end).getTime());
+}
+
+function getSessionID(item: UserEvent) {
+  const raw = item.properties?.$session_id || item.properties?.session_id;
+  if (typeof raw === "string" && raw.trim()) return raw.trim();
+  if (typeof raw === "number") return String(raw);
+  return "未分组";
 }
 
 function EventTimelineItem({ item }: { item: UserEvent }) {

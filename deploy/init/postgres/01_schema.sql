@@ -42,6 +42,8 @@ CREATE TABLE IF NOT EXISTS event_definitions (
     name         VARCHAR(128) NOT NULL,                  -- $AppStart / button_click
     display_name VARCHAR(128),
     description  TEXT,
+    schema_required_props JSONB NOT NULL DEFAULT '[]'::jsonb,
+    schema_locked BOOLEAN    NOT NULL DEFAULT false,
     status       SMALLINT    NOT NULL DEFAULT 1,
     first_seen   TIMESTAMPTZ,
     last_seen    TIMESTAMPTZ,
@@ -49,6 +51,9 @@ CREATE TABLE IF NOT EXISTS event_definitions (
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (project_id, name)
 );
+
+ALTER TABLE event_definitions ADD COLUMN IF NOT EXISTS schema_required_props JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE event_definitions ADD COLUMN IF NOT EXISTS schema_locked BOOLEAN NOT NULL DEFAULT false;
 
 -- 属性元数据
 CREATE TABLE IF NOT EXISTS property_definitions (
@@ -109,7 +114,7 @@ CREATE TABLE IF NOT EXISTS event_dlq (
 -- SDK Debugger：保留最近消费到的 SDK 上报，用于排查 SDK 是否正常、属性是否符合 Schema。
 CREATE TABLE IF NOT EXISTS debug_events (
     id           BIGSERIAL PRIMARY KEY,
-    project_id   BIGINT       NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    project_id   BIGINT       REFERENCES projects(id) ON DELETE CASCADE,
     event        VARCHAR(128),
     event_type   VARCHAR(32)   NOT NULL,
     distinct_id  VARCHAR(255),
@@ -121,6 +126,8 @@ CREATE TABLE IF NOT EXISTS debug_events (
     received_at  TIMESTAMPTZ,
     created_at   TIMESTAMPTZ   NOT NULL DEFAULT now()
 );
+
+ALTER TABLE debug_events ALTER COLUMN project_id DROP NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_debug_events_project_created
     ON debug_events(project_id, created_at DESC);

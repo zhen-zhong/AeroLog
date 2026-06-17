@@ -742,7 +742,7 @@ func (h *AnalyticsHandler) queryTable(c *gin.Context) {
 	}
 
 	q := `
-		SELECT ` + joinStrs(selects, ", ") + `, count() AS c, uniqExact(distinct_id) AS u
+		SELECT ` + joinStrs(selects, ", ") + `, count() AS c, uniqExact(distinct_id) AS u, groupUniqArray(5)(distinct_id) AS sample_users
 		FROM events
 		WHERE ` + where + `
 		GROUP BY ` + joinStrs(groupKeys, ", ") + `
@@ -766,9 +766,10 @@ func (h *AnalyticsHandler) queryTable(c *gin.Context) {
 		Value any    `json:"value"`
 	}
 	type QueryRow struct {
-		Dimensions []QueryDimValue `json:"dimensions"`
-		Count      uint64          `json:"count"`
-		Users      uint64          `json:"users"`
+		Dimensions  []QueryDimValue `json:"dimensions"`
+		Count       uint64          `json:"count"`
+		Users       uint64          `json:"users"`
+		SampleUsers []string        `json:"sample_users"`
 	}
 	out := []QueryRow{}
 	for rows.Next() {
@@ -779,7 +780,8 @@ func (h *AnalyticsHandler) queryTable(c *gin.Context) {
 		}
 		var count uint64
 		var users uint64
-		dest = append(dest, &count, &users)
+		sampleUsers := []string{}
+		dest = append(dest, &count, &users, &sampleUsers)
 		if err := rows.Scan(dest...); err != nil {
 			continue
 		}
@@ -789,7 +791,7 @@ func (h *AnalyticsHandler) queryTable(c *gin.Context) {
 			value, label := parseDimensionValue(meta.Type, raw)
 			dims = append(dims, QueryDimValue{Type: meta.Type, Key: meta.Key, Raw: raw, Label: label, Value: value})
 		}
-		out = append(out, QueryRow{Dimensions: dims, Count: count, Users: users})
+		out = append(out, QueryRow{Dimensions: dims, Count: count, Users: users, SampleUsers: sampleUsers})
 	}
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{"dimensions": metas, "rows": out}})
 }

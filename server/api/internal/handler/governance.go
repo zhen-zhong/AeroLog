@@ -167,10 +167,16 @@ func (h *GovernanceHandler) debugEvents(c *gin.Context) {
 	event := c.Query("event")
 	result := c.Query("result")
 	distinctID := c.Query("distinct_id")
+	includeGlobal := c.Query("include_global") == "1" || c.Query("include_global") == "true"
 
-	q := `SELECT id, event, event_type, distinct_id, user_id, anonymous_id, result, COALESCE(reason,''), payload, received_at, created_at
-	      FROM debug_events WHERE project_id=$1`
+	q := `SELECT id, COALESCE(project_id,0), event, event_type, distinct_id, user_id, anonymous_id, result, COALESCE(reason,''), payload, received_at, created_at
+	      FROM debug_events WHERE `
 	args := []any{projectID}
+	if includeGlobal {
+		q += `(project_id=$1 OR project_id IS NULL)`
+	} else {
+		q += `project_id=$1`
+	}
 	if event != "" {
 		args = append(args, event)
 		q += ` AND event=$` + strconv.Itoa(len(args))
@@ -195,6 +201,7 @@ func (h *GovernanceHandler) debugEvents(c *gin.Context) {
 
 	type DebugEvent struct {
 		ID          int64                  `json:"id"`
+		ProjectID   int64                  `json:"project_id"`
 		Event       string                 `json:"event"`
 		EventType   string                 `json:"event_type"`
 		DistinctID  string                 `json:"distinct_id"`
@@ -210,7 +217,7 @@ func (h *GovernanceHandler) debugEvents(c *gin.Context) {
 	for rows.Next() {
 		var it DebugEvent
 		var raw []byte
-		if err := rows.Scan(&it.ID, &it.Event, &it.EventType, &it.DistinctID, &it.UserID, &it.AnonymousID, &it.Result, &it.Reason, &raw, &it.ReceivedAt, &it.CreatedAt); err != nil {
+		if err := rows.Scan(&it.ID, &it.ProjectID, &it.Event, &it.EventType, &it.DistinctID, &it.UserID, &it.AnonymousID, &it.Result, &it.Reason, &raw, &it.ReceivedAt, &it.CreatedAt); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
 			return
 		}
@@ -457,10 +464,12 @@ func (h *GovernanceHandler) ensureDebuggerSchema(c *gin.Context) error {
 		ALTER TABLE property_definitions ADD COLUMN IF NOT EXISTS schema_required BOOLEAN NOT NULL DEFAULT false;
 		ALTER TABLE property_definitions ADD COLUMN IF NOT EXISTS schema_locked BOOLEAN NOT NULL DEFAULT false;
 		ALTER TABLE property_definitions ADD COLUMN IF NOT EXISTS enum_values JSONB NOT NULL DEFAULT '[]'::jsonb;
+		ALTER TABLE event_definitions ADD COLUMN IF NOT EXISTS schema_required_props JSONB NOT NULL DEFAULT '[]'::jsonb;
+		ALTER TABLE event_definitions ADD COLUMN IF NOT EXISTS schema_locked BOOLEAN NOT NULL DEFAULT false;
 
 		CREATE TABLE IF NOT EXISTS debug_events (
 			id           BIGSERIAL PRIMARY KEY,
-			project_id   BIGINT       NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+			project_id   BIGINT       REFERENCES projects(id) ON DELETE CASCADE,
 			event        VARCHAR(128),
 			event_type   VARCHAR(32)   NOT NULL,
 			distinct_id  VARCHAR(255),
@@ -472,6 +481,7 @@ func (h *GovernanceHandler) ensureDebuggerSchema(c *gin.Context) error {
 			received_at  TIMESTAMPTZ,
 			created_at   TIMESTAMPTZ   NOT NULL DEFAULT now()
 		);
+		ALTER TABLE debug_events ALTER COLUMN project_id DROP NOT NULL;
 
 		CREATE INDEX IF NOT EXISTS idx_debug_events_project_created
 			ON debug_events(project_id, created_at DESC);

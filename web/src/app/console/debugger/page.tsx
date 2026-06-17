@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bug, CheckCircle2, RefreshCw, Save, ShieldAlert, SlidersHorizontal } from "lucide-react";
+import { Bug, CheckCircle2, RefreshCw, Save, ShieldAlert, SlidersHorizontal, UserRoundCheck } from "lucide-react";
 import {
   AnalyticsHeader,
   EmptyAnalysis,
@@ -38,6 +39,8 @@ export default function DebuggerPage() {
   const [dataType, setDataType] = useState("string");
   const [required, setRequired] = useState(false);
   const [enumText, setEnumText] = useState("");
+  const [selectedEventSchema, setSelectedEventSchema] = useState("");
+  const [requiredPropsText, setRequiredPropsText] = useState("");
 
   const projects = useQuery({
     queryKey: ["projects"],
@@ -72,6 +75,7 @@ export default function DebuggerPage() {
         result: resultFilter === "__all__" ? undefined : resultFilter,
         distinct_id: distinctId.trim() || undefined,
         limit: 120,
+        include_global: true,
       }),
     enabled: !!projectId,
     placeholderData: (previousData) => previousData,
@@ -90,7 +94,9 @@ export default function DebuggerPage() {
   });
 
   const propertyRows = properties.data?.data || [];
+  const eventRows = events.data?.data || [];
   const selected = propertyRows.find((item) => item.name === selectedProperty);
+  const selectedEventRule = eventRows.find((item) => item.name === selectedEventSchema);
 
   useEffect(() => {
     if (!selectedProperty && propertyRows.length) {
@@ -99,11 +105,22 @@ export default function DebuggerPage() {
   }, [propertyRows, selectedProperty]);
 
   useEffect(() => {
+    if (!selectedEventSchema && eventRows.length) {
+      setSelectedEventSchema(eventRows[0].name);
+    }
+  }, [eventRows, selectedEventSchema]);
+
+  useEffect(() => {
     if (!selected) return;
     setDataType(selected.data_type || "string");
     setRequired(Boolean(selected.schema_required));
     setEnumText((selected.enum_values || []).join("\n"));
   }, [selected]);
+
+  useEffect(() => {
+    if (!selectedEventRule) return;
+    setRequiredPropsText((selectedEventRule.schema_required_props || []).join("\n"));
+  }, [selectedEventRule]);
 
   const saveSchema = useMutation({
     mutationFn: () =>
@@ -118,6 +135,22 @@ export default function DebuggerPage() {
       }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["debugger_properties", projectId] });
+      void queryClient.invalidateQueries({ queryKey: ["schema_issues", projectId] });
+      void queryClient.invalidateQueries({ queryKey: ["debug_events", projectId] });
+    },
+  });
+
+  const saveEventSchema = useMutation({
+    mutationFn: () =>
+      api.updateEventSchema(projectId!, selectedEventSchema, {
+        schema_required_props: requiredPropsText
+          .split(/[\n,]/)
+          .map((item) => item.trim())
+          .filter(Boolean),
+        status: selectedEventRule?.status ?? 1,
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["debugger_events", projectId] });
       void queryClient.invalidateQueries({ queryKey: ["schema_issues", projectId] });
       void queryClient.invalidateQueries({ queryKey: ["debug_events", projectId] });
     },
@@ -269,6 +302,50 @@ export default function DebuggerPage() {
               </div>
             </CardContent>
           </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <ShieldAlert className="h-4 w-4 text-primary" />
+                事件 Schema
+              </CardTitle>
+              <CardDescription>按事件配置必带参数，例如 purchase 必须带 amount、order_id。</CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-4">
+              <div className="grid gap-1.5">
+                <Label>事件名</Label>
+                <Select value={selectedEventSchema || undefined} onValueChange={setSelectedEventSchema}>
+                  <SelectTrigger><SelectValue placeholder="选择事件" /></SelectTrigger>
+                  <SelectContent>
+                    {eventRows.map((item) => (
+                      <SelectItem key={item.id} value={item.name}>{item.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid gap-1.5">
+                <Label>必带参数</Label>
+                <Textarea
+                  value={requiredPropsText}
+                  onChange={(event) => setRequiredPropsText(event.target.value)}
+                  placeholder="每行一个参数 key，或用英文逗号分隔"
+                />
+              </div>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <Badge variant={selectedEventRule?.schema_locked ? "success" : "secondary"}>
+                  {selectedEventRule?.schema_locked ? "已锁定事件规则" : "自动发现中"}
+                </Badge>
+                <Button
+                  type="button"
+                  disabled={!projectId || !selectedEventSchema || saveEventSchema.isPending}
+                  onClick={() => saveEventSchema.mutate()}
+                >
+                  <Save className="h-4 w-4" />
+                  保存事件规则
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
         </div>
 
         <div className="grid min-w-0 gap-5">
@@ -295,7 +372,7 @@ export default function DebuggerPage() {
                   <TabsTrigger value="issues">Schema 问题</TabsTrigger>
                 </TabsList>
                 <TabsContent value="events">
-                  <DebugEventsTable rows={debugEvents.data?.data || []} loading={debugEvents.isLoading} />
+                  <DebugEventsTable projectId={projectId} rows={debugEvents.data?.data || []} loading={debugEvents.isLoading} />
                 </TabsContent>
                 <TabsContent value="issues">
                   <SchemaIssuesTable rows={schemaIssues.data?.data || []} loading={schemaIssues.isLoading} />
@@ -323,7 +400,7 @@ function StatTile({ label, value, tone }: { label: string; value: number; tone: 
   );
 }
 
-function DebugEventsTable({ rows, loading }: { rows: DebugEvent[]; loading: boolean }) {
+function DebugEventsTable({ projectId, rows, loading }: { projectId?: number; rows: DebugEvent[]; loading: boolean }) {
   if (!loading && rows.length === 0) {
     return <EmptyAnalysis title="还没有调试事件" description="启动服务并通过 SDK 或 curl 上报事件后，这里会显示最近消费到的数据。" />;
   }
@@ -346,7 +423,9 @@ function DebugEventsTable({ rows, loading }: { rows: DebugEvent[]; loading: bool
               <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{formatTime(item.created_at)}</TableCell>
               <TableCell className="font-medium">{item.event || item.event_type}</TableCell>
               <TableCell><ResultBadge result={item.result} /></TableCell>
-              <TableCell className="max-w-52 truncate text-xs text-muted-foreground">{item.distinct_id || item.user_id || item.anonymous_id || "-"}</TableCell>
+              <TableCell className="max-w-52 text-xs text-muted-foreground">
+                <UserTimelineLink projectId={projectId} item={item} />
+              </TableCell>
               <TableCell className="max-w-72 text-xs text-muted-foreground">
                 <ParamsPreview payload={item.payload} />
               </TableCell>
@@ -356,6 +435,27 @@ function DebugEventsTable({ rows, loading }: { rows: DebugEvent[]; loading: bool
         </TableBody>
       </Table>
     </div>
+  );
+}
+
+function UserTimelineLink({ projectId, item }: { projectId?: number; item: DebugEvent }) {
+  const id = item.distinct_id || item.user_id || item.anonymous_id;
+  if (!id || !projectId || item.project_id === 0) {
+    return <span className="truncate">{id || "-"}</span>;
+  }
+  const center = new Date(item.received_at || item.created_at).getTime();
+  const from = center - 30 * 60 * 1000;
+  const to = center + 30 * 60 * 1000;
+  const href = `/console/users?project_id=${projectId}&distinct_id=${encodeURIComponent(id)}&from=${from}&to=${to}&event=${encodeURIComponent(item.event || "")}`;
+  return (
+    <Link
+      href={href}
+      className="inline-flex max-w-full items-center gap-1 rounded-md px-1.5 py-1 text-primary transition-colors hover:bg-accent hover:text-accent-foreground"
+      title="查看用户时间线"
+    >
+      <UserRoundCheck className="h-3.5 w-3.5 shrink-0" />
+      <span className="truncate">{id}</span>
+    </Link>
   );
 }
 

@@ -98,6 +98,7 @@ func newRouter(cfg *config.Config, pool *pgxpool.Pool, prod *mq.Producer) *gin.E
 	(&handler.TrackHandler{
 		Cache:    projectcache.New(pool, 60*time.Second),
 		Producer: prod,
+		PG:       pool,
 		Topic:    cfg.KafkaTopic,
 		MaxBody:  cfg.MaxBodyBytes,
 	}).Register(r)

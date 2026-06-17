@@ -12,6 +12,7 @@ import (
 
 type entry struct {
 	projectID uint32
+	secret    string
 	expireAt  time.Time
 }
 
@@ -33,24 +34,31 @@ func New(pool *pgxpool.Pool, ttl time.Duration) *Cache {
 
 // Resolve 根据 token 解析 project_id；命中缓存则直接返回，否则查 DB。
 func (c *Cache) Resolve(ctx context.Context, token string) (uint32, error) {
+	pid, _, err := c.ResolveProject(ctx, token)
+	return pid, err
+}
+
+// ResolveProject 根据 token 解析 project_id 和 secret。
+func (c *Cache) ResolveProject(ctx context.Context, token string) (uint32, string, error) {
 	if token == "" {
-		return 0, errors.New("empty token")
+		return 0, "", errors.New("empty token")
 	}
 	c.mu.RLock()
 	if e, ok := c.items[token]; ok && time.Now().Before(e.expireAt) {
 		c.mu.RUnlock()
-		return e.projectID, nil
+		return e.projectID, e.secret, nil
 	}
 	c.mu.RUnlock()
 
 	var pid uint32
+	var secret string
 	err := c.pool.QueryRow(ctx,
-		`SELECT id FROM projects WHERE token=$1 AND status=1`, token).Scan(&pid)
+		`SELECT id, secret FROM projects WHERE token=$1 AND status=1`, token).Scan(&pid, &secret)
 	if err != nil {
-		return 0, err
+		return 0, "", err
 	}
 	c.mu.Lock()
-	c.items[token] = entry{projectID: pid, expireAt: time.Now().Add(c.ttl)}
+	c.items[token] = entry{projectID: pid, secret: secret, expireAt: time.Now().Add(c.ttl)}
 	c.mu.Unlock()
-	return pid, nil
+	return pid, secret, nil
 }
