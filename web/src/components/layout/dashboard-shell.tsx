@@ -130,7 +130,8 @@ function RouteHistoryBar() {
   useEffect(() => {
     if (pathname === "/" || pathname === "/login" || pathname.startsWith("/console/query/shared/")) return;
     setRoutes((prev) => {
-      const next = [pathname, ...prev.filter((item) => item !== pathname && item !== "/")].slice(0, 8);
+      const cleaned = prev.filter((item) => item && item !== "/");
+      const next = cleaned.includes(pathname) ? cleaned : [...cleaned, pathname].slice(-8);
       window.localStorage.setItem(routeHistoryKey, JSON.stringify(next));
       return next;
     });
