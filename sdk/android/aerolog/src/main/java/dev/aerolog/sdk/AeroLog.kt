@@ -7,6 +7,9 @@ import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
@@ -25,13 +28,16 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
+import java.util.ArrayDeque
 import java.util.Date
 import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+import java.util.zip.GZIPOutputStream
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 
@@ -48,9 +54,14 @@ object AeroLog {
     private const val PREF = "aerolog_prefs"
     private const val KEY_ANON = "anon_id"
     private const val KEY_USER = "user_id"
+    private const val KEY_INSTALL_VERSION = "install_version"
+    private const val KEY_INSTALL_REPORTED = "install_reported"
+    private const val KEY_PENDING_CRASHES = "pending_crashes"
     private const val SDK_NAME = "android"
     private val SDK_VERSION = BuildConfig.SDK_VERSION
     private const val TAG = "AeroLog"
+    private const val ANR_THRESHOLD_MS = 5_000L
+    private const val ANR_COOLDOWN_MS = 60_000L
 
     private lateinit var appCtx: Context
     private lateinit var cfg: AeroConfig
@@ -65,6 +76,12 @@ object AeroLog {
     private var lifecycleAttached = false
     private var activityCallbackAttached = false
     private var flushLoopStarted = false
+    private var crashHandlerAttached = false
+    private var anrWatcherStarted = false
+    private var lastAnrAt = 0L
+    private val activityResumedAt = ConcurrentHashMap<String, Long>()
+    private val debugLog: ArrayDeque<JSONObject> = ArrayDeque()
+    private val debugLogLock = Any()
 
     private val http = OkHttpClient.Builder()
         .connectTimeout(5, TimeUnit.SECONDS)
@@ -84,6 +101,10 @@ object AeroLog {
 
         if (cfg.autoTrackAppLifecycle && !lifecycleAttached) attachAppLifecycle()
         if (cfg.autoTrackActivity && !activityCallbackAttached) attachActivityCallback(app)
+        if (cfg.autoTrackCrash && !crashHandlerAttached) attachCrashHandler()
+        if (cfg.autoTrackANR && !anrWatcherStarted) attachAnrWatcher()
+        if (cfg.autoTrackInstall) reportInstallOrUpdate()
+        replayPendingCrashes()
 
         if (!flushLoopStarted) {
             flushLoopStarted = true
@@ -243,6 +264,7 @@ object AeroLog {
             put("properties", props)
         }
         buffer.add(ev)
+        recordDebugLog(ev)
         if (buffer.size >= cfg.batchSize) {
             scope.launch { runCatching { flush() } }
         }
@@ -278,22 +300,47 @@ object AeroLog {
         val arr = JSONArray()
         items.forEach { arr.put(JSONObject(it)) }
         val encodedToken = URLEncoder.encode(cfg.token, StandardCharsets.UTF_8.name())
-        val bodyBytes = arr.toString().toByteArray(StandardCharsets.UTF_8)
+        val rawBytes = arr.toString().toByteArray(StandardCharsets.UTF_8)
+        // 服务端 collector 会在校验签名前先 gunzip，因此 gzip 仅是传输层。
+        val signature = hmacSha256Hex(cfg.secret, rawBytes)
+        val gzipped = cfg.enableGzip && rawBytes.size >= 1024
+        val bodyBytes = if (gzipped) gzip(rawBytes) else rawBytes
         val builder = Request.Builder()
             .url("${cfg.serverUrl.trimEnd('/')}/v1/track?token=$encodedToken")
             .header("X-AeroLog-SDK", "android/$SDK_VERSION")
             .post(bodyBytes.toRequestBody("application/json".toMediaType()))
-        val signature = hmacSha256Hex(cfg.secret, bodyBytes)
+        if (gzipped) {
+            builder.header("Content-Encoding", "gzip")
+        }
         if (signature != null) {
             builder.header("X-AeroLog-Signature", "sha256=$signature")
         }
         val req = builder.build()
         return runCatching {
             http.newCall(req).execute().use { resp ->
-                // 4xx 非 429 视为服务端拒绝，不再重试
-                resp.isSuccessful || (resp.code in 400..499 && resp.code != 429)
+                if (resp.isSuccessful) return@use true
+                val responseText = resp.body?.string().orEmpty()
+                if (resp.code in 400..499 && resp.code != 429) {
+                    recordDebugStatus(
+                        "collector rejected batch",
+                        mapOf("status" to resp.code, "body" to responseText.take(1_000), "items" to items.size),
+                    )
+                    logDebug("collector rejected batch: ${resp.code} ${responseText.take(200)}")
+                    return@use true
+                }
+                recordDebugStatus(
+                    "collector send failed",
+                    mapOf("status" to resp.code, "body" to responseText.take(1_000), "items" to items.size),
+                )
+                false
             }
         }.onFailure { logDebug("flush failed: ${it.message}") }.getOrDefault(false)
+    }
+
+    private fun gzip(raw: ByteArray): ByteArray {
+        val baos = ByteArrayOutputStream(raw.size / 2 + 32)
+        GZIPOutputStream(baos).use { it.write(raw) }
+        return baos.toByteArray()
     }
 
     /** 用项目 secret 对请求体计算 HMAC-SHA256；secret 为空时返回 null（不附带签名头）。 */
@@ -331,18 +378,182 @@ object AeroLog {
         activityCallbackAttached = true
         app.registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
             override fun onActivityResumed(a: Activity) {
+                if (cfg.autoTrackActivityDuration) {
+                    activityResumedAt[a.javaClass.name] = SystemClock.elapsedRealtime()
+                }
                 track("\$AppViewScreen", mapOf(
                     "\$screen_name" to a.javaClass.simpleName,
                     "\$screen_title" to (a.title?.toString() ?: ""),
                 ))
             }
+            override fun onActivityPaused(a: Activity) {
+                if (!cfg.autoTrackActivityDuration) return
+                val start = activityResumedAt.remove(a.javaClass.name) ?: return
+                val duration = SystemClock.elapsedRealtime() - start
+                if (duration <= 0) return
+                track("\$AppViewScreenEnd", mapOf(
+                    "\$screen_name" to a.javaClass.simpleName,
+                    "\$screen_title" to (a.title?.toString() ?: ""),
+                    "\$screen_duration" to duration,
+                ))
+            }
             override fun onActivityCreated(a: Activity, b: Bundle?) {}
             override fun onActivityStarted(a: Activity) {}
-            override fun onActivityPaused(a: Activity) {}
             override fun onActivityStopped(a: Activity) {}
             override fun onActivitySaveInstanceState(a: Activity, b: Bundle) {}
             override fun onActivityDestroyed(a: Activity) {}
         })
+    }
+
+    private fun attachCrashHandler() {
+        crashHandlerAttached = true
+        val previous = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            runCatching {
+                val stack = StringBuilder()
+                throwable.stackTrace.take(40).forEach { stack.append(it.toString()).append('\n') }
+                val ev = JSONObject().apply {
+                    put("type", "track")
+                    put("event", "\$AppCrash")
+                    val distinctId = userId ?: anonId
+                    put("distinct_id", distinctId)
+                    put("anonymous_id", anonId)
+                    userId?.let { put("user_id", it) }
+                    put("time", System.currentTimeMillis())
+                    put("lib", JSONObject(mapOf("name" to SDK_NAME, "version" to SDK_VERSION)))
+                    put("properties", JSONObject().apply {
+                        put("\$insert_id", UUID.randomUUID().toString())
+                        put("\$session_id", sessionId)
+                        collectAutoProps(this)
+                        put("\$crash_thread", thread.name)
+                        put("\$crash_type", throwable.javaClass.name)
+                        put("\$crash_message", throwable.message ?: "")
+                        put("\$crash_stack", stack.toString())
+                    })
+                }
+                buffer.add(ev)
+                recordDebugLog(ev)
+                persistCrashEvent(ev.toString())
+            }
+            previous?.uncaughtException(thread, throwable)
+        }
+    }
+
+    private fun attachAnrWatcher() {
+        anrWatcherStarted = true
+        scope.launch {
+            val main = Handler(Looper.getMainLooper())
+            while (true) {
+                kotlinx.coroutines.delay(ANR_THRESHOLD_MS)
+                val tick = System.currentTimeMillis()
+                val ping = java.util.concurrent.atomic.AtomicBoolean(false)
+                main.post { ping.set(true) }
+                kotlinx.coroutines.delay(ANR_THRESHOLD_MS)
+                val now = System.currentTimeMillis()
+                if (!ping.get() && ::cfg.isInitialized && now - lastAnrAt >= ANR_COOLDOWN_MS) {
+                    lastAnrAt = now
+                    val blockedFor = now - tick
+                    val mainStack = Looper.getMainLooper().thread.stackTrace
+                        .take(40)
+                        .joinToString("\n") { it.toString() }
+                    runCatching {
+                        track("\$AppANR", mapOf(
+                            "\$blocked_ms" to blockedFor,
+                            "\$main_thread" to (Looper.getMainLooper().thread.name),
+                            "\$main_stack" to mainStack,
+                        ))
+                    }
+                }
+            }
+        }
+    }
+
+    private fun persistCrashEvent(payload: String) {
+        runCatching {
+            val sp = appCtx.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+            val arr = JSONArray(sp.getString(KEY_PENDING_CRASHES, "[]"))
+            arr.put(payload)
+            while (arr.length() > 10) {
+                arr.remove(0)
+            }
+            sp.edit().putString(KEY_PENDING_CRASHES, arr.toString()).commit()
+        }.onFailure { logDebug("persist crash failed: ${it.message}") }
+    }
+
+    private fun replayPendingCrashes() {
+        runCatching {
+            val sp = appCtx.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+            val raw = sp.getString(KEY_PENDING_CRASHES, "[]") ?: "[]"
+            val arr = JSONArray(raw)
+            if (arr.length() == 0) return
+            for (i in 0 until arr.length()) {
+                val payload = arr.optString(i)
+                if (payload.isNotBlank()) {
+                    buffer.add(JSONObject(payload))
+                }
+            }
+            sp.edit().remove(KEY_PENDING_CRASHES).apply()
+            scope.launch { runCatching { flush() } }
+        }.onFailure { logDebug("replay crash failed: ${it.message}") }
+    }
+
+    private fun reportInstallOrUpdate() {
+        runCatching {
+            val sp = appCtx.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+            val current = appCtx.packageManager.getPackageInfo(appCtx.packageName, 0).versionName ?: ""
+            val previous = sp.getString(KEY_INSTALL_VERSION, null)
+            val reported = sp.getBoolean(KEY_INSTALL_REPORTED, false)
+            when {
+                !reported -> {
+                    track("\$AppInstall", mapOf("\$app_version" to current))
+                    sp.edit().putString(KEY_INSTALL_VERSION, current).putBoolean(KEY_INSTALL_REPORTED, true).apply()
+                }
+                previous != null && previous != current -> {
+                    track("\$AppUpdate", mapOf(
+                        "\$app_version" to current,
+                        "\$prev_app_version" to previous,
+                    ))
+                    sp.edit().putString(KEY_INSTALL_VERSION, current).apply()
+                }
+            }
+        }
+    }
+
+    private fun recordDebugLog(ev: JSONObject) {
+        if (!::cfg.isInitialized || !cfg.enableLocalDebugLog) return
+        synchronized(debugLogLock) {
+            debugLog.addLast(ev)
+            val cap = cfg.debugLogCapacity.coerceIn(50, 2_000)
+            while (debugLog.size > cap) {
+                debugLog.pollFirst()
+            }
+        }
+    }
+
+    private fun recordDebugStatus(message: String, data: Map<String, Any?>) {
+        if (!::cfg.isInitialized || !cfg.enableLocalDebugLog) return
+        val item = JSONObject().apply {
+            put("type", "sdk_debug")
+            put("event", "\$SDKSendStatus")
+            put("time", System.currentTimeMillis())
+            put("message", message)
+            put("properties", JSONObject().apply {
+                data.forEach { (key, value) -> putSanitized(key, value) }
+            })
+        }
+        recordDebugLog(item)
+    }
+
+    /** 读取本地 DebugView 日志（环形缓冲），仅在开启 enableLocalDebugLog 时有数据。 */
+    fun getDebugLogs(): List<JSONObject> {
+        synchronized(debugLogLock) {
+            return ArrayList(debugLog)
+        }
+    }
+
+    /** 清空本地 DebugView 日志环形缓冲。 */
+    fun clearDebugLogs() {
+        synchronized(debugLogLock) { debugLog.clear() }
     }
 
     private fun ensureInitialized() {
@@ -356,6 +567,7 @@ object AeroLog {
             batchSize = config.batchSize.coerceIn(1, 500),
             flushIntervalMs = config.flushIntervalMs.coerceAtLeast(1_000L),
             storageLimit = config.storageLimit.coerceAtLeast(100),
+            debugLogCapacity = config.debugLogCapacity.coerceIn(50, 2_000),
         )
     }
 

@@ -35,10 +35,14 @@ func (h *AnalyticsHandler) Register(r *gin.RouterGroup) {
 	r.GET("/projects/:id/analytics/top_events", h.topEvents)
 	r.GET("/projects/:id/analytics/property_values", h.propertyValues)
 	r.POST("/projects/:id/analytics/query_table", h.queryTable)
+	r.POST("/projects/:id/analytics/query_table/export", h.queryTableExport)
 	r.GET("/projects/:id/conversion_goals", h.listConversionGoals)
 	r.POST("/projects/:id/conversion_goals", h.createConversionGoal)
 	r.DELETE("/projects/:id/conversion_goals/:goal_id", h.deleteConversionGoal)
+	r.GET("/projects/:id/conversion_goals/:goal_id/versions", h.listConversionGoalVersions)
 	r.POST("/projects/:id/analytics/conversion", h.conversion)
+	r.POST("/projects/:id/analytics/conversion_trend", h.conversionTrend)
+	r.POST("/projects/:id/analytics/conversion_export", h.conversionExport)
 	r.POST("/projects/:id/analytics/funnel", h.funnel)
 	r.GET("/projects/:id/analytics/retention", h.retention)
 	r.GET("/projects/:id/users/:distinct_id/events", h.userEvents)
@@ -233,6 +237,7 @@ type conversionGoal struct {
 	Events            []string  `json:"events"`
 	WindowSeconds     int       `json:"window_seconds"`
 	BreakdownProperty string    `json:"breakdown_property"`
+	Version           int       `json:"version"`
 	Status            int16     `json:"status"`
 	CreatedAt         time.Time `json:"created_at"`
 	UpdatedAt         time.Time `json:"updated_at"`
@@ -245,7 +250,8 @@ func (h *AnalyticsHandler) listConversionGoals(c *gin.Context) {
 		FROM (
 			SELECT DISTINCT ON (name)
 			       id, project_id, name, COALESCE(description, '') AS description, events, window_seconds,
-			       COALESCE(breakdown_property, '') AS breakdown_property, status, created_at, updated_at
+			       COALESCE(breakdown_property, '') AS breakdown_property, COALESCE(version, 1) AS version,
+			       status, created_at, updated_at
 			FROM conversion_goals
 			WHERE project_id = $1 AND status = 1
 			ORDER BY name, updated_at DESC, id DESC
@@ -262,7 +268,7 @@ func (h *AnalyticsHandler) listConversionGoals(c *gin.Context) {
 	for rows.Next() {
 		var item conversionGoal
 		var raw []byte
-		if err := rows.Scan(&item.ID, &item.ProjectID, &item.Name, &item.Description, &raw, &item.WindowSeconds, &item.BreakdownProperty, &item.Status, &item.CreatedAt, &item.UpdatedAt); err == nil {
+		if err := rows.Scan(&item.ID, &item.ProjectID, &item.Name, &item.Description, &raw, &item.WindowSeconds, &item.BreakdownProperty, &item.Version, &item.Status, &item.CreatedAt, &item.UpdatedAt); err == nil {
 			_ = json.Unmarshal(raw, &item.Events)
 			out = append(out, item)
 		}
@@ -278,6 +284,7 @@ func (h *AnalyticsHandler) createConversionGoal(c *gin.Context) {
 		Events            []string `json:"events"`
 		WindowSeconds     int      `json:"window_seconds"`
 		BreakdownProperty string   `json:"breakdown_property"`
+		Note              string   `json:"note"`
 	}
 	if err := c.BindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
@@ -295,34 +302,56 @@ func (h *AnalyticsHandler) createConversionGoal(c *gin.Context) {
 		body.WindowSeconds = 7 * 24 * 3600
 	}
 	rawEvents, _ := json.Marshal(body.Events)
+	tx, err := h.PG.Begin(c)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
+		return
+	}
+	defer tx.Rollback(c)
+
 	var item conversionGoal
 	var raw []byte
-	err := h.PG.QueryRow(c, `
+	err = tx.QueryRow(c, `
 		UPDATE conversion_goals
 		SET description = $3,
 		    events = $4::jsonb,
 		    window_seconds = $5,
 		    breakdown_property = NULLIF($6, ''),
+		    version = COALESCE(version, 1) + 1,
 		    updated_at = now()
 		WHERE project_id = $1 AND name = $2 AND status = 1
 		RETURNING id, project_id, name, COALESCE(description, ''), events, window_seconds,
-		          COALESCE(breakdown_property, ''), status, created_at, updated_at
+		          COALESCE(breakdown_property, ''), version, status, created_at, updated_at
 	`, pid, body.Name, body.Description, string(rawEvents), body.WindowSeconds, body.BreakdownProperty).
-		Scan(&item.ID, &item.ProjectID, &item.Name, &item.Description, &raw, &item.WindowSeconds, &item.BreakdownProperty, &item.Status, &item.CreatedAt, &item.UpdatedAt)
+		Scan(&item.ID, &item.ProjectID, &item.Name, &item.Description, &raw, &item.WindowSeconds, &item.BreakdownProperty, &item.Version, &item.Status, &item.CreatedAt, &item.UpdatedAt)
 	if err == pgx.ErrNoRows {
-		err = h.PG.QueryRow(c, `
-		INSERT INTO conversion_goals(project_id, name, description, events, window_seconds, breakdown_property)
-		VALUES($1, $2, $3, $4::jsonb, $5, NULLIF($6, ''))
+		err = tx.QueryRow(c, `
+		INSERT INTO conversion_goals(project_id, name, description, events, window_seconds, breakdown_property, version)
+		VALUES($1, $2, $3, $4::jsonb, $5, NULLIF($6, ''), 1)
 		RETURNING id, project_id, name, COALESCE(description, ''), events, window_seconds,
-		          COALESCE(breakdown_property, ''), status, created_at, updated_at
+		          COALESCE(breakdown_property, ''), version, status, created_at, updated_at
 	`, pid, body.Name, body.Description, string(rawEvents), body.WindowSeconds, body.BreakdownProperty).
-			Scan(&item.ID, &item.ProjectID, &item.Name, &item.Description, &raw, &item.WindowSeconds, &item.BreakdownProperty, &item.Status, &item.CreatedAt, &item.UpdatedAt)
+			Scan(&item.ID, &item.ProjectID, &item.Name, &item.Description, &raw, &item.WindowSeconds, &item.BreakdownProperty, &item.Version, &item.Status, &item.CreatedAt, &item.UpdatedAt)
 	}
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
 		return
 	}
 	_ = json.Unmarshal(raw, &item.Events)
+
+	if _, err := tx.Exec(c, `
+		INSERT INTO conversion_goal_versions(goal_id, project_id, version, name, description, events, window_seconds, breakdown_property, note)
+		VALUES($1, $2, $3, $4, $5, $6::jsonb, $7, NULLIF($8, ''), $9)
+		ON CONFLICT (goal_id, version) DO NOTHING
+	`, item.ID, item.ProjectID, item.Version, item.Name, item.Description, string(rawEvents), item.WindowSeconds, item.BreakdownProperty, body.Note); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
+		return
+	}
+	if err := tx.Commit(c); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
+		return
+	}
+
 	c.JSON(http.StatusOK, gin.H{"data": item})
 }
 
@@ -689,46 +718,92 @@ func makePlaceholders(n int) string {
 	return joinStrs(holders, ", ")
 }
 
+// QueryDimMeta 描述自助查询的一个维度。
+type QueryDimMeta struct {
+	Type string `json:"type"`
+	Key  string `json:"key"`
+}
+
+// QueryDimValue 单行的维度取值。
+type QueryDimValue struct {
+	Type  string `json:"type"`
+	Key   string `json:"key"`
+	Raw   string `json:"raw"`
+	Label string `json:"label"`
+	Value any    `json:"value"`
+}
+
+// QueryRow 自助查询的一行聚合结果。
+type QueryRow struct {
+	Dimensions  []QueryDimValue `json:"dimensions"`
+	Count       uint64          `json:"count"`
+	Users       uint64          `json:"users"`
+	SampleUsers []string        `json:"sample_users"`
+}
+
+// QueryTableBody 是 queryTable / queryTableExport 公用的请求体。
+type QueryTableBody struct {
+	Events     []string `json:"events"`
+	From       int64    `json:"from"`
+	To         int64    `json:"to"`
+	Limit      int      `json:"limit"`
+	Dimensions []struct {
+		Type string `json:"type"`
+		Key  string `json:"key"`
+	} `json:"dimensions"`
+	Filters []struct {
+		Event    string `json:"event"`
+		Property string `json:"property"`
+		Op       string `json:"op"`
+		Value    any    `json:"value"`
+	} `json:"filters"`
+}
+
 // /v1/projects/:id/analytics/query_table
 // body: {events, from, to, dimensions:[{type:"event"|"property", key}], filters:[{event, property, op, value}], limit}
 func (h *AnalyticsHandler) queryTable(c *gin.Context) {
-	pid, _ := strconv.ParseUint(c.Param("id"), 10, 32)
-	var body struct {
-		Events     []string `json:"events"`
-		From       int64    `json:"from"`
-		To         int64    `json:"to"`
-		Limit      int      `json:"limit"`
-		Dimensions []struct {
-			Type string `json:"type"`
-			Key  string `json:"key"`
-		} `json:"dimensions"`
-		Filters []struct {
-			Event    string `json:"event"`
-			Property string `json:"property"`
-			Op       string `json:"op"`
-			Value    any    `json:"value"`
-		} `json:"filters"`
-	}
-	if err := c.BindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
+	rows, dims, err := h.runQueryTable(c, 500)
+	if err != nil {
+		writeQueryTableError(c, err)
 		return
 	}
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"dimensions": dims, "rows": rows}})
+}
+
+// runQueryTable 抽取了 queryTable 的核心 SQL 构造与执行流程，便于 CSV 导出/异步任务复用。
+// limitCap 控制 limit 的硬上限，正常 API 默认 500，导出可放宽到 5000。
+func (h *AnalyticsHandler) runQueryTable(c *gin.Context, limitCap int) ([]QueryRow, []QueryDimMeta, error) {
+	pid, _ := strconv.ParseUint(c.Param("id"), 10, 32)
+	var body QueryTableBody
+	if err := c.BindJSON(&body); err != nil {
+		return nil, nil, &queryTableError{Status: http.StatusBadRequest, Msg: err.Error()}
+	}
+	return h.executeQueryTable(c.Request.Context(), uint32(pid), &body, limitCap)
+}
+
+// executeQueryTable 真正执行查询，不依赖 gin.Context，便于 worker 调用。
+func (h *AnalyticsHandler) executeQueryTable(ctx context.Context, pid uint32, body *QueryTableBody, limitCap int) ([]QueryRow, []QueryDimMeta, error) {
 	if body.To == 0 {
 		body.To = time.Now().UnixMilli()
 	}
 	if body.From == 0 {
 		body.From = body.To - 7*24*3600*1000
 	}
-	if body.Limit <= 0 || body.Limit > 500 {
-		body.Limit = 100
+	if limitCap <= 0 {
+		limitCap = 500
+	}
+	if body.Limit <= 0 || body.Limit > limitCap {
+		if body.Limit <= 0 {
+			body.Limit = 100
+		} else {
+			body.Limit = limitCap
+		}
 	}
 	if len(body.Events) > 20 {
-		c.JSON(http.StatusBadRequest, gin.H{"err": "events length must be <= 20"})
-		return
+		return nil, nil, &queryTableError{Status: http.StatusBadRequest, Msg: "events length must be <= 20"}
 	}
 	if len(body.Filters) > 8 {
-		c.JSON(http.StatusBadRequest, gin.H{"err": "filters length must be <= 8"})
-		return
+		return nil, nil, &queryTableError{Status: http.StatusBadRequest, Msg: "filters length must be <= 8"}
 	}
 	if len(body.Dimensions) == 0 {
 		body.Dimensions = append(body.Dimensions, struct {
@@ -740,29 +815,24 @@ func (h *AnalyticsHandler) queryTable(c *gin.Context) {
 	selectArgs := []any{}
 	selects := make([]string, 0, len(body.Dimensions))
 	groupKeys := make([]string, 0, len(body.Dimensions))
-	type DimMeta struct {
-		Type string `json:"type"`
-		Key  string `json:"key"`
-	}
-	metas := make([]DimMeta, 0, len(body.Dimensions))
+	metas := make([]QueryDimMeta, 0, len(body.Dimensions))
 	for i, dim := range body.Dimensions {
 		alias := "d" + strconv.Itoa(i)
 		if dim.Type == "event" {
 			selects = append(selects, "event AS "+alias)
-			metas = append(metas, DimMeta{Type: "event", Key: "event"})
+			metas = append(metas, QueryDimMeta{Type: "event", Key: "event"})
 		} else if dim.Type == "property" && dim.Key != "" {
 			selects = append(selects, "JSONExtractRaw(properties, ?) AS "+alias)
 			selectArgs = append(selectArgs, dim.Key)
-			metas = append(metas, DimMeta{Type: "property", Key: dim.Key})
+			metas = append(metas, QueryDimMeta{Type: "property", Key: dim.Key})
 		} else {
-			c.JSON(http.StatusBadRequest, gin.H{"err": "invalid dimension"})
-			return
+			return nil, nil, &queryTableError{Status: http.StatusBadRequest, Msg: "invalid dimension"}
 		}
 		groupKeys = append(groupKeys, alias)
 	}
 
 	where := `project_id = ? AND time BETWEEN fromUnixTimestamp64Milli(?) AND fromUnixTimestamp64Milli(?)`
-	whereArgs := []any{uint32(pid), body.From, body.To}
+	whereArgs := []any{pid, body.From, body.To}
 	if len(body.Events) > 0 {
 		holders := make([]string, 0, len(body.Events))
 		for _, event := range body.Events {
@@ -799,8 +869,7 @@ func (h *AnalyticsHandler) queryTable(c *gin.Context) {
 			where += ` AND JSONExtractRaw(properties, ?) != ''`
 			whereArgs = append(whereArgs, filter.Property)
 		default:
-			c.JSON(http.StatusBadRequest, gin.H{"err": "unsupported filter op"})
-			return
+			return nil, nil, &queryTableError{Status: http.StatusBadRequest, Msg: "unsupported filter op"}
 		}
 	}
 
@@ -814,26 +883,12 @@ func (h *AnalyticsHandler) queryTable(c *gin.Context) {
 	`
 	args := append(selectArgs, whereArgs...)
 	args = append(args, uint32(body.Limit))
-	rows, err := h.CH.Query(c, q, args...)
+	rows, err := h.CH.Query(ctx, q, args...)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
-		return
+		return nil, nil, err
 	}
 	defer rows.Close()
 
-	type QueryDimValue struct {
-		Type  string `json:"type"`
-		Key   string `json:"key"`
-		Raw   string `json:"raw"`
-		Label string `json:"label"`
-		Value any    `json:"value"`
-	}
-	type QueryRow struct {
-		Dimensions  []QueryDimValue `json:"dimensions"`
-		Count       uint64          `json:"count"`
-		Users       uint64          `json:"users"`
-		SampleUsers []string        `json:"sample_users"`
-	}
 	out := []QueryRow{}
 	for rows.Next() {
 		rawDims := make([]string, len(metas))
@@ -856,7 +911,23 @@ func (h *AnalyticsHandler) queryTable(c *gin.Context) {
 		}
 		out = append(out, QueryRow{Dimensions: dims, Count: count, Users: users, SampleUsers: sampleUsers})
 	}
-	c.JSON(http.StatusOK, gin.H{"data": gin.H{"dimensions": metas, "rows": out}})
+	return out, metas, nil
+}
+
+// queryTableError 表示 runQueryTable 返回的可识别错误，附带 HTTP 状态码。
+type queryTableError struct {
+	Status int
+	Msg    string
+}
+
+func (e *queryTableError) Error() string { return e.Msg }
+
+func writeQueryTableError(c *gin.Context, err error) {
+	if qe, ok := err.(*queryTableError); ok {
+		c.JSON(qe.Status, gin.H{"err": qe.Msg})
+		return
+	}
+	c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
 }
 
 func parseDimensionValue(dimType, raw string) (any, string) {

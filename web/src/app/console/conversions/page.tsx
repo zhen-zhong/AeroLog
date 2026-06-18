@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import dayjs, { Dayjs } from "dayjs";
-import { BadgeCheck, BookmarkPlus, Flag, Play, RotateCcw, Trash2 } from "lucide-react";
+import { BadgeCheck, BookmarkPlus, Download, Flag, History, LineChart, Play, RotateCcw, Trash2 } from "lucide-react";
 import {
   AnalyticsHeader,
   ChartPanel,
@@ -25,7 +25,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { api, ConversionGoal } from "@/lib/api";
+import { api, ConversionGoal, ConversionGoalVersion } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { useProjectStore } from "@/stores/project-store";
 
@@ -42,6 +42,12 @@ export default function ConversionsPage() {
   const [events, setEvents] = useState<string[]>([]);
   const [windowSeconds, setWindowSeconds] = useState(7 * 24 * 3600);
   const [breakdownProperty, setBreakdownProperty] = useState("");
+  const [versionNote, setVersionNote] = useState("");
+  const [versionGoalId, setVersionGoalId] = useState<number | null>(null);
+  const [trendData, setTrendData] = useState<{
+    current: { bucket: string; conversion: number; first: number; last: number }[];
+    compare: { bucket: string; conversion: number; first: number; last: number }[];
+  } | null>(null);
 
   // 切换项目时重置
   useEffect(() => {
@@ -98,10 +104,48 @@ export default function ConversionsPage() {
         events,
         window_seconds: windowSeconds,
         breakdown_property: breakdownProperty || undefined,
+        note: versionNote || undefined,
       }),
     onSuccess: () => {
+      setVersionNote("");
       void queryClient.invalidateQueries({ queryKey: ["conversion_goals", projectId] });
     },
+  });
+
+  const trend = useMutation({
+    mutationFn: () => {
+      const span = tsRange.to - tsRange.from;
+      return api.conversionTrend(projectId!, {
+        events,
+        ...tsRange,
+        window_seconds: windowSeconds,
+        compare_from: tsRange.from - span,
+        compare_to: tsRange.from,
+        interval: "day",
+      });
+    },
+    onSuccess: (resp) => {
+      setTrendData({
+        current: resp.data.current || [],
+        compare: resp.data.compare || [],
+      });
+    },
+  });
+
+  const exportCsv = useMutation({
+    mutationFn: () =>
+      api.conversionExport(projectId!, {
+        events,
+        ...tsRange,
+        window_seconds: windowSeconds,
+        breakdown_property: breakdownProperty || undefined,
+      }),
+  });
+
+  const versions = useQuery({
+    queryKey: ["conversion_goal_versions", projectId, versionGoalId],
+    queryFn: () => api.listConversionGoalVersions(projectId!, versionGoalId!),
+    enabled: !!projectId && !!versionGoalId,
   });
 
   const deleteGoal = useMutation({
@@ -184,10 +228,23 @@ export default function ConversionsPage() {
                 <Badge variant="secondary">{events.length} steps</Badge>
               </div>
               <EventStepSelector options={eventRows} value={events} onChange={setEvents} />
-              <div className="flex flex-col gap-2 sm:flex-row">
+              <Input
+                value={versionNote}
+                onChange={(event) => setVersionNote(event.target.value)}
+                placeholder="本次保存备注（可选，如 v2 增加支付步骤）"
+              />
+              <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
                 <Button type="button" disabled={!projectId || events.length < 2 || analyze.isPending} onClick={() => analyze.mutate()}>
                   <Play className="h-4 w-4" />
                   {analyze.isPending ? "计算中" : "计算转化"}
+                </Button>
+                <Button type="button" variant="outline" disabled={!projectId || events.length < 2 || trend.isPending} onClick={() => trend.mutate()}>
+                  <LineChart className="h-4 w-4" />
+                  {trend.isPending ? "趋势中" : "趋势对比"}
+                </Button>
+                <Button type="button" variant="outline" disabled={!projectId || events.length < 2 || exportCsv.isPending} onClick={() => exportCsv.mutate()}>
+                  <Download className="h-4 w-4" />
+                  {exportCsv.isPending ? "导出中" : "导出 CSV"}
                 </Button>
                 <Button type="button" variant="outline" disabled={!projectId || events.length < 2 || saveGoal.isPending || !name.trim()} onClick={() => saveGoal.mutate()}>
                   <BookmarkPlus className="h-4 w-4" />
@@ -201,6 +258,8 @@ export default function ConversionsPage() {
                     setEvents([]);
                     setBreakdownProperty("");
                     setWindowSeconds(7 * 24 * 3600);
+                    setVersionNote("");
+                    setTrendData(null);
                     analyze.reset();
                   }}
                 >
@@ -208,10 +267,12 @@ export default function ConversionsPage() {
                   重置
                 </Button>
               </div>
-              <div className="min-h-6">
+              <div className="min-h-6 flex flex-wrap gap-2">
                 {analyze.error ? <Badge variant="danger" className="items-center">{String(analyze.error.message || analyze.error)}</Badge> : null}
                 {saveGoal.error ? <Badge variant="danger" className="items-center">{String(saveGoal.error.message || saveGoal.error)}</Badge> : null}
-                {saveGoal.isSuccess ? <Badge variant="success" className="items-center">已保存，已更新目标列表</Badge> : null}
+                {saveGoal.isSuccess ? <Badge variant="success" className="items-center">已保存为新版本 v{saveGoal.data?.data.version ?? "?"}</Badge> : null}
+                {trend.error ? <Badge variant="danger" className="items-center">{String(trend.error.message || trend.error)}</Badge> : null}
+                {exportCsv.error ? <Badge variant="danger" className="items-center">{String(exportCsv.error.message || exportCsv.error)}</Badge> : null}
               </div>
             </CardContent>
           </Card>
@@ -239,7 +300,17 @@ export default function ConversionsPage() {
                           <span className="mt-1 block truncate text-xs text-muted-foreground">{goal.events.join(" → ")}</span>
                         </button>
                         <div className="flex shrink-0 items-center gap-2">
-                          <Badge variant="secondary">{goal.events.length} 步</Badge>
+                          <Badge variant="secondary">v{goal.version || 1} · {goal.events.length} 步</Badge>
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="ghost"
+                            onClick={() => setVersionGoalId(goal.id)}
+                            aria-label={`查看 ${goal.name} 版本历史`}
+                            className="h-8 w-8 text-muted-foreground hover:text-primary"
+                          >
+                            <History className="h-4 w-4" />
+                          </Button>
                           <Button
                             type="button"
                             size="icon"
@@ -336,6 +407,72 @@ export default function ConversionsPage() {
               <EmptyAnalysis title="暂无拆解结果" description="选择拆解参数并计算后，这里会展示不同参数值下的转化率。" />
             )}
           </ChartPanel>
+
+          <ChartPanel title="趋势对比" description={trendData ? `当前期 vs 同长度上一期，按天展示` : "点击\"趋势对比\"查看每天的总转化率走势与同期对比"} className="min-w-0" contentClassName="pt-3 sm:pt-3">
+            {trendData && trendData.current.length ? (
+              <div className="max-w-full overflow-x-auto">
+                <Table style={{ minWidth: 720 }}>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-44">日期</TableHead>
+                      <TableHead className="text-right">当前期 首步</TableHead>
+                      <TableHead className="text-right">当前期 转化率</TableHead>
+                      <TableHead className="text-right">上期 首步</TableHead>
+                      <TableHead className="text-right">上期 转化率</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {trendData.current.map((cur, index) => {
+                      const prev = trendData.compare[index];
+                      return (
+                        <TableRow key={cur.bucket}>
+                          <TableCell className="font-mono text-xs">{cur.bucket.replace("T", " ").replace("Z", "")}</TableCell>
+                          <TableCell className="text-right font-mono">{cur.first.toLocaleString()}</TableCell>
+                          <TableCell className="text-right font-mono">{(cur.conversion * 100).toFixed(2)}%</TableCell>
+                          <TableCell className="text-right font-mono text-muted-foreground">{prev ? prev.first.toLocaleString() : "-"}</TableCell>
+                          <TableCell className="text-right font-mono text-muted-foreground">{prev ? `${(prev.conversion * 100).toFixed(2)}%` : "-"}</TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+            ) : (
+              <EmptyAnalysis title="暂无趋势数据" description="点击趋势对比按钮可同时拉取当前与同长度上一期的每日转化率。" />
+            )}
+          </ChartPanel>
+
+          {versionGoalId ? (
+            <ChartPanel
+              title={`版本历史`}
+              description={`目标 #${versionGoalId} 的所有版本快照`}
+              className="min-w-0"
+              contentClassName="pt-3 sm:pt-3"
+            >
+              <div className="mb-3 flex items-center justify-end">
+                <Button type="button" variant="ghost" size="sm" onClick={() => setVersionGoalId(null)}>关闭</Button>
+              </div>
+              {(versions.data?.data || []).length ? (
+                <div className="grid gap-2">
+                  {(versions.data?.data || []).map((v: ConversionGoalVersion) => (
+                    <div key={v.id} className="rounded-md border bg-background p-3">
+                      <div className="mb-1 flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-2">
+                          <Badge variant="info">v{v.version}</Badge>
+                          <span className="text-sm font-medium">{v.name}</span>
+                        </div>
+                        <span className="text-xs text-muted-foreground">{new Date(v.created_at).toLocaleString()}</span>
+                      </div>
+                      <div className="text-xs text-muted-foreground">{v.events.join(" → ")}</div>
+                      {v.note ? <div className="mt-1 text-xs text-muted-foreground">备注：{v.note}</div> : null}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <EmptyAnalysis title="暂无版本" description="保存目标后会自动写入第一份快照。" />
+              )}
+            </ChartPanel>
+          ) : null}
 
           <ChartPanel title="关键事件" description="当前目标的最后一步会被视作本路径的关键转化事件" className="min-w-0" contentClassName="pt-3 sm:pt-3">
             {events.length ? (

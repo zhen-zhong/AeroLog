@@ -39,6 +39,7 @@ type App struct {
 	chConn     driver.Conn
 	httpServer *http.Server
 	metricsSrv *http.Server
+	queryJobs  *handler.QueryHandler
 }
 
 // New builds the API service without starting listeners.
@@ -59,7 +60,7 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 	}
 
 	gin.SetMode(gin.ReleaseMode)
-	router := newRouter(cfg, pool, chConn)
+	router, queryJobs := newRouter(cfg, pool, chConn)
 	return &App{
 		cfg:    cfg,
 		pgPool: pool,
@@ -69,6 +70,7 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 			Handler:           router,
 			ReadHeaderTimeout: 5 * time.Second,
 		},
+		queryJobs: queryJobs,
 	}, nil
 }
 
@@ -76,6 +78,9 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 func (a *App) Run(ctx context.Context) error {
 	a.metricsSrv = metrics.Serve(a.cfg.MetricsAddr)
 	pgschema.StartRetentionLoop(ctx, a.pgPool, a.cfg.DebugRetentionDays)
+	if a.queryJobs != nil {
+		a.queryJobs.StartJobWorker(ctx)
+	}
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -111,7 +116,7 @@ func (a *App) Shutdown(ctx context.Context) error {
 	return err
 }
 
-func newRouter(cfg *config.Config, pool *pgxpool.Pool, chConn driver.Conn) *gin.Engine {
+func newRouter(cfg *config.Config, pool *pgxpool.Pool, chConn driver.Conn) (*gin.Engine, *handler.QueryHandler) {
 	r := gin.New()
 	r.Use(gin.Recovery(), corsMiddleware(cfg.AllowOrigins), metricsMiddleware())
 	r.GET("/healthz", func(c *gin.Context) { c.String(http.StatusOK, "ok") })
@@ -120,8 +125,11 @@ func newRouter(cfg *config.Config, pool *pgxpool.Pool, chConn driver.Conn) *gin.
 	(&handler.ProjectHandler{PG: pool}).Register(v1)
 	(&handler.EventDefHandler{PG: pool}).Register(v1)
 	(&handler.GovernanceHandler{PG: pool, CH: chConn}).Register(v1)
-	(&handler.AnalyticsHandler{PG: pool, CH: chConn}).Register(v1)
-	return r
+	analytics := &handler.AnalyticsHandler{PG: pool, CH: chConn}
+	analytics.Register(v1)
+	queryJobs := &handler.QueryHandler{PG: pool, CH: chConn, Analytics: analytics}
+	queryJobs.Register(v1)
+	return r, queryJobs
 }
 
 func metricsMiddleware() gin.HandlerFunc {

@@ -12,6 +12,10 @@
 - 用户事件时间线默认按身份映射合并 distinct_id、user_id、anonymous_id 后查询。
 - 事件级 Schema 隔离：`property_definitions` 增加 `event` 列与 `(project_id,name,scope,event)` 唯一键；Consumer 校验、API 治理、Web 治理页全部按事件加载/编辑属性，事件级规则覆盖全局默认。
 - Android SDK 接入 `X-AeroLog-Signature`：`AeroConfig.secret` 配置项目密钥后自动用 HMAC-SHA256 对请求体签名上报。
+- 转化目标支持版本记录与趋势对比：`conversion_goals` 增加 `version`、新增 `conversion_goal_versions` 表，每次保存自动写快照；`/analytics/conversion_trend` 按桶返回当前期 vs 上期 first/conversion，`/analytics/conversion_export` 流式导出参数拆解 CSV；Web 转化页新增「趋势对比」「导出 CSV」「版本备注」与「版本历史」面板。
+- 自助查询支持模板/分享/CSV/异步任务：新增 `query_templates`、`analytics_jobs` 表与 `QueryHandler`，模板可保存、复用、分享（48 hex token）；`/analytics/query_table/export` 直接下载 CSV，`/analytics/jobs` 用 PG `FOR UPDATE SKIP LOCKED` 异步执行最多 5 万行结果；Web 查询页新增「保存模板」「导出 CSV」「异步导出」「模板列表」「任务列表」面板。
+- 数据治理支持批量/审计/负责人/状态：`property_definitions` 增加 `owner/archived/hidden`，新增 `property_change_log` 审计表；新增 `PUT /properties/batch`、`GET /properties/:name/change_log`，前端治理页加入勾选 + 批量工具栏、行内归档/隐藏切换以及变更历史抽屉。
+- Android SDK 完善传输与自动采集：`AeroConfig` 增加 `enableGzip / enableLocalDebugLog / debugLogCapacity / autoTrackActivityDuration / autoTrackCrash / autoTrackANR / autoTrackInstall`；`send()` 在 ≥1KB 时启用 gzip 并保持 HMAC 对原始包体签名；新增 `$AppViewScreenEnd($screen_duration)`、`$AppCrash`、`$AppANR`、`$AppInstall/$AppUpdate` 自动事件，并提供 `getDebugLogs()/clearDebugLogs()` 本地环形缓冲。
 
 ## P0
 
@@ -19,10 +23,7 @@
 
 ## P1
 
-- 转化目标增加趋势对比、目标版本记录、参数拆解结果导出。
-- 自助查询支持保存模板、分享链接、CSV 导出和大结果异步任务。
-- 数据治理增加批量编辑、属性负责人、废弃/隐藏状态和变更审计。
-- Android SDK 增加 gzip、DebugView 本地日志开关和更完整的自动采集配置。
+（暂无）
 
 ## P2
 

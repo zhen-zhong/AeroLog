@@ -18,6 +18,31 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
     return res.json() as Promise<T>;
 }
 
+// downloadCsv 触发浏览器下载，由后端返回 text/csv。
+async function downloadCsv(path: string, init: RequestInit, filename: string): Promise<void> {
+    const res = await fetch(`${BASE}/v1${path}`, {
+        ...init,
+        headers: {
+            "Content-Type": "application/json",
+            ...(init?.headers || {}),
+        },
+        cache: "no-store",
+    });
+    if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || `HTTP ${res.status}`);
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
 export interface Project {
     id: number;
     name: string;
@@ -50,8 +75,24 @@ export interface PropertyDefinition {
     schema_locked: boolean;
     enum_values: string[];
     status: number;
+    owner: string;
+    archived: boolean;
+    hidden: boolean;
     first_seen?: string;
     last_seen?: string;
+}
+export interface PropertyChangeLogEntry {
+    id: number;
+    project_id: number;
+    property_name: string;
+    scope: "event" | "user";
+    event: string;
+    change_type: string;
+    actor: string;
+    note: string;
+    before_value?: Record<string, unknown>;
+    after_value?: Record<string, unknown>;
+    created_at: string;
 }
 export interface DebugEvent {
     id: number;
@@ -159,8 +200,58 @@ export interface ConversionGoal {
     window_seconds: number;
     breakdown_property: string;
     status: number;
+    version: number;
     created_at: string;
     updated_at: string;
+}
+export interface ConversionGoalVersion {
+    id: number;
+    goal_id: number;
+    version: number;
+    name: string;
+    description: string;
+    events: string[];
+    window_seconds: number;
+    breakdown_property: string;
+    note: string;
+    created_at: string;
+}
+export interface ConversionTrendPoint {
+    bucket: string;
+    first: number;
+    last: number;
+    conversion: number;
+}
+export interface QueryTemplate {
+    id: number;
+    project_id: number;
+    name: string;
+    description: string;
+    config: Record<string, unknown>;
+    share_token?: string;
+    is_shared: boolean;
+    status: number;
+    created_at: string;
+    updated_at: string;
+}
+export interface AnalyticsJob {
+    id: number;
+    project_id: number;
+    type: string;
+    status: "pending" | "running" | "succeeded" | "failed";
+    input: Record<string, unknown>;
+    result?: {
+        format?: string;
+        filename?: string;
+        download_url?: string;
+        dimensions?: QueryDimension[];
+        rows?: QueryTableRow[];
+    };
+    error_message?: string;
+    rows_count: number;
+    created_at: string;
+    updated_at: string;
+    finished_at?: string;
 }
 export interface ConversionStep {
     event: string;
@@ -221,12 +312,20 @@ export const api = {
         ),
     listProperties: (
         id: number | string,
-        params?: { scope?: "event" | "user"; event?: string; include_global?: boolean },
+        params?: {
+            scope?: "event" | "user";
+            event?: string;
+            include_global?: boolean;
+            include_archived?: boolean;
+            include_hidden?: boolean;
+        },
     ) => {
         const q = new URLSearchParams();
         if (params?.scope) q.set("scope", params.scope);
         if (params?.event) q.set("event", params.event);
         if (params?.include_global) q.set("include_global", "1");
+        if (params?.include_archived) q.set("include_archived", "1");
+        if (params?.include_hidden) q.set("include_hidden", "1");
         return req<ApiList<PropertyDefinition>>(`/projects/${id}/properties?${q}`);
     },
     updatePropertySchema: (
@@ -240,6 +339,11 @@ export const api = {
             enum_values?: string[];
             display_name?: string;
             description?: string;
+            owner?: string;
+            archived?: boolean;
+            hidden?: boolean;
+            actor?: string;
+            note?: string;
         },
     ) =>
         req<ApiOne<PropertyDefinition>>(
@@ -249,6 +353,39 @@ export const api = {
                 body: JSON.stringify(body),
             },
         ),
+    batchUpdateProperties: (
+        id: number | string,
+        body: {
+            actor?: string;
+            note?: string;
+            change_type?: string;
+            items: {
+                name: string;
+                scope: "event" | "user";
+                event?: string;
+                owner?: string;
+                archived?: boolean;
+                hidden?: boolean;
+            }[];
+        },
+    ) =>
+        req<ApiOne<{ updated: number }>>(`/projects/${id}/properties/batch`, {
+            method: "PUT",
+            body: JSON.stringify(body),
+        }),
+    propertyChangeLog: (
+        id: number | string,
+        property: string,
+        params?: { scope?: "event" | "user"; event?: string; limit?: number },
+    ) => {
+        const q = new URLSearchParams();
+        if (params?.scope) q.set("scope", params.scope);
+        if (params?.event) q.set("event", params.event);
+        if (params?.limit) q.set("limit", String(params.limit));
+        return req<ApiList<PropertyChangeLogEntry>>(
+            `/projects/${id}/properties/${encodeURIComponent(property)}/change_log?${q}`,
+        );
+    },
     debugEvents: (
         id: number | string,
         params?: { event?: string; result?: string; distinct_id?: string; limit?: number; include_global?: boolean },
@@ -369,6 +506,7 @@ export const api = {
             events: string[];
             window_seconds: number;
             breakdown_property?: string;
+            note?: string;
         },
     ) =>
         req<ApiOne<ConversionGoal>>(`/projects/${id}/conversion_goals`, {
@@ -379,6 +517,48 @@ export const api = {
         req<ApiOne<{ deleted: boolean }>>(
             `/projects/${id}/conversion_goals/${goalId}`,
             { method: "DELETE" },
+        ),
+    listConversionGoalVersions: (id: number | string, goalId: number | string) =>
+        req<ApiList<ConversionGoalVersion>>(
+            `/projects/${id}/conversion_goals/${goalId}/versions`,
+        ),
+    conversionTrend: (
+        id: number | string,
+        body: {
+            events: string[];
+            from?: number;
+            to?: number;
+            window_seconds?: number;
+            compare_from?: number;
+            compare_to?: number;
+            interval?: "hour" | "day";
+        },
+    ) =>
+        req<
+            ApiOne<{
+                current: ConversionTrendPoint[];
+                compare: ConversionTrendPoint[];
+                interval: "hour" | "day";
+            }>
+        >(`/projects/${id}/analytics/conversion_trend`, {
+            method: "POST",
+            body: JSON.stringify(body),
+        }),
+    conversionExport: (
+        id: number | string,
+        body: {
+            events: string[];
+            from?: number;
+            to?: number;
+            window_seconds?: number;
+            breakdown_property?: string;
+        },
+        filename = "conversion_breakdown.csv",
+    ) =>
+        downloadCsv(
+            `/projects/${id}/analytics/conversion_export`,
+            { method: "POST", body: JSON.stringify(body) },
+            filename,
         ),
     conversion: (
         id: number | string,
@@ -415,6 +595,71 @@ export const api = {
                 body: JSON.stringify(body),
             },
         ),
+    queryTableExport: (
+        id: number | string,
+        body: {
+            events?: string[];
+            from?: number;
+            to?: number;
+            limit?: number;
+            dimensions: QueryDimension[];
+            filters?: QueryFilter[];
+        },
+        filename = "query_table.csv",
+    ) =>
+        downloadCsv(
+            `/projects/${id}/analytics/query_table/export`,
+            { method: "POST", body: JSON.stringify(body) },
+            filename,
+        ),
+    listQueryTemplates: (id: number | string) =>
+        req<ApiList<QueryTemplate>>(`/projects/${id}/query_templates`),
+    createQueryTemplate: (
+        id: number | string,
+        body: { name: string; description?: string; config: Record<string, unknown>; is_shared?: boolean },
+    ) =>
+        req<ApiOne<QueryTemplate>>(`/projects/${id}/query_templates`, {
+            method: "POST",
+            body: JSON.stringify(body),
+        }),
+    updateQueryTemplate: (
+        id: number | string,
+        tid: number | string,
+        body: { name: string; description?: string; config: Record<string, unknown> },
+    ) =>
+        req<ApiOne<QueryTemplate>>(`/projects/${id}/query_templates/${tid}`, {
+            method: "PUT",
+            body: JSON.stringify(body),
+        }),
+    deleteQueryTemplate: (id: number | string, tid: number | string) =>
+        req<ApiOne<{ ok: boolean }>>(`/projects/${id}/query_templates/${tid}`, {
+            method: "DELETE",
+        }),
+    shareQueryTemplate: (
+        id: number | string,
+        tid: number | string,
+        enable: boolean,
+    ) =>
+        req<ApiOne<QueryTemplate>>(`/projects/${id}/query_templates/${tid}/share`, {
+            method: "POST",
+            body: JSON.stringify({ enable }),
+        }),
+    getSharedQueryTemplate: (token: string) =>
+        req<ApiOne<QueryTemplate>>(`/shared/query_templates/${encodeURIComponent(token)}`),
+    createAnalyticsJob: (
+        id: number | string,
+        body: { type: "query_export"; input: Record<string, unknown> },
+    ) =>
+        req<ApiOne<AnalyticsJob>>(`/projects/${id}/analytics/jobs`, {
+            method: "POST",
+            body: JSON.stringify(body),
+        }),
+    listAnalyticsJobs: (id: number | string) =>
+        req<ApiList<AnalyticsJob>>(`/projects/${id}/analytics/jobs`),
+    getAnalyticsJob: (id: number | string, jobId: number | string) =>
+        req<ApiOne<AnalyticsJob>>(`/projects/${id}/analytics/jobs/${jobId}`),
+    downloadAnalyticsJob: (id: number | string, jobId: number | string, filename = "query_export.csv") =>
+        downloadCsv(`/projects/${id}/analytics/jobs/${jobId}/download`, { method: "GET" }, filename),
     funnel: (
         id: number | string,
         body: {

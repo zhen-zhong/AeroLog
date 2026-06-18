@@ -12,7 +12,14 @@ package dev.aerolog.sdk
  * @property storageLimit 离线缓存最大事件数，最小 100。
  * @property autoTrackAppLifecycle 是否自动采集 $AppStart / $AppEnd。
  * @property autoTrackActivity 是否自动采集 Activity 页面浏览 $AppViewScreen。
- * @property debug 是否输出 SDK 调试日志。
+ * @property autoTrackActivityDuration 是否在 onPause 自动追加 $AppViewScreenEnd 并附带 $screen_duration。
+ * @property autoTrackCrash 是否捕获未处理异常并上报 $AppCrash（仅记录一次后转发给原 handler）。
+ * @property autoTrackANR 是否在主线程检测 ANR（5 秒未响应）并上报 $AppANR。
+ * @property autoTrackInstall 是否自动上报 $AppInstall / $AppUpdate（基于 SharedPreferences 缓存的 versionName）。
+ * @property enableGzip 是否对上报包体启用 gzip 压缩；与服务端 collector.handler 解压逻辑兼容。
+ * @property debug 是否输出 SDK 调试日志（通过 logcat）。
+ * @property enableLocalDebugLog 是否在内存维护一份 DebugView 本地日志环形缓冲，便于自测/排障。
+ * @property debugLogCapacity 本地日志环形缓冲最大条数（默认 200，最小 50，最大 2000）。
  */
 data class AeroConfig(
     val serverUrl: String,
@@ -23,5 +30,12 @@ data class AeroConfig(
     val storageLimit: Int = 10_000,
     val autoTrackAppLifecycle: Boolean = true,
     val autoTrackActivity: Boolean = true,
+    val autoTrackActivityDuration: Boolean = true,
+    val autoTrackCrash: Boolean = true,
+    val autoTrackANR: Boolean = false,
+    val autoTrackInstall: Boolean = true,
+    val enableGzip: Boolean = true,
     val debug: Boolean = false,
+    val enableLocalDebugLog: Boolean = false,
+    val debugLogCapacity: Int = 200,
 )
