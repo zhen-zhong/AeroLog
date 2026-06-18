@@ -299,8 +299,8 @@ export function ChartPanel({
   contentClassName?: string;
 }) {
   return (
-    <AnimatedContent delay={90}>
-      <Card className={cn("overflow-hidden", className)}>
+    <AnimatedContent delay={90} className="min-w-0">
+      <Card className={cn("min-w-0 overflow-hidden", className)}>
         <CardHeader className="border-b bg-secondary/35">
           <CardTitle>{title}</CardTitle>
           {description ? <CardDescription>{description}</CardDescription> : null}
@@ -426,12 +426,14 @@ export function EventStepSelector({
 export function EmptyAnalysis({
   title,
   description,
+  className,
 }: {
   title: string;
   description?: string;
+  className?: string;
 }) {
   return (
-    <div className="flex min-h-56 flex-col items-center justify-center rounded-lg border border-dashed bg-secondary/30 px-4 py-10 text-center">
+    <div className={cn("flex min-h-56 flex-col items-center justify-center rounded-lg border border-dashed bg-secondary/30 px-4 py-10 text-center", className)}>
       <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-md border bg-background text-primary">
         <Sparkles className="h-5 w-5" />
       </div>

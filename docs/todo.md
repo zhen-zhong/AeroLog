@@ -23,11 +23,21 @@
 
 ## P1
 
-（暂无）
+- [x] P1 端到端验收：覆盖转化目标版本/趋势/导出、自助查询模板/分享/CSV/异步任务、数据治理批量/负责人/状态/审计，并沉淀为 `make p1-smoke`。
+- [ ] Android SDK 增加 root Gradle 工程与 CI 编译验证，避免 SDK 只能靠人工检查。
+- [ ] 多项目权限与成员管理：owner/editor/viewer、项目成员、操作人透传。
+- [ ] 分享链接增强：过期时间、撤销记录、访问日志和权限边界。
+- [ ] 导出文件存储正规化：本地/MinIO/S3 适配、过期清理、下载鉴权。
+- [ ] SDK Debugger 闭环：按 `$insert_id`、设备、用户、session 串联 SDK 本地日志、Collector、Schema、Consumer、ClickHouse 查询结果。
 
 ## P2
 
-- 多项目权限与成员管理，区分 owner/editor/viewer。
+- 分群：支持静态/动态用户分群、按事件行为和用户属性圈选。
+- 用户路径分析：按 session 和身份合并后的行为路径做节点流转。
+- 事件归因：支持渠道、活动、首次/末次触点等基础归因模型。
+- 留存细分：留存矩阵按事件属性、用户属性和渠道拆解。
+- 漏斗按属性分组：漏斗每一步支持参数过滤和分组对比。
+- 指标看板保存与订阅：保存报表卡片、定时邮件/告警推送。
 - 告警中心：Schema 错误率、事件量突降、关键转化异常。
 - 接入 OpenTelemetry Dashboard，统一展示 collector/consumer/api 延迟、吞吐和 DLQ。
 - 补 iOS/Web SDK，并统一 SDK 发布、版本兼容矩阵和示例应用。

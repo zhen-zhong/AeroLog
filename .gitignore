@@ -6,6 +6,7 @@
 .vscode/
 .run/
 *.iml
+.qoder/repowiki/
 
 # ===== Go =====
 server/**/bin/

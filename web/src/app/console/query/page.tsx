@@ -301,28 +301,28 @@ export default function QueryBuilderPage() {
         action={<Badge variant="info" className="h-9 items-center gap-2"><Filter className="h-3.5 w-3.5" /> Query table</Badge>}
       />
 
-      <div className="grid gap-5 xl:grid-cols-[430px_minmax(0,1fr)]">
-        <div className="grid gap-5">
-          <Card>
+      <div className="grid min-w-0 items-start gap-5 xl:grid-cols-[minmax(0,390px)_minmax(0,1fr)]">
+        <div className="grid min-w-0 auto-rows-max content-start gap-5 self-start">
+          <Card className="min-w-0 overflow-hidden">
             <CardContent className="grid gap-4 pt-4 sm:pt-4">
               <DateTimeRange value={range} onChange={setRange} />
-              <div>
+              <div className="min-w-0">
                 <div className="mb-2 flex items-center justify-between gap-3">
                   <div className="text-sm font-medium">事件集合</div>
-                  <Badge variant="secondary">{selectedEventLabel}</Badge>
+                  <Badge variant="secondary" className="shrink-0">{selectedEventLabel}</Badge>
                 </div>
-                <div className="flex max-h-44 flex-wrap gap-2 overflow-y-auto rounded-md border bg-background p-2">
+                <div className="flex max-h-44 min-w-0 flex-wrap gap-2 overflow-y-auto rounded-md border bg-background p-2">
                   {eventRows.map((item) => (
                     <button
                       key={item.event}
                       type="button"
                       onClick={() => toggleEvent(item.event)}
                       className={cn(
-                        "inline-flex h-8 items-center rounded-md border px-2.5 text-xs font-medium transition-colors hover:border-primary/40 hover:bg-accent",
+                        "inline-flex h-8 max-w-full items-center rounded-md border px-2.5 text-xs font-medium transition-colors hover:border-primary/40 hover:bg-accent",
                         events.includes(item.event) && "border-primary/50 bg-primary text-primary-foreground hover:bg-primary/90",
                       )}
                     >
-                      {item.event}
+                      <span className="truncate">{item.event}</span>
                     </button>
                   ))}
                 </div>
@@ -330,7 +330,7 @@ export default function QueryBuilderPage() {
             </CardContent>
           </Card>
 
-          <Card>
+          <Card className="min-w-0 overflow-hidden">
             <CardContent className="grid gap-3 pt-4 sm:pt-4">
               <div className="flex items-center justify-between gap-3">
                 <div className="text-sm font-medium">参数过滤</div>
@@ -346,25 +346,25 @@ export default function QueryBuilderPage() {
               </div>
 
               {filters.map((filter) => (
-                <div key={filter.id} className="grid gap-2 rounded-md border bg-background p-3">
-                  <div className="grid gap-2 sm:grid-cols-2">
+                <div key={filter.id} className="grid min-w-0 gap-2 rounded-md border bg-background p-3">
+                  <div className="grid min-w-0 gap-2 sm:grid-cols-2">
                     <Select value={filter.event || "__all__"} onValueChange={(value) => updateFilter(filter.id, { event: value === "__all__" ? "" : value })}>
-                      <SelectTrigger><SelectValue placeholder="适用事件" /></SelectTrigger>
+                      <SelectTrigger className="min-w-0"><SelectValue placeholder="适用事件" /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="__all__">全部事件</SelectItem>
                         {eventRows.map((item) => <SelectItem key={item.event} value={item.event}>{item.event}</SelectItem>)}
                       </SelectContent>
                     </Select>
                     <Select value={filter.property || undefined} onValueChange={(value) => updateFilter(filter.id, { property: value })}>
-                      <SelectTrigger><SelectValue placeholder="参数 key" /></SelectTrigger>
+                      <SelectTrigger className="min-w-0"><SelectValue placeholder="参数 key" /></SelectTrigger>
                       <SelectContent>
                         {propertyRows.map((item) => <SelectItem key={item.id} value={item.name}>{item.name}</SelectItem>)}
                       </SelectContent>
                     </Select>
                   </div>
-                  <div className="grid gap-2 sm:grid-cols-[130px_1fr_36px]">
+                  <div className="grid min-w-0 gap-2 sm:grid-cols-[112px_minmax(0,1fr)_36px]">
                     <Select value={filter.op} onValueChange={(value) => updateFilter(filter.id, { op: value as DraftFilter["op"] })}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectTrigger className="min-w-0"><SelectValue /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="eq">等于</SelectItem>
                         <SelectItem value="neq">不等于</SelectItem>
@@ -372,6 +372,7 @@ export default function QueryBuilderPage() {
                       </SelectContent>
                     </Select>
                     <Input
+                      className="min-w-0"
                       value={filter.value}
                       disabled={filter.op === "exists"}
                       onChange={(event) => updateFilter(filter.id, { value: event.target.value })}
@@ -392,10 +393,10 @@ export default function QueryBuilderPage() {
             </CardContent>
           </Card>
 
-          <Card>
+          <Card className="min-w-0 overflow-hidden">
             <CardContent className="grid gap-3 pt-4 sm:pt-4">
               <div className="text-sm font-medium">表格维度</div>
-              <div className="flex flex-wrap gap-2">
+              <div className="flex min-w-0 flex-wrap gap-2">
                 <DimensionButton
                   active={dimensions.some((item) => item.type === "event")}
                   label="事件名"
@@ -453,18 +454,20 @@ export default function QueryBuilderPage() {
             </CardContent>
           </Card>
 
-          <Card>
+          <Card className="min-w-0 overflow-hidden">
             <CardContent className="grid gap-3 pt-4 sm:pt-4">
               <div className="flex items-center justify-between gap-3">
                 <div className="text-sm font-medium">保存为模板</div>
-                <Badge variant="outline" className="items-center gap-1"><Bookmark className="h-3 w-3" />Templates</Badge>
+                <Badge variant="outline" className="shrink-0 items-center gap-1"><Bookmark className="h-3 w-3" />Templates</Badge>
               </div>
               <Input
+                className="min-w-0"
                 value={tplName}
                 onChange={(e) => setTplName(e.target.value)}
                 placeholder="模板名称，例如 渠道转化诊断"
               />
               <Input
+                className="min-w-0"
                 value={tplDesc}
                 onChange={(e) => setTplDesc(e.target.value)}
                 placeholder="备注（可选）"
@@ -487,67 +490,69 @@ export default function QueryBuilderPage() {
               </Button>
               {saveTemplate.error ? <Badge variant="danger" className="items-center">{String(saveTemplate.error.message || saveTemplate.error)}</Badge> : null}
               {shareLink ? (
-                <div className="flex items-center gap-2 rounded-md border bg-background p-2 text-xs">
-                  <LinkIcon className="h-3.5 w-3.5 text-muted-foreground" />
-                  <span className="truncate font-mono">{shareLink}</span>
+                <div className="flex min-w-0 items-center gap-2 rounded-md border bg-background p-2 text-xs">
+                  <LinkIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  <span className="min-w-0 flex-1 truncate font-mono">{shareLink}</span>
                 </div>
               ) : null}
             </CardContent>
           </Card>
         </div>
 
-        <div className="grid gap-5">
-        <ChartPanel title="查询结果" description="按所选维度聚合，指标为事件次数和去重用户数" contentClassName="p-0 sm:p-0">
-          {rows.length ? (
-            <div className="max-w-full overflow-x-auto">
-              <Table style={{ minWidth: tableMinWidth }}>
-                <TableHeader>
-                  <TableRow>
-                    {resultDimensions.map((dim) => (
-                      <TableHead key={`${dim.type}:${dim.key}`} className="w-56 whitespace-nowrap">
-                        {dim.type === "event" ? "事件" : dim.key}
-                      </TableHead>
-                    ))}
-                    <TableHead className="w-24 whitespace-nowrap text-right">次数</TableHead>
-                    <TableHead className="w-24 whitespace-nowrap text-right">用户</TableHead>
-                    <TableHead className="w-44 whitespace-nowrap">样例用户</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {rows.map((row, index) => (
-                    <TableRow key={index}>
-                      {row.dimensions.map((dim) => (
-                        <TableCell key={`${index}:${dim.type}:${dim.key}`} className="max-w-56 truncate font-medium">
-                          {dim.label}
-                        </TableCell>
+        <div className="grid min-w-0 auto-rows-max content-start items-start gap-5 self-start">
+          <ChartPanel title="查询结果" description="按所选维度聚合，指标为事件次数和去重用户数" className="min-w-0" contentClassName="min-w-0 p-0 sm:p-0">
+            {rows.length ? (
+              <div className="w-full min-w-0 overflow-hidden">
+                <div className="w-full overflow-x-auto overscroll-x-contain">
+                  <Table style={{ minWidth: tableMinWidth }}>
+                    <TableHeader>
+                      <TableRow>
+                        {resultDimensions.map((dim) => (
+                          <TableHead key={`${dim.type}:${dim.key}`} className="w-56 whitespace-nowrap">
+                            {dim.type === "event" ? "事件" : dim.key}
+                          </TableHead>
+                        ))}
+                        <TableHead className="w-24 whitespace-nowrap text-right">次数</TableHead>
+                        <TableHead className="w-24 whitespace-nowrap text-right">用户</TableHead>
+                        <TableHead className="w-44 whitespace-nowrap">样例用户</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {rows.map((row, index) => (
+                        <TableRow key={index}>
+                          {row.dimensions.map((dim) => (
+                            <TableCell key={`${index}:${dim.type}:${dim.key}`} className="max-w-56 truncate font-medium">
+                              {dim.label}
+                            </TableCell>
+                          ))}
+                          <TableCell className="text-right font-mono">{row.count.toLocaleString()}</TableCell>
+                          <TableCell className="text-right font-mono">{row.users.toLocaleString()}</TableCell>
+                          <TableCell>
+                            {row.sample_users?.length ? (
+                              <div className="flex max-w-44 flex-wrap gap-1">
+                                {row.sample_users.slice(0, 3).map((user) => (
+                                  <Link
+                                    key={user}
+                                    href={`/console/users?project_id=${projectId}&distinct_id=${encodeURIComponent(user)}&from=${tsRange.from}&to=${tsRange.to}`}
+                                    className="max-w-full truncate rounded-md bg-secondary px-2 py-1 text-xs text-primary hover:bg-accent hover:text-accent-foreground"
+                                    title="查看用户时间线"
+                                  >
+                                    {user}
+                                  </Link>
+                                ))}
+                              </div>
+                            ) : "-"}
+                          </TableCell>
+                        </TableRow>
                       ))}
-                      <TableCell className="text-right font-mono">{row.count.toLocaleString()}</TableCell>
-                      <TableCell className="text-right font-mono">{row.users.toLocaleString()}</TableCell>
-                      <TableCell>
-                        {row.sample_users?.length ? (
-                          <div className="flex max-w-44 flex-wrap gap-1">
-                            {row.sample_users.slice(0, 3).map((user) => (
-                              <Link
-                                key={user}
-                                href={`/console/users?project_id=${projectId}&distinct_id=${encodeURIComponent(user)}&from=${tsRange.from}&to=${tsRange.to}`}
-                                className="max-w-full truncate rounded-md bg-secondary px-2 py-1 text-xs text-primary hover:bg-accent hover:text-accent-foreground"
-                                title="查看用户时间线"
-                              >
-                                {user}
-                              </Link>
-                            ))}
-                          </div>
-                        ) : "-"}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          ) : (
-            <EmptyAnalysis title="暂无查询结果" description="选择事件、参数过滤和维度后点击生成表格。" />
-          )}
-        </ChartPanel>
+                    </TableBody>
+                  </Table>
+                </div>
+              </div>
+            ) : (
+              <EmptyAnalysis className="min-h-40 py-8" title="暂无查询结果" description="选择事件、参数过滤和维度后点击生成表格。" />
+            )}
+          </ChartPanel>
 
         <ChartPanel title="查询模板" description="保存当前查询配置以复用、分享" contentClassName="p-0 sm:p-0">
           <TemplateList
@@ -579,11 +584,11 @@ function DimensionButton({ active, label, onClick }: { active: boolean; label: s
       type="button"
       onClick={onClick}
       className={cn(
-        "inline-flex h-8 items-center rounded-md border bg-background px-2.5 text-xs font-medium transition-colors hover:border-primary/40 hover:bg-accent",
+        "inline-flex h-8 max-w-full items-center rounded-md border bg-background px-2.5 text-xs font-medium transition-colors hover:border-primary/40 hover:bg-accent",
         active && "border-primary/50 bg-primary text-primary-foreground hover:bg-primary/90",
       )}
     >
-      {label}
+      <span className="truncate">{label}</span>
     </button>
   );
 }
@@ -604,7 +609,7 @@ function TemplateList({
   buildShareLink: (token: string) => string;
 }) {
   if (!templates.length) {
-    return <EmptyAnalysis title="暂无模板" description="在左侧填写名称并保存当前查询，即可在此处复用、分享。" />;
+    return <EmptyAnalysis className="min-h-40 py-8" title="暂无模板" description="在左侧填写名称并保存当前查询，即可在此处复用、分享。" />;
   }
   return (
     <Table>
@@ -689,7 +694,7 @@ function JobList({
   downloadingJobId?: number;
 }) {
   if (!jobs.length) {
-    return <EmptyAnalysis title="暂无异步任务" description="点击「异步导出」可把当前查询提交到后台，结果集 5 万行内，完成后在此查看。" />;
+    return <EmptyAnalysis className="min-h-40 py-8" title="暂无异步任务" description="点击「异步导出」可把当前查询提交到后台，结果集 5 万行内，完成后在此查看。" />;
   }
   return (
     <Table>

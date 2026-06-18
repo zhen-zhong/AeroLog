@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: dev infra api collector consumer web test smoke
+.PHONY: dev infra api collector consumer web test smoke p1-smoke
 
 dev:
 	./scripts/dev.sh
@@ -29,6 +29,9 @@ test:
 
 smoke:
 	./scripts/smoke.sh
+
+p1-smoke:
+	node scripts/p1-smoke.mjs
 
 seed:
 	node scripts/seed-data.mjs
