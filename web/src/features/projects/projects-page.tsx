@@ -2,7 +2,7 @@
 
 import { FormEvent, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Copy, Plus } from "lucide-react";
+import { Copy, Plus, ShieldCheck, ShieldOff } from "lucide-react";
 import { api, Project } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
 import { PageHeader } from "@/components/layout/page-header";
@@ -52,6 +52,21 @@ export function ProjectsPage() {
     onError: (e: Error) => setError(e.message),
   });
 
+  const securityMut = useMutation({
+    mutationFn: (body: { id: number; require_signature: boolean }) =>
+      api.updateProjectSecurity(body.id, { require_signature: body.require_signature }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["projects"] });
+    },
+  });
+
+  function toggleSignature(project: Project) {
+    securityMut.mutate({
+      id: project.id,
+      require_signature: !project.require_signature,
+    });
+  }
+
   function submit(e: FormEvent) {
     e.preventDefault();
     if (!name.trim()) {
@@ -89,6 +104,7 @@ export function ProjectsPage() {
                 <TableHead>项目名</TableHead>
                 <TableHead>Token</TableHead>
                 <TableHead>描述</TableHead>
+                <TableHead className="w-40">签名校验</TableHead>
                 <TableHead className="w-24">状态</TableHead>
                 <TableHead className="w-48">创建时间</TableHead>
               </TableRow>
@@ -97,13 +113,20 @@ export function ProjectsPage() {
               {isLoading ? (
                 Array.from({ length: 4 }).map((_, index) => (
                   <TableRow key={index}>
-                    <TableCell colSpan={6}>
+                    <TableCell colSpan={7}>
                       <Skeleton className="h-8 w-full" />
                     </TableCell>
                   </TableRow>
                 ))
               ) : (
-                projects.map((project) => <ProjectRow key={project.id} project={project} />)
+                projects.map((project) => (
+                  <ProjectRow
+                    key={project.id}
+                    project={project}
+                    pending={securityMut.isPending}
+                    onToggleSignature={toggleSignature}
+                  />
+                ))
               )}
             </TableBody>
           </Table>
@@ -114,7 +137,14 @@ export function ProjectsPage() {
         {isLoading ? (
           Array.from({ length: 3 }).map((_, index) => <Skeleton key={index} className="h-36" />)
         ) : (
-          projects.map((project) => <ProjectMobileCard key={project.id} project={project} />)
+          projects.map((project) => (
+            <ProjectMobileCard
+              key={project.id}
+              project={project}
+              pending={securityMut.isPending}
+              onToggleSignature={toggleSignature}
+            />
+          ))
         )}
       </div>
 
@@ -172,7 +202,15 @@ function MetricCard({ label, value, loading }: { label: string; value: number; l
   );
 }
 
-function ProjectRow({ project }: { project: Project }) {
+function ProjectRow({
+  project,
+  pending,
+  onToggleSignature,
+}: {
+  project: Project;
+  pending: boolean;
+  onToggleSignature: (project: Project) => void;
+}) {
   return (
     <TableRow>
       <TableCell className="font-medium">{project.id}</TableCell>
@@ -181,13 +219,24 @@ function ProjectRow({ project }: { project: Project }) {
         <Token token={project.token} />
       </TableCell>
       <TableCell className="max-w-xs truncate text-muted-foreground">{project.description || "-"}</TableCell>
+      <TableCell>
+        <SignatureToggle project={project} pending={pending} onToggle={onToggleSignature} />
+      </TableCell>
       <TableCell>{project.status === 1 ? <Badge variant="success">启用</Badge> : <Badge variant="secondary">禁用</Badge>}</TableCell>
       <TableCell className="text-muted-foreground">{formatDateTime(project.created_at)}</TableCell>
     </TableRow>
   );
 }
 
-function ProjectMobileCard({ project }: { project: Project }) {
+function ProjectMobileCard({
+  project,
+  pending,
+  onToggleSignature,
+}: {
+  project: Project;
+  pending: boolean;
+  onToggleSignature: (project: Project) => void;
+}) {
   return (
     <Card>
       <CardHeader>
@@ -201,10 +250,36 @@ function ProjectMobileCard({ project }: { project: Project }) {
       </CardHeader>
       <CardContent className="space-y-3">
         <Token token={project.token} />
+        <SignatureToggle project={project} pending={pending} onToggle={onToggleSignature} />
         <p className="text-sm text-muted-foreground">{project.description || "暂无描述"}</p>
         <p className="text-xs text-muted-foreground">{formatDateTime(project.created_at)}</p>
       </CardContent>
     </Card>
+  );
+}
+
+function SignatureToggle({
+  project,
+  pending,
+  onToggle,
+}: {
+  project: Project;
+  pending: boolean;
+  onToggle: (project: Project) => void;
+}) {
+  return (
+    <Button
+      type="button"
+      variant={project.require_signature ? "default" : "outline"}
+      size="sm"
+      className="h-8 gap-1.5"
+      disabled={pending}
+      onClick={() => onToggle(project)}
+      title={project.require_signature ? "关闭 HMAC 签名强制校验" : "开启 HMAC 签名强制校验"}
+    >
+      {project.require_signature ? <ShieldCheck className="h-3.5 w-3.5" /> : <ShieldOff className="h-3.5 w-3.5" />}
+      {project.require_signature ? "已强制" : "未强制"}
+    </Button>
   );
 }
 

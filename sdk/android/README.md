@@ -49,6 +49,7 @@ class App : Application() {
             AeroConfig(
                 serverUrl = "https://collector.aerolog.example",
                 token = BuildConfig.AEROLOG_TOKEN,
+                secret = BuildConfig.AEROLOG_SECRET, // 可选：开启 HMAC-SHA256 签名上报
                 batchSize = 50,
                 flushIntervalMs = 5_000L,
                 storageLimit = 10_000,
@@ -68,6 +69,17 @@ serverUrl = "http://10.0.2.2:8081"
 ```
 
 真机联调请改为局域网 IP 或可访问域名。
+
+## HMAC 上报签名（可选）
+
+为防止 Token 被复用伪造，SDK 支持对每次请求体计算 `HMAC-SHA256` 签名，并通过
+`X-AeroLog-Signature: sha256=<hex>` 头上报到 Collector。
+
+- 在 `AeroConfig.secret` 中设置项目密钥（可在 AeroLog 控制台项目管理中查看，或安全
+  下发到客户端，建议不要硬编码到 APK 中）。
+- `secret` 为空时 SDK 不附带签名头，Collector 默认放行；服务端如开启强制校验，
+  缺失或不一致的签名会被拒绝。
+- 签名规则与 Web/iOS SDK 保持一致：对 POST body 原文字节计算 HMAC-SHA256，hex 小写。
 
 ## 自定义事件
 

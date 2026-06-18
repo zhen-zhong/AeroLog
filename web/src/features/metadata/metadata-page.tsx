@@ -20,6 +20,7 @@ type MetadataView = "events" | "eventProps" | "userProps";
 export function MetadataPage() {
   const projectId = useProjectStore((s) => s.projectId);
   const [view, setView] = useState<MetadataView>("events");
+  const [eventFilter, setEventFilter] = useState<string>("");
 
   const events = useQuery({
     queryKey: ["events", projectId],
@@ -28,8 +29,13 @@ export function MetadataPage() {
   });
 
   const eventProps = useQuery({
-    queryKey: ["properties", projectId, "event"],
-    queryFn: () => api.listProperties(projectId!, { scope: "event" }),
+    queryKey: ["properties", projectId, "event", eventFilter],
+    queryFn: () =>
+      api.listProperties(projectId!, {
+        scope: "event",
+        event: eventFilter || undefined,
+        include_global: !!eventFilter,
+      }),
     enabled: !!projectId,
   });
 
@@ -83,6 +89,24 @@ export function MetadataPage() {
             />
           </TabsContent>
           <TabsContent value="eventProps">
+            <div className="mb-3 flex flex-wrap items-center gap-2 text-sm">
+              <span className="text-muted-foreground">按事件筛选：</span>
+              <select
+                className="h-8 rounded-md border border-input bg-background px-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                value={eventFilter}
+                onChange={(e) => setEventFilter(e.target.value)}
+              >
+                <option value="">全部（含全局默认）</option>
+                {(events.data?.data || []).map((e) => (
+                  <option key={e.id} value={e.name}>{e.name}</option>
+                ))}
+              </select>
+              {eventFilter && (
+                <span className="text-xs text-muted-foreground">
+                  当前展示：<code className="rounded bg-muted px-1">{eventFilter}</code> 事件专属规则 + 全局默认
+                </span>
+              )}
+            </div>
             <DictionaryTable
               loading={loading}
               rows={currentData as PropertyDefinition[]}
@@ -133,6 +157,7 @@ function DictionaryTable({
               <TableHead>{mode === "events" ? "事件名" : "属性名"}</TableHead>
               {mode === "properties" && <TableHead className="w-28">类型</TableHead>}
               {mode === "properties" && <TableHead className="w-24">范围</TableHead>}
+              {mode === "properties" && <TableHead className="w-32">归属事件</TableHead>}
               <TableHead className="hidden md:table-cell">显示名</TableHead>
               <TableHead className="w-28">状态</TableHead>
               <TableHead className="hidden lg:table-cell">首次出现</TableHead>
@@ -144,7 +169,7 @@ function DictionaryTable({
             {loading ? (
               Array.from({ length: 6 }).map((_, index) => (
                 <TableRow key={index}>
-                  <TableCell colSpan={mode === "events" ? 6 : 8}>
+                  <TableCell colSpan={mode === "events" ? 6 : 9}>
                     <Skeleton className="h-8 w-full" />
                   </TableCell>
                 </TableRow>
@@ -161,6 +186,9 @@ function DictionaryTable({
                   {mode === "properties" && (
                     <TableCell>{scopeBadge((row as PropertyDefinition).scope)}</TableCell>
                   )}
+                  {mode === "properties" && (
+                    <TableCell>{eventBadge((row as PropertyDefinition).event)}</TableCell>
+                  )}
                   <TableCell className="hidden md:table-cell">{row.display_name || "-"}</TableCell>
                   <TableCell>{row.status === 1 ? <Badge variant="success">启用</Badge> : <Badge variant="secondary">禁用</Badge>}</TableCell>
                   <TableCell className="hidden text-muted-foreground lg:table-cell">{formatDateTime(row.first_seen)}</TableCell>
@@ -170,7 +198,7 @@ function DictionaryTable({
               ))
             ) : (
               <TableRow>
-                <TableCell colSpan={mode === "events" ? 6 : 8}>
+                <TableCell colSpan={mode === "events" ? 6 : 9}>
                   <div className="py-12 text-center text-sm text-muted-foreground">暂无数据</div>
                 </TableCell>
               </TableRow>
@@ -189,4 +217,13 @@ function typeBadge(type: string) {
 
 function scopeBadge(scope: "event" | "user") {
   return scope === "user" ? <Badge variant="default">用户</Badge> : <Badge variant="outline">事件</Badge>;
+}
+
+function eventBadge(event: string) {
+  if (!event) {
+    return <Badge variant="secondary">全局默认</Badge>;
+  }
+  return (
+    <code className="rounded bg-muted px-1.5 py-0.5 text-xs">{event}</code>
+  );
 }

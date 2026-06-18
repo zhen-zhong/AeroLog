@@ -18,6 +18,7 @@ import (
 	"github.com/aerolog/server/pkg/metrics"
 	"github.com/aerolog/server/pkg/model"
 	"github.com/aerolog/server/pkg/mq"
+	"github.com/aerolog/server/pkg/privacy"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -43,11 +44,12 @@ var (
 
 // TrackHandler 处理 /v1/track
 type TrackHandler struct {
-	Cache    *projectcache.Cache
-	Producer *mq.Producer
-	PG       *pgxpool.Pool
-	Topic    string
-	MaxBody  int64
+	Cache            *projectcache.Cache
+	Producer         *mq.Producer
+	PG               *pgxpool.Pool
+	RequireSignature bool
+	Topic            string
+	MaxBody          int64
 }
 
 // Register 路由注册
@@ -74,7 +76,7 @@ func (h *TrackHandler) handle(c *gin.Context) {
 	if token == "" {
 		token = c.GetHeader("X-AeroLog-Token")
 	}
-	pid, secret, err := h.Cache.ResolveProject(c.Request.Context(), token)
+	pid, secret, projectRequireSignature, err := h.Cache.ResolveProject(c.Request.Context(), token)
 	if err != nil {
 		status = "unauthorized"
 		h.recordRejected(c.Request.Context(), nil, nil, token, "invalid token", nil, c)
@@ -89,10 +91,11 @@ func (h *TrackHandler) handle(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, trackResp{Code: 4004, Msg: err.Error()})
 		return
 	}
-	if !validSignature(c, secret, body) {
+	requireSignature := h.RequireSignature || projectRequireSignature
+	if ok, reason := validSignature(c, secret, body, requireSignature); !ok {
 		status = "unauthorized"
-		h.recordRejected(c.Request.Context(), &pid, nil, token, "invalid signature", body, c)
-		c.JSON(http.StatusUnauthorized, trackResp{Code: 4002, Msg: "invalid signature"})
+		h.recordRejected(c.Request.Context(), &pid, nil, token, reason, body, c)
+		c.JSON(http.StatusUnauthorized, trackResp{Code: 4002, Msg: reason})
 		return
 	}
 
@@ -149,19 +152,25 @@ func (h *TrackHandler) handle(c *gin.Context) {
 	c.JSON(http.StatusOK, trackResp{Code: 0, Msg: "ok", Accepted: accepted, Rejected: rejected})
 }
 
-func validSignature(c *gin.Context, secret string, body []byte) bool {
+func validSignature(c *gin.Context, secret string, body []byte, required bool) (bool, string) {
 	signature := strings.TrimSpace(c.GetHeader("X-AeroLog-Signature"))
 	if signature == "" {
-		return true
+		if required {
+			return false, "missing signature"
+		}
+		return true, ""
 	}
 	if secret == "" {
-		return false
+		return false, "invalid signature"
 	}
 	signature = strings.TrimPrefix(signature, "sha256=")
 	mac := hmac.New(sha256.New, []byte(secret))
 	_, _ = mac.Write(body)
 	expected := hex.EncodeToString(mac.Sum(nil))
-	return hmac.Equal([]byte(strings.ToLower(signature)), []byte(expected))
+	if !hmac.Equal([]byte(strings.ToLower(signature)), []byte(expected)) {
+		return false, "invalid signature"
+	}
+	return true, ""
 }
 
 func (h *TrackHandler) recordRejected(ctx context.Context, projectID *uint32, event *model.Event, token string, reason string, rawBody []byte, c *gin.Context) {
@@ -170,24 +179,20 @@ func (h *TrackHandler) recordRejected(ctx context.Context, projectID *uint32, ev
 	}
 	debugCtx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
-	if err := h.ensureDebugSchema(debugCtx); err != nil {
-		log.Printf("debug schema ensure err: %v", err)
-		return
-	}
 
 	payload := map[string]interface{}{
-		"reason": reason,
-		"token":  token,
-		"ip":     clientIP(c),
-		"ua":     c.GetHeader("User-Agent"),
+		"reason":                 reason,
+		"credential_fingerprint": privacy.TokenFingerprint(token),
+		"ip":                     clientIP(c),
+		"ua":                     c.GetHeader("User-Agent"),
 	}
 	if event != nil {
-		payload["event"] = event
+		payload["event"] = privacy.RedactJSON(event)
 	}
 	if len(rawBody) > 0 {
-		payload["raw_body"] = string(limitBytes(rawBody, 4096))
+		payload["raw_body"] = privacy.RedactBody(rawBody, 4096)
 	}
-	rawPayload, _ := json.Marshal(payload)
+	rawPayload, _ := json.Marshal(privacy.RedactJSON(payload))
 
 	var projectArg interface{}
 	if projectID != nil {
@@ -214,38 +219,6 @@ func (h *TrackHandler) recordRejected(ctx context.Context, projectID *uint32, ev
 	`, projectArg, eventName, eventType, distinctID, userID, anonymousID, reason, rawPayload); err != nil {
 		log.Printf("debug rejected insert err: %v", err)
 	}
-}
-
-func (h *TrackHandler) ensureDebugSchema(ctx context.Context) error {
-	_, err := h.PG.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS debug_events (
-			id           BIGSERIAL PRIMARY KEY,
-			project_id   BIGINT       REFERENCES projects(id) ON DELETE CASCADE,
-			event        VARCHAR(128),
-			event_type   VARCHAR(32)   NOT NULL,
-			distinct_id  VARCHAR(255),
-			user_id      VARCHAR(255),
-			anonymous_id VARCHAR(255),
-			result       VARCHAR(32)   NOT NULL DEFAULT 'accepted',
-			reason       TEXT,
-			payload      JSONB         NOT NULL,
-			received_at  TIMESTAMPTZ,
-			created_at   TIMESTAMPTZ   NOT NULL DEFAULT now()
-		);
-		ALTER TABLE debug_events ALTER COLUMN project_id DROP NOT NULL;
-		CREATE INDEX IF NOT EXISTS idx_debug_events_project_created
-			ON debug_events(project_id, created_at DESC);
-		CREATE INDEX IF NOT EXISTS idx_debug_events_project_event
-			ON debug_events(project_id, event, created_at DESC);
-	`)
-	return err
-}
-
-func limitBytes(raw []byte, limit int) []byte {
-	if len(raw) <= limit {
-		return raw
-	}
-	return raw[:limit]
 }
 
 func strconvUint32(v uint32) string {

@@ -21,11 +21,14 @@ CREATE TABLE IF NOT EXISTS projects (
     token         VARCHAR(64)  NOT NULL UNIQUE,           -- AppKey，SDK 上报凭证
     secret        VARCHAR(128) NOT NULL,                  -- HMAC 签名密钥（仅服务端使用）
     description   TEXT,
+    require_signature BOOLEAN NOT NULL DEFAULT false,      -- 是否强制 SDK 请求携带 HMAC 签名
     status        SMALLINT     NOT NULL DEFAULT 1,
     created_by    BIGINT       REFERENCES users(id),
     created_at    TIMESTAMPTZ  NOT NULL DEFAULT now(),
     updated_at    TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
+
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS require_signature BOOLEAN NOT NULL DEFAULT false;
 
 CREATE TABLE IF NOT EXISTS project_members (
     project_id BIGINT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -55,7 +58,7 @@ CREATE TABLE IF NOT EXISTS event_definitions (
 ALTER TABLE event_definitions ADD COLUMN IF NOT EXISTS schema_required_props JSONB NOT NULL DEFAULT '[]'::jsonb;
 ALTER TABLE event_definitions ADD COLUMN IF NOT EXISTS schema_locked BOOLEAN NOT NULL DEFAULT false;
 
--- 属性元数据
+-- 属性元数据：event='' 为全局默认规则，event='<eventName>' 为事件专属规则
 CREATE TABLE IF NOT EXISTS property_definitions (
     id           BIGSERIAL PRIMARY KEY,
     project_id   BIGINT      NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -63,6 +66,7 @@ CREATE TABLE IF NOT EXISTS property_definitions (
     display_name VARCHAR(128),
     data_type    VARCHAR(32)  NOT NULL DEFAULT 'string', -- string|number|bool|datetime|list|object|mixed|unknown
     scope        VARCHAR(32)  NOT NULL DEFAULT 'event',  -- event|user
+    event        VARCHAR(128) NOT NULL DEFAULT '',       -- '' 表示全局默认；非空表示事件专属规则
     description  TEXT,
     schema_required BOOLEAN   NOT NULL DEFAULT false,
     schema_locked   BOOLEAN   NOT NULL DEFAULT false,
@@ -72,7 +76,7 @@ CREATE TABLE IF NOT EXISTS property_definitions (
     last_seen    TIMESTAMPTZ,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (project_id, name, scope)
+    UNIQUE (project_id, name, scope, event)
 );
 
 ALTER TABLE property_definitions ADD COLUMN IF NOT EXISTS status SMALLINT NOT NULL DEFAULT 1;
@@ -82,6 +86,7 @@ ALTER TABLE property_definitions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ
 ALTER TABLE property_definitions ADD COLUMN IF NOT EXISTS schema_required BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE property_definitions ADD COLUMN IF NOT EXISTS schema_locked BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE property_definitions ADD COLUMN IF NOT EXISTS enum_values JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE property_definitions ADD COLUMN IF NOT EXISTS event VARCHAR(128) NOT NULL DEFAULT '';
 
 -- 匿名 ID 与登录用户 ID 绑定关系，用于查询时把匿名行为归并到同一真实用户。
 CREATE TABLE IF NOT EXISTS identity_mappings (
@@ -135,6 +140,9 @@ CREATE INDEX IF NOT EXISTS idx_debug_events_project_created
 CREATE INDEX IF NOT EXISTS idx_debug_events_project_event
     ON debug_events(project_id, event, created_at DESC);
 
+CREATE INDEX IF NOT EXISTS idx_debug_events_result_created
+    ON debug_events(result, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS schema_issues (
     id            BIGSERIAL PRIMARY KEY,
     project_id    BIGINT       NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -154,6 +162,31 @@ CREATE INDEX IF NOT EXISTS idx_schema_issues_project_created
 
 CREATE INDEX IF NOT EXISTS idx_schema_issues_project_property
     ON schema_issues(project_id, property, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS schema_issue_groups (
+    id             BIGSERIAL PRIMARY KEY,
+    project_id     BIGINT       NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    event          VARCHAR(128) NOT NULL DEFAULT '',
+    property       VARCHAR(128) NOT NULL DEFAULT '',
+    expected_type  VARCHAR(32)  NOT NULL DEFAULT '',
+    actual_type    VARCHAR(32)  NOT NULL DEFAULT '',
+    severity       VARCHAR(16)  NOT NULL DEFAULT 'warning',
+    message        TEXT         NOT NULL,
+    fingerprint    VARCHAR(128) NOT NULL,
+    count          BIGINT       NOT NULL DEFAULT 0,
+    sample_payload JSONB        NOT NULL DEFAULT '{}'::jsonb,
+    first_seen     TIMESTAMPTZ,
+    last_seen      TIMESTAMPTZ,
+    created_at     TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    updated_at     TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    UNIQUE(project_id, fingerprint)
+);
+
+CREATE INDEX IF NOT EXISTS idx_schema_issue_groups_project_updated
+    ON schema_issue_groups(project_id, updated_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_schema_issue_groups_project_event
+    ON schema_issue_groups(project_id, event, updated_at DESC);
 
 -- 看板
 CREATE TABLE IF NOT EXISTS dashboards (

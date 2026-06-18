@@ -23,33 +23,41 @@ func (h *GovernanceHandler) Register(r *gin.RouterGroup) {
 	r.PUT("/projects/:id/properties/:property/schema", h.updatePropertySchema)
 	r.GET("/projects/:id/debug/events", h.debugEvents)
 	r.GET("/projects/:id/debug/schema_issues", h.schemaIssues)
+	r.GET("/projects/:id/debug/schema_issue_groups", h.schemaIssueGroups)
 	r.GET("/projects/:id/identities", h.identities)
 	r.GET("/projects/:id/users", h.users)
 	r.GET("/projects/:id/users/:distinct_id/profile", h.profile)
 }
 
 func (h *GovernanceHandler) properties(c *gin.Context) {
-	if err := h.ensureDebuggerSchema(c); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
-		return
-	}
 	id := c.Param("id")
 	scope := c.Query("scope")
 	if scope != "" && scope != "event" && scope != "user" {
 		c.JSON(http.StatusBadRequest, gin.H{"err": "scope must be event or user"})
 		return
 	}
+	event := c.Query("event")
+	includeGlobal := c.Query("include_global") == "1" || c.Query("include_global") == "true"
 
-	q := `SELECT id, name, COALESCE(display_name,''), data_type, scope, COALESCE(description,''),
+	q := `SELECT id, name, COALESCE(display_name,''), data_type, scope, COALESCE(event,''), COALESCE(description,''),
 	            schema_required, schema_locked, enum_values, status, first_seen, last_seen
 	      FROM property_definitions
 	      WHERE project_id=$1`
 	args := []any{id}
 	if scope != "" {
-		q += ` AND scope=$2`
 		args = append(args, scope)
+		q += ` AND scope=$` + strconv.Itoa(len(args))
 	}
-	q += ` ORDER BY scope, last_seen DESC NULLS LAST, id DESC LIMIT 1000`
+	if event != "" {
+		if includeGlobal {
+			args = append(args, event)
+			q += ` AND (event='' OR event=$` + strconv.Itoa(len(args)) + `)`
+		} else {
+			args = append(args, event)
+			q += ` AND event=$` + strconv.Itoa(len(args))
+		}
+	}
+	q += ` ORDER BY scope, event, last_seen DESC NULLS LAST, id DESC LIMIT 1000`
 
 	rows, err := h.PG.Query(c, q, args...)
 	if err != nil {
@@ -64,6 +72,7 @@ func (h *GovernanceHandler) properties(c *gin.Context) {
 		DisplayName    string     `json:"display_name"`
 		DataType       string     `json:"data_type"`
 		Scope          string     `json:"scope"`
+		Event          string     `json:"event"`
 		Description    string     `json:"description"`
 		SchemaRequired bool       `json:"schema_required"`
 		SchemaLocked   bool       `json:"schema_locked"`
@@ -76,7 +85,7 @@ func (h *GovernanceHandler) properties(c *gin.Context) {
 	for rows.Next() {
 		var p PropertyDef
 		var rawEnum []byte
-		if err := rows.Scan(&p.ID, &p.Name, &p.DisplayName, &p.DataType, &p.Scope, &p.Description, &p.SchemaRequired, &p.SchemaLocked, &rawEnum, &p.Status, &p.FirstSeen, &p.LastSeen); err == nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.DisplayName, &p.DataType, &p.Scope, &p.Event, &p.Description, &p.SchemaRequired, &p.SchemaLocked, &rawEnum, &p.Status, &p.FirstSeen, &p.LastSeen); err == nil {
 			p.EnumValues = parseStringList(rawEnum)
 			out = append(out, p)
 		}
@@ -85,10 +94,6 @@ func (h *GovernanceHandler) properties(c *gin.Context) {
 }
 
 func (h *GovernanceHandler) updatePropertySchema(c *gin.Context) {
-	if err := h.ensureDebuggerSchema(c); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
-		return
-	}
 	projectID := c.Param("id")
 	property := c.Param("property")
 	if property == "" {
@@ -97,6 +102,7 @@ func (h *GovernanceHandler) updatePropertySchema(c *gin.Context) {
 	}
 	var req struct {
 		Scope          string   `json:"scope"`
+		Event          string   `json:"event"`
 		DataType       string   `json:"data_type"`
 		SchemaRequired bool     `json:"schema_required"`
 		EnumValues     []string `json:"enum_values"`
@@ -114,6 +120,14 @@ func (h *GovernanceHandler) updatePropertySchema(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"err": "scope must be event or user"})
 		return
 	}
+	if req.Scope == "user" {
+		// 用户属性不区分事件
+		req.Event = ""
+	}
+	if len(req.Event) > 128 {
+		c.JSON(http.StatusBadRequest, gin.H{"err": "event length must be <= 128"})
+		return
+	}
 	if !validDataType(req.DataType) {
 		c.JSON(http.StatusBadRequest, gin.H{"err": "invalid data_type"})
 		return
@@ -127,6 +141,7 @@ func (h *GovernanceHandler) updatePropertySchema(c *gin.Context) {
 		DisplayName    string   `json:"display_name"`
 		DataType       string   `json:"data_type"`
 		Scope          string   `json:"scope"`
+		Event          string   `json:"event"`
 		Description    string   `json:"description"`
 		SchemaRequired bool     `json:"schema_required"`
 		SchemaLocked   bool     `json:"schema_locked"`
@@ -136,9 +151,9 @@ func (h *GovernanceHandler) updatePropertySchema(c *gin.Context) {
 	var p PropertyDef
 	var rawEnum []byte
 	err := h.PG.QueryRow(c, `
-		INSERT INTO property_definitions(project_id, name, display_name, data_type, scope, description, schema_required, schema_locked, enum_values)
-		VALUES($1,$2,$3,$4,$5,$6,$7,true,$8)
-		ON CONFLICT (project_id, name, scope) DO UPDATE SET
+		INSERT INTO property_definitions(project_id, name, display_name, data_type, scope, event, description, schema_required, schema_locked, enum_values)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,true,$9)
+		ON CONFLICT (project_id, name, scope, event) DO UPDATE SET
 			display_name = COALESCE(NULLIF(EXCLUDED.display_name, ''), property_definitions.display_name),
 			description = COALESCE(NULLIF(EXCLUDED.description, ''), property_definitions.description),
 			data_type = EXCLUDED.data_type,
@@ -146,9 +161,9 @@ func (h *GovernanceHandler) updatePropertySchema(c *gin.Context) {
 			schema_locked = true,
 			enum_values = EXCLUDED.enum_values,
 			updated_at = now()
-		RETURNING id, name, COALESCE(display_name,''), data_type, scope, COALESCE(description,''), schema_required, schema_locked, enum_values, status
-	`, projectID, property, req.DisplayName, req.DataType, req.Scope, req.Description, req.SchemaRequired, enumRaw).
-		Scan(&p.ID, &p.Name, &p.DisplayName, &p.DataType, &p.Scope, &p.Description, &p.SchemaRequired, &p.SchemaLocked, &rawEnum, &p.Status)
+		RETURNING id, name, COALESCE(display_name,''), data_type, scope, COALESCE(event,''), COALESCE(description,''), schema_required, schema_locked, enum_values, status
+	`, projectID, property, req.DisplayName, req.DataType, req.Scope, req.Event, req.Description, req.SchemaRequired, enumRaw).
+		Scan(&p.ID, &p.Name, &p.DisplayName, &p.DataType, &p.Scope, &p.Event, &p.Description, &p.SchemaRequired, &p.SchemaLocked, &rawEnum, &p.Status)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
 		return
@@ -158,10 +173,6 @@ func (h *GovernanceHandler) updatePropertySchema(c *gin.Context) {
 }
 
 func (h *GovernanceHandler) debugEvents(c *gin.Context) {
-	if err := h.ensureDebuggerSchema(c); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
-		return
-	}
 	projectID := c.Param("id")
 	limit := clampLimit(c.DefaultQuery("limit", "100"), 1, 500)
 	event := c.Query("event")
@@ -228,10 +239,6 @@ func (h *GovernanceHandler) debugEvents(c *gin.Context) {
 }
 
 func (h *GovernanceHandler) schemaIssues(c *gin.Context) {
-	if err := h.ensureDebuggerSchema(c); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
-		return
-	}
 	projectID := c.Param("id")
 	limit := clampLimit(c.DefaultQuery("limit", "100"), 1, 500)
 	event := c.Query("event")
@@ -279,6 +286,64 @@ func (h *GovernanceHandler) schemaIssues(c *gin.Context) {
 			return
 		}
 		it.Payload = parseJSONBytes(raw)
+		out = append(out, it)
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out})
+}
+
+func (h *GovernanceHandler) schemaIssueGroups(c *gin.Context) {
+	projectID := c.Param("id")
+	limit := clampLimit(c.DefaultQuery("limit", "100"), 1, 500)
+	event := c.Query("event")
+	property := c.Query("property")
+
+	q := `SELECT id, event, property, expected_type, actual_type, severity, message, fingerprint,
+	             count, sample_payload, first_seen, last_seen, created_at, updated_at
+	      FROM schema_issue_groups WHERE project_id=$1`
+	args := []any{projectID}
+	if event != "" {
+		args = append(args, event)
+		q += ` AND event=$` + strconv.Itoa(len(args))
+	}
+	if property != "" {
+		args = append(args, property)
+		q += ` AND property=$` + strconv.Itoa(len(args))
+	}
+	args = append(args, limit)
+	q += ` ORDER BY count DESC, updated_at DESC LIMIT $` + strconv.Itoa(len(args))
+
+	rows, err := h.PG.Query(c, q, args...)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	type SchemaIssueGroup struct {
+		ID            int64                  `json:"id"`
+		Event         string                 `json:"event"`
+		Property      string                 `json:"property"`
+		ExpectedType  string                 `json:"expected_type"`
+		ActualType    string                 `json:"actual_type"`
+		Severity      string                 `json:"severity"`
+		Message       string                 `json:"message"`
+		Fingerprint   string                 `json:"fingerprint"`
+		Count         int64                  `json:"count"`
+		SamplePayload map[string]interface{} `json:"sample_payload"`
+		FirstSeen     *time.Time             `json:"first_seen,omitempty"`
+		LastSeen      *time.Time             `json:"last_seen,omitempty"`
+		CreatedAt     time.Time              `json:"created_at"`
+		UpdatedAt     time.Time              `json:"updated_at"`
+	}
+	out := []SchemaIssueGroup{}
+	for rows.Next() {
+		var it SchemaIssueGroup
+		var raw []byte
+		if err := rows.Scan(&it.ID, &it.Event, &it.Property, &it.ExpectedType, &it.ActualType, &it.Severity, &it.Message, &it.Fingerprint, &it.Count, &raw, &it.FirstSeen, &it.LastSeen, &it.CreatedAt, &it.UpdatedAt); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
+			return
+		}
+		it.SamplePayload = parseJSONBytes(raw)
 		out = append(out, it)
 	}
 	c.JSON(http.StatusOK, gin.H{"data": out})
@@ -457,57 +522,6 @@ func validDataType(dataType string) bool {
 	default:
 		return false
 	}
-}
-
-func (h *GovernanceHandler) ensureDebuggerSchema(c *gin.Context) error {
-	_, err := h.PG.Exec(c, `
-		ALTER TABLE property_definitions ADD COLUMN IF NOT EXISTS schema_required BOOLEAN NOT NULL DEFAULT false;
-		ALTER TABLE property_definitions ADD COLUMN IF NOT EXISTS schema_locked BOOLEAN NOT NULL DEFAULT false;
-		ALTER TABLE property_definitions ADD COLUMN IF NOT EXISTS enum_values JSONB NOT NULL DEFAULT '[]'::jsonb;
-		ALTER TABLE event_definitions ADD COLUMN IF NOT EXISTS schema_required_props JSONB NOT NULL DEFAULT '[]'::jsonb;
-		ALTER TABLE event_definitions ADD COLUMN IF NOT EXISTS schema_locked BOOLEAN NOT NULL DEFAULT false;
-
-		CREATE TABLE IF NOT EXISTS debug_events (
-			id           BIGSERIAL PRIMARY KEY,
-			project_id   BIGINT       REFERENCES projects(id) ON DELETE CASCADE,
-			event        VARCHAR(128),
-			event_type   VARCHAR(32)   NOT NULL,
-			distinct_id  VARCHAR(255),
-			user_id      VARCHAR(255),
-			anonymous_id VARCHAR(255),
-			result       VARCHAR(32)   NOT NULL DEFAULT 'accepted',
-			reason       TEXT,
-			payload      JSONB         NOT NULL,
-			received_at  TIMESTAMPTZ,
-			created_at   TIMESTAMPTZ   NOT NULL DEFAULT now()
-		);
-		ALTER TABLE debug_events ALTER COLUMN project_id DROP NOT NULL;
-
-		CREATE INDEX IF NOT EXISTS idx_debug_events_project_created
-			ON debug_events(project_id, created_at DESC);
-		CREATE INDEX IF NOT EXISTS idx_debug_events_project_event
-			ON debug_events(project_id, event, created_at DESC);
-
-		CREATE TABLE IF NOT EXISTS schema_issues (
-			id            BIGSERIAL PRIMARY KEY,
-			project_id    BIGINT       NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-			event         VARCHAR(128),
-			property      VARCHAR(128),
-			expected_type VARCHAR(32),
-			actual_type   VARCHAR(32),
-			severity      VARCHAR(16)   NOT NULL DEFAULT 'warning',
-			message       TEXT          NOT NULL,
-			payload       JSONB         NOT NULL,
-			observed_at   TIMESTAMPTZ,
-			created_at    TIMESTAMPTZ   NOT NULL DEFAULT now()
-		);
-
-		CREATE INDEX IF NOT EXISTS idx_schema_issues_project_created
-			ON schema_issues(project_id, created_at DESC);
-		CREATE INDEX IF NOT EXISTS idx_schema_issues_project_property
-			ON schema_issues(project_id, property, created_at DESC);
-	`)
-	return err
 }
 
 func clampLimit(raw string, min, max int) int {

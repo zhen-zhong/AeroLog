@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
@@ -237,34 +238,7 @@ type conversionGoal struct {
 	UpdatedAt         time.Time `json:"updated_at"`
 }
 
-func (h *AnalyticsHandler) ensureConversionGoalTable(ctx context.Context) error {
-	if h.PG == nil {
-		return nil
-	}
-	_, err := h.PG.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS conversion_goals (
-			id                 BIGSERIAL PRIMARY KEY,
-			project_id          BIGINT       NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-			name                VARCHAR(128) NOT NULL,
-			description         TEXT,
-			events              JSONB        NOT NULL DEFAULT '[]'::jsonb,
-			window_seconds      INTEGER      NOT NULL DEFAULT 604800,
-			breakdown_property  VARCHAR(128),
-			status              SMALLINT     NOT NULL DEFAULT 1,
-			created_at          TIMESTAMPTZ  NOT NULL DEFAULT now(),
-			updated_at          TIMESTAMPTZ  NOT NULL DEFAULT now()
-		);
-		CREATE INDEX IF NOT EXISTS idx_conversion_goals_project
-			ON conversion_goals(project_id, status, updated_at DESC);
-	`)
-	return err
-}
-
 func (h *AnalyticsHandler) listConversionGoals(c *gin.Context) {
-	if err := h.ensureConversionGoalTable(c.Request.Context()); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
-		return
-	}
 	pid, _ := strconv.ParseInt(c.Param("id"), 10, 64)
 	rows, err := h.PG.Query(c, `
 		SELECT *
@@ -297,10 +271,6 @@ func (h *AnalyticsHandler) listConversionGoals(c *gin.Context) {
 }
 
 func (h *AnalyticsHandler) createConversionGoal(c *gin.Context) {
-	if err := h.ensureConversionGoalTable(c.Request.Context()); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
-		return
-	}
 	pid, _ := strconv.ParseInt(c.Param("id"), 10, 64)
 	var body struct {
 		Name              string   `json:"name"`
@@ -357,10 +327,6 @@ func (h *AnalyticsHandler) createConversionGoal(c *gin.Context) {
 }
 
 func (h *AnalyticsHandler) deleteConversionGoal(c *gin.Context) {
-	if err := h.ensureConversionGoalTable(c.Request.Context()); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
-		return
-	}
 	pid, _ := strconv.ParseInt(c.Param("id"), 10, 64)
 	goalID, _ := strconv.ParseInt(c.Param("goal_id"), 10, 64)
 	if goalID <= 0 {
@@ -582,8 +548,25 @@ func (h *AnalyticsHandler) userEvents(c *gin.Context) {
 		from = to - 7*24*3600*1000
 	}
 
-	where := `project_id = ? AND distinct_id = ? AND time BETWEEN fromUnixTimestamp64Milli(?) AND fromUnixTimestamp64Milli(?)`
-	args := []any{uint32(pid), distinctID, from, to}
+	mergedIDs := []string{distinctID}
+	mergeIdentity := !strings.EqualFold(c.DefaultQuery("merge_identity", "true"), "false") && c.Query("merge_identity") != "0"
+	if mergeIdentity {
+		mergedIDs = h.resolveIdentityIDs(c.Request.Context(), uint32(pid), distinctID)
+	}
+	where := `project_id = ? AND time BETWEEN fromUnixTimestamp64Milli(?) AND fromUnixTimestamp64Milli(?)`
+	args := []any{uint32(pid), from, to}
+	if len(mergedIDs) <= 1 {
+		where += ` AND distinct_id = ?`
+		args = append(args, distinctID)
+	} else {
+		holders := makePlaceholders(len(mergedIDs))
+		where += ` AND (distinct_id IN (` + holders + `) OR user_id IN (` + holders + `) OR anonymous_id IN (` + holders + `))`
+		for i := 0; i < 3; i++ {
+			for _, id := range mergedIDs {
+				args = append(args, id)
+			}
+		}
+	}
 	if event != "" {
 		where += ` AND event = ?`
 		args = append(args, event)
@@ -623,7 +606,87 @@ func (h *AnalyticsHandler) userEvents(c *gin.Context) {
 			out = append(out, item)
 		}
 	}
-	c.JSON(http.StatusOK, gin.H{"data": out})
+	c.JSON(http.StatusOK, gin.H{"data": out, "merged_ids": mergedIDs})
+}
+
+func (h *AnalyticsHandler) resolveIdentityIDs(ctx context.Context, pid uint32, seed string) []string {
+	ids := []string{}
+	seen := map[string]struct{}{}
+	add := func(values ...string) {
+		for _, value := range values {
+			value = strings.TrimSpace(value)
+			if value == "" {
+				continue
+			}
+			if _, ok := seen[value]; ok {
+				continue
+			}
+			if len(ids) >= 100 {
+				return
+			}
+			seen[value] = struct{}{}
+			ids = append(ids, value)
+		}
+	}
+	add(seed)
+
+	if h.CH != nil {
+		rows, err := h.CH.Query(ctx, `
+			SELECT distinct_id, user_id, anonymous_id
+			FROM users FINAL
+			WHERE project_id = ? AND (distinct_id = ? OR user_id = ? OR anonymous_id = ?)
+			LIMIT 50
+		`, pid, seed, seed, seed)
+		if err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var distinctID, userID, anonymousID string
+				if err := rows.Scan(&distinctID, &userID, &anonymousID); err == nil {
+					add(distinctID, userID, anonymousID)
+				}
+			}
+		}
+	}
+
+	if h.PG != nil {
+		for round := 0; round < 4; round++ {
+			before := len(ids)
+			snapshot := append([]string(nil), ids...)
+			for _, id := range snapshot {
+				rows, err := h.PG.Query(ctx, `
+					SELECT anonymous_id, user_id
+					FROM identity_mappings
+					WHERE project_id = $1 AND (anonymous_id = $2 OR user_id = $2)
+					LIMIT 100
+				`, int64(pid), id)
+				if err != nil {
+					continue
+				}
+				for rows.Next() {
+					var anonymousID, userID string
+					if err := rows.Scan(&anonymousID, &userID); err == nil {
+						add(anonymousID, userID)
+					}
+				}
+				rows.Close()
+			}
+			if len(ids) == before || len(ids) >= 100 {
+				break
+			}
+		}
+	}
+	return ids
+}
+
+func makePlaceholders(n int) string {
+	if n <= 0 {
+		return ""
+	}
+	holders := make([]string, n)
+	for i := range holders {
+		holders[i] = "?"
+	}
+	return joinStrs(holders, ", ")
 }
 
 // /v1/projects/:id/analytics/query_table

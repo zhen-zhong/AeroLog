@@ -14,6 +14,7 @@ import (
 	"github.com/aerolog/server/api/internal/config"
 	"github.com/aerolog/server/api/internal/handler"
 	"github.com/aerolog/server/pkg/metrics"
+	"github.com/aerolog/server/pkg/pgschema"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -46,6 +47,10 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := pgschema.Ensure(ctx, pool); err != nil {
+		pool.Close()
+		return nil, err
+	}
 
 	chConn, err := handler.NewCH(cfg.ClickHouse.Addr, cfg.ClickHouse.Database, cfg.ClickHouse.Username, cfg.ClickHouse.Password)
 	if err != nil {
@@ -70,6 +75,7 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 // Run starts the API and blocks until ctx is canceled or a listener fails.
 func (a *App) Run(ctx context.Context) error {
 	a.metricsSrv = metrics.Serve(a.cfg.MetricsAddr)
+	pgschema.StartRetentionLoop(ctx, a.pgPool, a.cfg.DebugRetentionDays)
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -147,7 +153,7 @@ func corsMiddleware(origins []string) gin.HandlerFunc {
 				c.Header("Access-Control-Allow-Origin", origin)
 			}
 			c.Header("Vary", "Origin")
-			c.Header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS")
+			c.Header("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS")
 			c.Header("Access-Control-Allow-Headers", "Content-Type,Authorization")
 		}
 		if c.Request.Method == http.MethodOptions {

@@ -11,9 +11,10 @@ import (
 )
 
 type entry struct {
-	projectID uint32
-	secret    string
-	expireAt  time.Time
+	projectID        uint32
+	secret           string
+	requireSignature bool
+	expireAt         time.Time
 }
 
 // Cache 内存 LRU-lite 缓存（按 token 维度）
@@ -34,31 +35,32 @@ func New(pool *pgxpool.Pool, ttl time.Duration) *Cache {
 
 // Resolve 根据 token 解析 project_id；命中缓存则直接返回，否则查 DB。
 func (c *Cache) Resolve(ctx context.Context, token string) (uint32, error) {
-	pid, _, err := c.ResolveProject(ctx, token)
+	pid, _, _, err := c.ResolveProject(ctx, token)
 	return pid, err
 }
 
 // ResolveProject 根据 token 解析 project_id 和 secret。
-func (c *Cache) ResolveProject(ctx context.Context, token string) (uint32, string, error) {
+func (c *Cache) ResolveProject(ctx context.Context, token string) (uint32, string, bool, error) {
 	if token == "" {
-		return 0, "", errors.New("empty token")
+		return 0, "", false, errors.New("empty token")
 	}
 	c.mu.RLock()
 	if e, ok := c.items[token]; ok && time.Now().Before(e.expireAt) {
 		c.mu.RUnlock()
-		return e.projectID, e.secret, nil
+		return e.projectID, e.secret, e.requireSignature, nil
 	}
 	c.mu.RUnlock()
 
 	var pid uint32
 	var secret string
+	var requireSignature bool
 	err := c.pool.QueryRow(ctx,
-		`SELECT id, secret FROM projects WHERE token=$1 AND status=1`, token).Scan(&pid, &secret)
+		`SELECT id, secret, COALESCE(require_signature,false) FROM projects WHERE token=$1 AND status=1`, token).Scan(&pid, &secret, &requireSignature)
 	if err != nil {
-		return 0, "", err
+		return 0, "", false, err
 	}
 	c.mu.Lock()
-	c.items[token] = entry{projectID: pid, secret: secret, expireAt: time.Now().Add(c.ttl)}
+	c.items[token] = entry{projectID: pid, secret: secret, requireSignature: requireSignature, expireAt: time.Now().Add(c.ttl)}
 	c.mu.Unlock()
-	return pid, secret, nil
+	return pid, secret, requireSignature, nil
 }

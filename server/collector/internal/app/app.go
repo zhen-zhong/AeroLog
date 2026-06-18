@@ -13,6 +13,7 @@ import (
 	"github.com/aerolog/server/collector/internal/projectcache"
 	"github.com/aerolog/server/pkg/metrics"
 	"github.com/aerolog/server/pkg/mq"
+	"github.com/aerolog/server/pkg/pgschema"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -30,6 +31,10 @@ type App struct {
 func New(ctx context.Context, cfg *config.Config) (*App, error) {
 	pool, err := pgxpool.New(ctx, cfg.PostgresDSN)
 	if err != nil {
+		return nil, err
+	}
+	if err := pgschema.Ensure(ctx, pool); err != nil {
+		pool.Close()
 		return nil, err
 	}
 
@@ -56,6 +61,7 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 // Run starts the collector and blocks until ctx is canceled or a listener fails.
 func (a *App) Run(ctx context.Context) error {
 	a.metricsSrv = metrics.Serve(a.cfg.MetricsAddr)
+	pgschema.StartRetentionLoop(ctx, a.pgPool, a.cfg.DebugRetentionDays)
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -96,11 +102,12 @@ func newRouter(cfg *config.Config, pool *pgxpool.Pool, prod *mq.Producer) *gin.E
 	r.Use(gin.Recovery())
 
 	(&handler.TrackHandler{
-		Cache:    projectcache.New(pool, 60*time.Second),
-		Producer: prod,
-		PG:       pool,
-		Topic:    cfg.KafkaTopic,
-		MaxBody:  cfg.MaxBodyBytes,
+		Cache:            projectcache.New(pool, 60*time.Second),
+		Producer:         prod,
+		PG:               pool,
+		RequireSignature: cfg.RequireSignature,
+		Topic:            cfg.KafkaTopic,
+		MaxBody:          cfg.MaxBodyBytes,
 	}).Register(r)
 
 	return r

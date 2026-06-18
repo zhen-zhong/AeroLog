@@ -23,7 +23,7 @@ import {
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { api, DebugEvent, PropertyDefinition, SchemaIssue } from "@/lib/api";
+import { api, DebugEvent, SchemaIssueGroup } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { useProjectStore } from "@/stores/project-store";
 
@@ -76,10 +76,10 @@ export default function DebuggerPage() {
     placeholderData: (previousData) => previousData,
   });
 
-  const schemaIssues = useQuery({
-    queryKey: ["schema_issues", projectId, eventFilter, selectedProperty],
+  const schemaIssueGroups = useQuery({
+    queryKey: ["schema_issue_groups", projectId, eventFilter, selectedProperty],
     queryFn: () =>
-      api.schemaIssues(projectId!, {
+      api.schemaIssueGroups(projectId!, {
         event: eventFilter === "__all__" ? undefined : eventFilter,
         property: selectedProperty || undefined,
         limit: 120,
@@ -130,7 +130,7 @@ export default function DebuggerPage() {
       }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["debugger_properties", projectId] });
-      void queryClient.invalidateQueries({ queryKey: ["schema_issues", projectId] });
+      void queryClient.invalidateQueries({ queryKey: ["schema_issue_groups", projectId] });
       void queryClient.invalidateQueries({ queryKey: ["debug_events", projectId] });
     },
   });
@@ -146,21 +146,21 @@ export default function DebuggerPage() {
       }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["debugger_events", projectId] });
-      void queryClient.invalidateQueries({ queryKey: ["schema_issues", projectId] });
+      void queryClient.invalidateQueries({ queryKey: ["schema_issue_groups", projectId] });
       void queryClient.invalidateQueries({ queryKey: ["debug_events", projectId] });
     },
   });
 
   const stats = useMemo(() => {
     const rows = debugEvents.data?.data || [];
-    const issues = schemaIssues.data?.data || [];
+    const issues = schemaIssueGroups.data?.data || [];
     return {
       events: rows.length,
       warnings: rows.filter((item) => item.result === "schema_warning").length,
-      issueCount: issues.length,
+      issueCount: issues.reduce((sum, item) => sum + item.count, 0),
       locked: propertyRows.filter((item) => item.schema_locked).length,
     };
-  }, [debugEvents.data, propertyRows, schemaIssues.data]);
+  }, [debugEvents.data, propertyRows, schemaIssueGroups.data]);
 
   return (
     <div>
@@ -216,7 +216,7 @@ export default function DebuggerPage() {
                 variant="outline"
                 onClick={() => {
                   void debugEvents.refetch();
-                  void schemaIssues.refetch();
+                  void schemaIssueGroups.refetch();
                 }}
               >
                 <RefreshCw className="h-4 w-4" />
@@ -366,7 +366,7 @@ export default function DebuggerPage() {
                   <DebugEventsTable projectId={projectId} rows={debugEvents.data?.data || []} loading={debugEvents.isLoading} />
                 </TabsContent>
                 <TabsContent value="issues">
-                  <SchemaIssuesTable rows={schemaIssues.data?.data || []} loading={schemaIssues.isLoading} />
+                  <SchemaIssueGroupsTable rows={schemaIssueGroups.data?.data || []} loading={schemaIssueGroups.isLoading} />
                 </TabsContent>
               </Tabs>
             </CardContent>
@@ -450,7 +450,7 @@ function UserTimelineLink({ projectId, item }: { projectId?: number; item: Debug
   );
 }
 
-function SchemaIssuesTable({ rows, loading }: { rows: SchemaIssue[]; loading: boolean }) {
+function SchemaIssueGroupsTable({ rows, loading }: { rows: SchemaIssueGroup[]; loading: boolean }) {
   if (!loading && rows.length === 0) {
     return <EmptyAnalysis title="当前没有 Schema 问题" description="当 SDK 上报的参数和已锁定规则不一致时，这里会记录事件、参数和值。" />;
   }
@@ -459,11 +459,12 @@ function SchemaIssuesTable({ rows, loading }: { rows: SchemaIssue[]; loading: bo
       <Table className="min-w-[1120px]">
         <TableHeader>
           <TableRow>
-            <TableHead className="w-40">时间</TableHead>
+            <TableHead className="w-40">最后出现</TableHead>
             <TableHead className="w-40">事件</TableHead>
             <TableHead className="w-44">参数</TableHead>
             <TableHead className="w-32">级别</TableHead>
             <TableHead className="w-40">期望 / 实际</TableHead>
+            <TableHead className="w-28">次数</TableHead>
             <TableHead className="w-56">说明</TableHead>
             <TableHead>样例参数</TableHead>
           </TableRow>
@@ -471,14 +472,15 @@ function SchemaIssuesTable({ rows, loading }: { rows: SchemaIssue[]; loading: bo
         <TableBody>
           {rows.map((item) => (
             <TableRow key={item.id}>
-              <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{formatTime(item.created_at)}</TableCell>
+              <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{formatTime(item.last_seen || item.updated_at)}</TableCell>
               <TableCell className="font-medium">{item.event || "-"}</TableCell>
               <TableCell className="font-mono text-xs">{item.property}</TableCell>
               <TableCell><Badge variant={item.severity === "error" ? "danger" : "warning"}>{item.severity}</Badge></TableCell>
               <TableCell className="text-xs text-muted-foreground">{item.expected_type || "-"} / {item.actual_type || "-"}</TableCell>
+              <TableCell className="font-mono text-xs">{item.count}</TableCell>
               <TableCell className="text-xs text-muted-foreground">{item.message}</TableCell>
               <TableCell className="max-w-80 text-xs text-muted-foreground">
-                <ParamsPreview payload={item.payload} />
+                <ParamsPreview payload={item.sample_payload} />
               </TableCell>
             </TableRow>
           ))}

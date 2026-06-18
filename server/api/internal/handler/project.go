@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -14,12 +13,13 @@ import (
 
 // Project 项目记录
 type Project struct {
-	ID          int64     `json:"id"`
-	Name        string    `json:"name"`
-	Token       string    `json:"token"`
-	Description string    `json:"description"`
-	Status      int16     `json:"status"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID               int64     `json:"id"`
+	Name             string    `json:"name"`
+	Token            string    `json:"token"`
+	Description      string    `json:"description"`
+	RequireSignature bool      `json:"require_signature"`
+	Status           int16     `json:"status"`
+	CreatedAt        time.Time `json:"created_at"`
 }
 
 // ProjectHandler /v1/projects
@@ -31,10 +31,11 @@ func (h *ProjectHandler) Register(r *gin.RouterGroup) {
 	r.GET("/projects", h.list)
 	r.POST("/projects", h.create)
 	r.GET("/projects/:id", h.get)
+	r.PATCH("/projects/:id/security", h.updateSecurity)
 }
 
 func (h *ProjectHandler) list(c *gin.Context) {
-	rows, err := h.PG.Query(c, `SELECT id, name, token, COALESCE(description,''), status, created_at
+	rows, err := h.PG.Query(c, `SELECT id, name, token, COALESCE(description,''), COALESCE(require_signature,false), status, created_at
 		FROM projects ORDER BY id DESC LIMIT 200`)
 	if err != nil {
 		c.JSON(500, gin.H{"err": err.Error()})
@@ -44,7 +45,7 @@ func (h *ProjectHandler) list(c *gin.Context) {
 	out := []Project{}
 	for rows.Next() {
 		var p Project
-		if err := rows.Scan(&p.ID, &p.Name, &p.Token, &p.Description, &p.Status, &p.CreatedAt); err == nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Token, &p.Description, &p.RequireSignature, &p.Status, &p.CreatedAt); err == nil {
 			out = append(out, p)
 		}
 	}
@@ -54,9 +55,9 @@ func (h *ProjectHandler) list(c *gin.Context) {
 func (h *ProjectHandler) get(c *gin.Context) {
 	id := c.Param("id")
 	var p Project
-	err := h.PG.QueryRow(c, `SELECT id, name, token, COALESCE(description,''), status, created_at
+	err := h.PG.QueryRow(c, `SELECT id, name, token, COALESCE(description,''), COALESCE(require_signature,false), status, created_at
 		FROM projects WHERE id=$1`, id).
-		Scan(&p.ID, &p.Name, &p.Token, &p.Description, &p.Status, &p.CreatedAt)
+		Scan(&p.ID, &p.Name, &p.Token, &p.Description, &p.RequireSignature, &p.Status, &p.CreatedAt)
 	if err != nil {
 		c.JSON(404, gin.H{"err": "not found"})
 		return
@@ -65,8 +66,9 @@ func (h *ProjectHandler) get(c *gin.Context) {
 }
 
 type createProjectReq struct {
-	Name        string `json:"name" binding:"required"`
-	Description string `json:"description"`
+	Name             string `json:"name" binding:"required"`
+	Description      string `json:"description"`
+	RequireSignature bool   `json:"require_signature"`
 }
 
 func (h *ProjectHandler) create(c *gin.Context) {
@@ -87,13 +89,37 @@ func (h *ProjectHandler) create(c *gin.Context) {
 	}
 	var id int64
 	err = h.PG.QueryRow(c,
-		`INSERT INTO projects(name, token, secret, description) VALUES($1,$2,$3,$4) RETURNING id`,
-		req.Name, token, secret, req.Description).Scan(&id)
+		`INSERT INTO projects(name, token, secret, description, require_signature) VALUES($1,$2,$3,$4,$5) RETURNING id`,
+		req.Name, token, secret, req.Description, req.RequireSignature).Scan(&id)
 	if err != nil {
 		c.JSON(500, gin.H{"err": err.Error()})
 		return
 	}
-	c.JSON(200, gin.H{"data": gin.H{"id": id, "name": req.Name, "token": token}})
+	c.JSON(200, gin.H{"data": gin.H{"id": id, "name": req.Name, "token": token, "require_signature": req.RequireSignature}})
+}
+
+func (h *ProjectHandler) updateSecurity(c *gin.Context) {
+	id := c.Param("id")
+	var req struct {
+		RequireSignature bool `json:"require_signature"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
+		return
+	}
+	var p Project
+	err := h.PG.QueryRow(c, `
+		UPDATE projects
+		SET require_signature=$2, updated_at=now()
+		WHERE id=$1
+		RETURNING id, name, token, COALESCE(description,''), COALESCE(require_signature,false), status, created_at
+	`, id, req.RequireSignature).
+		Scan(&p.ID, &p.Name, &p.Token, &p.Description, &p.RequireSignature, &p.Status, &p.CreatedAt)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"err": "not found"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": p})
 }
 
 // EventDefHandler 仅做最简列表（基于 ClickHouse 聚合或 Postgres 元数据）
@@ -107,12 +133,8 @@ func (h *EventDefHandler) Register(r *gin.RouterGroup) {
 }
 
 func (h *EventDefHandler) list(c *gin.Context) {
-	if err := h.ensureEventSchema(c); err != nil {
-		c.JSON(500, gin.H{"err": err.Error()})
-		return
-	}
 	id := c.Param("id")
-	rows, err := h.PG.Query(context.Background(),
+	rows, err := h.PG.Query(c,
 		`SELECT id, name, COALESCE(display_name,''), COALESCE(description,''), schema_required_props, schema_locked, status, first_seen, last_seen
 		 FROM event_definitions WHERE project_id=$1 ORDER BY id DESC LIMIT 500`, id)
 	if err != nil {
@@ -144,10 +166,6 @@ func (h *EventDefHandler) list(c *gin.Context) {
 }
 
 func (h *EventDefHandler) updateSchema(c *gin.Context) {
-	if err := h.ensureEventSchema(c); err != nil {
-		c.JSON(500, gin.H{"err": err.Error()})
-		return
-	}
 	projectID := c.Param("id")
 	eventName := c.Param("event")
 	if eventName == "" {
@@ -201,14 +219,6 @@ func (h *EventDefHandler) updateSchema(c *gin.Context) {
 	}
 	out.RequiredProps = parseStringList(returnedProps)
 	c.JSON(http.StatusOK, gin.H{"data": out})
-}
-
-func (h *EventDefHandler) ensureEventSchema(ctx context.Context) error {
-	_, err := h.PG.Exec(ctx, `
-		ALTER TABLE event_definitions ADD COLUMN IF NOT EXISTS schema_required_props JSONB NOT NULL DEFAULT '[]'::jsonb;
-		ALTER TABLE event_definitions ADD COLUMN IF NOT EXISTS schema_locked BOOLEAN NOT NULL DEFAULT false;
-	`)
-	return err
 }
 
 func randHex(n int) (string, error) {

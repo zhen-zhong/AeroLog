@@ -28,6 +28,7 @@ export function UsersPage() {
   const [submittedQuery, setSubmittedQuery] = useState("");
   const [selected, setSelected] = useState<UserProfile | null>(null);
   const [deepLinkReady, setDeepLinkReady] = useState(false);
+  const [fallbackOpened, setFallbackOpened] = useState(false);
   const [timelinePreset, setTimelinePreset] = useState<{ from?: number; to?: number; event?: string; distinctId?: string }>({});
 
   // 切换项目时重置选中用户
@@ -48,6 +49,7 @@ export function UsersPage() {
     if (distinctId) {
       setQuery(distinctId);
       setSubmittedQuery(distinctId);
+      setFallbackOpened(false);
       setTimelinePreset({
         distinctId,
         from: Number.isFinite(from) && from > 0 ? from : undefined,
@@ -95,6 +97,18 @@ export function UsersPage() {
       setSelected(matched);
     }
   }, [rows, selected, timelinePreset.distinctId]);
+
+  useEffect(() => {
+    if (!timelinePreset.distinctId || selected || users.isLoading || rows.length || fallbackOpened) return;
+    setSelected({
+      distinct_id: timelinePreset.distinctId,
+      user_id: "",
+      anonymous_id: "",
+      properties: {},
+      updated_at: new Date().toISOString(),
+    });
+    setFallbackOpened(true);
+  }, [fallbackOpened, rows.length, selected, timelinePreset.distinctId, users.isLoading]);
 
   function submitSearch(e: React.FormEvent) {
     e.preventDefault();

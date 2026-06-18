@@ -11,6 +11,7 @@ import (
 	"github.com/aerolog/server/consumer/internal/metadata"
 	"github.com/aerolog/server/consumer/internal/worker"
 	"github.com/aerolog/server/pkg/metrics"
+	"github.com/aerolog/server/pkg/pgschema"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -27,6 +28,10 @@ type App struct {
 func New(ctx context.Context, cfg *config.Config) (*App, error) {
 	pool, err := pgxpool.New(ctx, cfg.PostgresDSN)
 	if err != nil {
+		return nil, err
+	}
+	if err := pgschema.Ensure(ctx, pool); err != nil {
+		pool.Close()
 		return nil, err
 	}
 
@@ -57,6 +62,7 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 // Run starts the consumer and blocks until ctx is canceled or the consumer fails.
 func (a *App) Run(ctx context.Context) error {
 	a.metricsSrv = metrics.Serve(a.cfg.MetricsAddr)
+	pgschema.StartRetentionLoop(ctx, a.pgPool, a.cfg.DebugRetentionDays)
 	log.Printf("consumer started, brokers=%v topic=%s group=%s", a.cfg.KafkaBrokers, a.cfg.KafkaTopic, a.cfg.GroupID)
 	err := a.worker.Run(ctx)
 	a.Shutdown()

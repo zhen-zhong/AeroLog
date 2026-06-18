@@ -23,6 +23,7 @@ export interface Project {
     name: string;
     token: string;
     description: string;
+    require_signature: boolean;
     status: number;
     created_at: string;
 }
@@ -43,6 +44,7 @@ export interface PropertyDefinition {
     display_name: string;
     data_type: string;
     scope: "event" | "user";
+    event: string;
     description: string;
     schema_required: boolean;
     schema_locked: boolean;
@@ -76,6 +78,22 @@ export interface SchemaIssue {
     payload: Record<string, unknown>;
     observed_at?: string;
     created_at: string;
+}
+export interface SchemaIssueGroup {
+    id: number;
+    event: string;
+    property: string;
+    expected_type: string;
+    actual_type: string;
+    severity: "warning" | "error";
+    message: string;
+    fingerprint: string;
+    count: number;
+    sample_payload: Record<string, unknown>;
+    first_seen?: string;
+    last_seen?: string;
+    created_at: string;
+    updated_at: string;
 }
 export interface IdentityMapping {
     id: number;
@@ -169,11 +187,19 @@ export interface ApiOne<T> {
 export const api = {
     listProjects: () => req<ApiList<Project>>("/projects"),
     createProject: (body: { name: string; description?: string }) =>
-        req<ApiOne<{ id: number; name: string; token: string }>>("/projects", {
+        req<ApiOne<{ id: number; name: string; token: string; require_signature: boolean }>>("/projects", {
             method: "POST",
             body: JSON.stringify(body),
         }),
     getProject: (id: number | string) => req<ApiOne<Project>>(`/projects/${id}`),
+    updateProjectSecurity: (
+        id: number | string,
+        body: { require_signature: boolean },
+    ) =>
+        req<ApiOne<Project>>(`/projects/${id}/security`, {
+            method: "PATCH",
+            body: JSON.stringify(body),
+        }),
     listEvents: (id: number | string) =>
         req<ApiList<EventDefinition>>(`/projects/${id}/events`),
     updateEventSchema: (
@@ -195,10 +221,12 @@ export const api = {
         ),
     listProperties: (
         id: number | string,
-        params?: { scope?: "event" | "user" },
+        params?: { scope?: "event" | "user"; event?: string; include_global?: boolean },
     ) => {
         const q = new URLSearchParams();
         if (params?.scope) q.set("scope", params.scope);
+        if (params?.event) q.set("event", params.event);
+        if (params?.include_global) q.set("include_global", "1");
         return req<ApiList<PropertyDefinition>>(`/projects/${id}/properties?${q}`);
     },
     updatePropertySchema: (
@@ -206,6 +234,7 @@ export const api = {
         property: string,
         body: {
             scope?: "event" | "user";
+            event?: string;
             data_type: string;
             schema_required?: boolean;
             enum_values?: string[];
@@ -242,6 +271,18 @@ export const api = {
         if (params?.limit) q.set("limit", String(params.limit));
         return req<ApiList<SchemaIssue>>(`/projects/${id}/debug/schema_issues?${q}`);
     },
+    schemaIssueGroups: (
+        id: number | string,
+        params?: { event?: string; property?: string; limit?: number },
+    ) => {
+        const q = new URLSearchParams();
+        if (params?.event) q.set("event", params.event);
+        if (params?.property) q.set("property", params.property);
+        if (params?.limit) q.set("limit", String(params.limit));
+        return req<ApiList<SchemaIssueGroup>>(
+            `/projects/${id}/debug/schema_issue_groups?${q}`,
+        );
+    },
     listIdentities: (
         id: number | string,
         params?: { user_id?: string; anonymous_id?: string; limit?: number },
@@ -268,13 +309,14 @@ export const api = {
     userEvents: (
         id: number | string,
         distinctId: string,
-        params?: { from?: number; to?: number; event?: string; limit?: number },
+        params?: { from?: number; to?: number; event?: string; limit?: number; merge_identity?: boolean },
     ) => {
         const q = new URLSearchParams();
         if (params?.from) q.set("from", String(params.from));
         if (params?.to) q.set("to", String(params.to));
         if (params?.event) q.set("event", params.event);
         if (params?.limit) q.set("limit", String(params.limit));
+        if (params?.merge_identity === false) q.set("merge_identity", "false");
         return req<ApiList<UserEvent>>(
             `/projects/${id}/users/${encodeURIComponent(distinctId)}/events?${q}`,
         );

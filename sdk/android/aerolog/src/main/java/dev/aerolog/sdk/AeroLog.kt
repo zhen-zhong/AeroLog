@@ -32,6 +32,8 @@ import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+import javax.crypto.Mac
+import javax.crypto.spec.SecretKeySpec
 
 /**
  * AeroLog Android SDK 入口。
@@ -276,17 +278,37 @@ object AeroLog {
         val arr = JSONArray()
         items.forEach { arr.put(JSONObject(it)) }
         val encodedToken = URLEncoder.encode(cfg.token, StandardCharsets.UTF_8.name())
-        val req = Request.Builder()
+        val bodyBytes = arr.toString().toByteArray(StandardCharsets.UTF_8)
+        val builder = Request.Builder()
             .url("${cfg.serverUrl.trimEnd('/')}/v1/track?token=$encodedToken")
             .header("X-AeroLog-SDK", "android/$SDK_VERSION")
-            .post(arr.toString().toRequestBody("application/json".toMediaType()))
-            .build()
+            .post(bodyBytes.toRequestBody("application/json".toMediaType()))
+        val signature = hmacSha256Hex(cfg.secret, bodyBytes)
+        if (signature != null) {
+            builder.header("X-AeroLog-Signature", "sha256=$signature")
+        }
+        val req = builder.build()
         return runCatching {
             http.newCall(req).execute().use { resp ->
                 // 4xx 非 429 视为服务端拒绝，不再重试
                 resp.isSuccessful || (resp.code in 400..499 && resp.code != 429)
             }
         }.onFailure { logDebug("flush failed: ${it.message}") }.getOrDefault(false)
+    }
+
+    /** 用项目 secret 对请求体计算 HMAC-SHA256；secret 为空时返回 null（不附带签名头）。 */
+    private fun hmacSha256Hex(secret: String, body: ByteArray): String? {
+        if (secret.isEmpty()) return null
+        return runCatching {
+            val mac = Mac.getInstance("HmacSHA256")
+            mac.init(SecretKeySpec(secret.toByteArray(StandardCharsets.UTF_8), "HmacSHA256"))
+            val raw = mac.doFinal(body)
+            val sb = StringBuilder(raw.size * 2)
+            for (b in raw) {
+                sb.append(String.format("%02x", b.toInt() and 0xFF))
+            }
+            sb.toString()
+        }.onFailure { logDebug("hmac sign failed: ${it.message}") }.getOrNull()
     }
 
     private fun attachAppLifecycle() {
