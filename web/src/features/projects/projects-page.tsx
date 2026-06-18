@@ -370,13 +370,10 @@ function ProjectStatusSelect({
   disabled: boolean;
   onChange: (status: ProjectStatus) => void;
 }) {
-  const meta = projectStatusMeta(status);
   return (
     <Select value={String(status)} onValueChange={(v) => onChange(Number(v) as ProjectStatus)} disabled={disabled}>
       <SelectTrigger className="h-8 w-28">
-        <SelectValue>
-          <Badge variant={meta.badge}>{meta.label}</Badge>
-        </SelectValue>
+        <SelectValue />
       </SelectTrigger>
       <SelectContent>
         {projectStatuses.map((item) => (

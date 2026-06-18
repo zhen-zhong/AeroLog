@@ -230,13 +230,6 @@ func (h *AuthHandler) listMemberAccounts(c *gin.Context) {
 			ORDER BY u.id DESC LIMIT 500
 		`)
 	} else {
-		if ok, err := h.hasOwnedProject(c); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
-			return
-		} else if !ok {
-			c.JSON(http.StatusForbidden, gin.H{"err": "member management requires project owner permission"})
-			return
-		}
 		rows, err = h.PG.Query(c, `
 			SELECT u.id, u.email, COALESCE(u.name,''), COALESCE(u.phone,''), COALESCE(u.job_title,''),
 			       COALESCE(u.role,'member'), COALESCE(u.company_id,0), COALESCE(o.name,''),
@@ -311,20 +304,16 @@ func (h *AuthHandler) createMemberAccount(c *gin.Context) {
 			if req.CompanyID > 0 {
 				companyID = req.CompanyID
 			}
-		} else if req.CompanyID > 0 {
-			companyID = req.CompanyID
+		} else {
+			companyID = 0
+			if req.CompanyID > 0 {
+				companyID = req.CompanyID
+			}
 		}
 	}
 	if !IsPlatformAdmin(c) {
 		userRole = "member"
 		accountType = "company"
-		if ok, err := h.hasOwnedProject(c); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
-			return
-		} else if !ok {
-			c.JSON(http.StatusForbidden, gin.H{"err": "member management requires project owner permission"})
-			return
-		}
 	}
 	hash, err := hashPassword(req.Password)
 	if err != nil {
@@ -398,20 +387,6 @@ func (h *AuthHandler) canAssignProject(c *gin.Context, tx pgx.Tx, projectID, tar
 		}
 	}
 	return nil
-}
-
-func (h *AuthHandler) hasOwnedProject(c *gin.Context) (bool, error) {
-	var exists bool
-	err := h.PG.QueryRow(c, `
-		SELECT EXISTS (
-			SELECT 1
-			FROM project_members m
-			JOIN projects p ON p.id=m.project_id
-			WHERE m.user_id=$1 AND m.role=$2
-			LIMIT 1
-		)
-	`, CurrentUserID(c), RoleOwner).Scan(&exists)
-	return exists, err
 }
 
 func (h *AuthHandler) findUserForLogin(ctx context.Context, email string) (AuthUser, string, error) {

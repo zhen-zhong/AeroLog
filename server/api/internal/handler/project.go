@@ -140,7 +140,7 @@ type createProjectReq struct {
 	PackageName      string `json:"package_name"`
 	Description      string `json:"description"`
 	RequireSignature bool   `json:"require_signature"`
-	Status           *int16  `json:"status"`
+	Status           *int16 `json:"status"`
 }
 
 func (h *ProjectHandler) create(c *gin.Context) {
