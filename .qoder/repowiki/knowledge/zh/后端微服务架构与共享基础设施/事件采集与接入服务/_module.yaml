@@ -6,14 +6,13 @@ scope:
 source_files: []
 depends_on: []
 related_to:
-    - path: sdk_multi_platform
     - path: backend_services/consumer_service
-    - path: docs
     - path: backend_services/shared_pkg
+    - path: web_console/console/debugger
     - path: backend_services/api_service
     - path: infra_deploy
-    - path: sdk_multi_platform/ios_sdk
-    - path: sdk_multi_platform/android_sdk
     - path: sdk_multi_platform/web_sdk
-    - path: web_console/console/debugger
-    - path: web_console/shared_ui
+    - path: sdk_multi_platform/android_sdk
+    - path: sdk_multi_platform/ios_sdk
+    - path: sdk_multi_platform
+    - path: docs

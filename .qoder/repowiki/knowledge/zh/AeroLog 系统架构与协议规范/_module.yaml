@@ -7,17 +7,14 @@ source_files: []
 depends_on: []
 related_to:
     - path: sdk_multi_platform
-    - path: backend_services/collector_service
-    - path: backend_services/consumer_service
+    - path: backend_services
     - path: web_console/console/debugger
     - path: infra_deploy
+    - path: backend_services/consumer_service
+    - path: sdk_multi_platform/web_sdk
     - path: sdk_multi_platform/ios_sdk
     - path: sdk_multi_platform/android_sdk
-    - path: sdk_multi_platform/web_sdk
-    - path: backend_services/api_service
     - path: web_console
-    - path: backend_services
+    - path: backend_services/collector_service
     - path: web_console/admin
-    - path: web_console/console
-    - path: backend_services/shared_pkg
-    - path: web_console/shared_ui
+    - path: backend_services/api_service

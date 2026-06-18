@@ -8,12 +8,6 @@ depends_on: []
 related_to:
     - path: sdk_multi_platform/android_sdk
     - path: sdk_multi_platform/web_sdk
-    - path: docs
     - path: backend_services/collector_service
+    - path: docs
     - path: web_console/console/debugger
-    - path: infra_deploy
-    - path: web_console/admin
-    - path: backend_services/consumer_service
-    - path: backend_services/api_service
-    - path: web_console/console
-    - path: web_console/shared_ui

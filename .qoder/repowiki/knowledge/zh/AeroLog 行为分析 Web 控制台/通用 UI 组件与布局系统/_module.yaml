@@ -1,0 +1,14 @@
+schema_version: 1
+module_path: web_console/shared_ui
+title: 通用 UI 组件与布局系统
+scope:
+    - web/src/components/
+    - web/src/features/
+    - web/src/lib/
+source_files: []
+depends_on: []
+related_to:
+    - path: web_console/admin
+    - path: web_console/console
+    - path: backend_services/api_service
+    - path: web_console/console/debugger

@@ -9,5 +9,4 @@ related_to:
     - path: backend_services/collector_service
     - path: backend_services/consumer_service
     - path: backend_services/api_service
-    - path: docs
     - path: infra_deploy

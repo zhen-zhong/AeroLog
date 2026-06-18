@@ -6,9 +6,7 @@ scope:
 source_files: []
 depends_on: []
 related_to:
-    - path: backend_services/collector_service
     - path: docs
     - path: web_console/console/debugger
-    - path: web_console/admin
-    - path: web_console/console
-    - path: web_console/shared_ui
+    - path: backend_services/api_service
+    - path: backend_services/collector_service
