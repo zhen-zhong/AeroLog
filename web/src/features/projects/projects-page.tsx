@@ -3,48 +3,101 @@
 import { FormEvent, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Copy, Plus, ShieldCheck, ShieldOff } from "lucide-react";
-import { api, Project } from "@/lib/api";
+import { api, Project, ProjectStatus } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
 import { PageHeader } from "@/components/layout/page-header";
 import { AnimatedContent } from "@/components/react-bits/animated-content";
-import { CountUp } from "@/components/react-bits/count-up";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
+import { useAuthStore } from "@/stores/auth-store";
+
+const appTypes: { value: Project["app_type"]; label: string }[] = [
+  { value: "web", label: "Web" },
+  { value: "android", label: "Android" },
+  { value: "ios", label: "iOS" },
+  { value: "mini_program", label: "小程序" },
+  { value: "server", label: "服务端" },
+  { value: "other", label: "其他" },
+];
+
+const projectStatuses: { value: ProjectStatus; label: string; badge: "success" | "secondary" | "warning" | "danger" }[] = [
+  { value: 1, label: "启用", badge: "success" },
+  { value: 0, label: "未启用", badge: "secondary" },
+  { value: 2, label: "冻结", badge: "warning" },
+  { value: 3, label: "下线", badge: "danger" },
+];
+
+function appTypeLabel(type: Project["app_type"]) {
+  return appTypes.find((item) => item.value === type)?.label || "Web";
+}
+
+function projectStatusMeta(status: number) {
+  return projectStatuses.find((item) => item.value === status) || projectStatuses[1];
+}
 
 export function ProjectsPage() {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
+  const [appType, setAppType] = useState<Project["app_type"]>("web");
+  const [packageName, setPackageName] = useState("");
+  const [companyId, setCompanyId] = useState<number | undefined>();
+  const [status, setStatus] = useState<ProjectStatus>(1);
   const [description, setDescription] = useState("");
   const [error, setError] = useState("");
+  const user = useAuthStore((s) => s.user);
+  const isPlatformAdmin = user?.role === "admin";
 
   const { data, isLoading } = useQuery({
     queryKey: ["projects"],
     queryFn: () => api.listProjects(),
   });
+  const companiesQuery = useQuery({
+    queryKey: ["companies"],
+    queryFn: () => api.listCompanies(),
+    enabled: isPlatformAdmin,
+  });
 
   const projects = data?.data || [];
-  const activeCount = projects.filter((project) => project.status === 1).length;
+  const companies = companiesQuery.data?.data || [];
+  const needsPackageName = appType === "android" || appType === "ios";
 
   const createMut = useMutation({
-    mutationFn: (body: { name: string; description?: string }) => api.createProject(body),
+    mutationFn: (body: {
+      name: string;
+      company_id?: number;
+      app_type: Project["app_type"];
+      package_name?: string;
+      description?: string;
+      status?: ProjectStatus;
+    }) => api.createProject(body),
     onSuccess: () => {
       setOpen(false);
       setName("");
+      setAppType("web");
+      setPackageName("");
+      setCompanyId(undefined);
+      setStatus(1);
       setDescription("");
       setError("");
       qc.invalidateQueries({ queryKey: ["projects"] });
@@ -60,11 +113,24 @@ export function ProjectsPage() {
     },
   });
 
+  const statusMut = useMutation({
+    mutationFn: (body: { id: number; status: ProjectStatus }) =>
+      api.updateProjectStatus(body.id, { status: body.status }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["projects"] });
+    },
+  });
+
   function toggleSignature(project: Project) {
     securityMut.mutate({
       id: project.id,
       require_signature: !project.require_signature,
     });
+  }
+
+  function changeStatus(project: Project, nextStatus: ProjectStatus) {
+    if (project.status === nextStatus) return;
+    statusMut.mutate({ id: project.id, status: nextStatus });
   }
 
   function submit(e: FormEvent) {
@@ -73,14 +139,29 @@ export function ProjectsPage() {
       setError("项目名不能为空");
       return;
     }
-    createMut.mutate({ name: name.trim(), description: description.trim() || undefined });
+    if (isPlatformAdmin && !companyId) {
+      setError("请选择项目所属公司");
+      return;
+    }
+    if (needsPackageName && !packageName.trim()) {
+      setError("App 项目必须填写包名");
+      return;
+    }
+    createMut.mutate({
+      name: name.trim(),
+      company_id: companyId,
+      app_type: appType,
+      package_name: needsPackageName ? packageName.trim() : undefined,
+      description: description.trim() || undefined,
+      status,
+    });
   }
 
   return (
     <AnimatedContent>
       <PageHeader
         title="项目管理"
-        description="创建 SDK 上报项目，管理 token 和接入凭证。"
+        description="项目对应一个具体接入应用，例如 Web 站点、Android App、iOS App 或小程序。"
         actions={
           <Button onClick={() => setOpen(true)}>
             <Plus className="h-4 w-4" />
@@ -89,71 +170,63 @@ export function ProjectsPage() {
         }
       />
 
-      <div className="mb-5 grid gap-3 sm:grid-cols-3">
-        <MetricCard label="项目总数" value={projects.length} loading={isLoading} />
-        <MetricCard label="启用项目" value={activeCount} loading={isLoading} />
-        <MetricCard label="最近创建" value={projects[0]?.id || 0} loading={isLoading} />
-      </div>
-
-      <Card className="hidden md:block">
+      <Card className="min-w-0">
         <CardContent className="p-0">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-20">ID</TableHead>
-                <TableHead>项目名</TableHead>
-                <TableHead>Token</TableHead>
-                <TableHead>描述</TableHead>
-                <TableHead className="w-40">签名校验</TableHead>
-                <TableHead className="w-24">状态</TableHead>
-                <TableHead className="w-48">创建时间</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {isLoading ? (
-                Array.from({ length: 4 }).map((_, index) => (
-                  <TableRow key={index}>
-                    <TableCell colSpan={7}>
-                      <Skeleton className="h-8 w-full" />
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="min-w-20">ID</TableHead>
+                  <TableHead className="min-w-40">公司</TableHead>
+                  <TableHead className="min-w-40">项目名</TableHead>
+                  <TableHead className="min-w-28">应用类型</TableHead>
+                  <TableHead className="min-w-56">包名</TableHead>
+                  <TableHead className="min-w-72">Token</TableHead>
+                  <TableHead className="min-w-64">描述</TableHead>
+                  <TableHead className="min-w-40">签名校验</TableHead>
+                  <TableHead className="min-w-24">状态</TableHead>
+                  <TableHead className="min-w-48">创建时间</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {isLoading ? (
+                  Array.from({ length: 4 }).map((_, index) => (
+                    <TableRow key={index}>
+                      <TableCell colSpan={10}>
+                        <Skeleton className="h-8 w-full" />
+                      </TableCell>
+                    </TableRow>
+                  ))
+                ) : projects.length ? (
+                  projects.map((project) => (
+                    <ProjectRow
+                      key={project.id}
+                      project={project}
+                      pending={securityMut.isPending}
+                      statusPending={statusMut.isPending}
+                      onToggleSignature={toggleSignature}
+                      onStatusChange={changeStatus}
+                    />
+                  ))
+                ) : (
+                  <TableRow>
+                    <TableCell colSpan={10} className="h-28 text-center text-sm text-muted-foreground">
+                      暂无项目
                     </TableCell>
                   </TableRow>
-                ))
-              ) : (
-                projects.map((project) => (
-                  <ProjectRow
-                    key={project.id}
-                    project={project}
-                    pending={securityMut.isPending}
-                    onToggleSignature={toggleSignature}
-                  />
-                ))
-              )}
-            </TableBody>
-          </Table>
+                )}
+              </TableBody>
+            </Table>
+          </div>
         </CardContent>
       </Card>
 
-      <div className="grid gap-3 md:hidden">
-        {isLoading ? (
-          Array.from({ length: 3 }).map((_, index) => <Skeleton key={index} className="h-36" />)
-        ) : (
-          projects.map((project) => (
-            <ProjectMobileCard
-              key={project.id}
-              project={project}
-              pending={securityMut.isPending}
-              onToggleSignature={toggleSignature}
-            />
-          ))
-        )}
-      </div>
-
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>新建项目</DialogTitle>
-            <DialogDescription>创建后会自动生成 SDK 上报 token。</DialogDescription>
-          </DialogHeader>
+      <Sheet open={open} onOpenChange={setOpen}>
+        <SheetContent side="right" className="overflow-y-auto">
+          <SheetHeader>
+            <SheetTitle>新建项目</SheetTitle>
+            <SheetDescription>项目对应一个具体 App 或 Web，创建后自动生成 SDK 上报 token。</SheetDescription>
+          </SheetHeader>
           <form onSubmit={submit} className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="project-name">项目名</Label>
@@ -163,6 +236,64 @@ export function ProjectsPage() {
                 onChange={(e) => setName(e.target.value)}
                 placeholder="如：mall-app"
               />
+            </div>
+            {isPlatformAdmin && (
+              <div className="space-y-2">
+                <Label>所属公司</Label>
+                <Select value={companyId ? String(companyId) : ""} onValueChange={(v) => setCompanyId(Number(v))}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="选择公司" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {companies.map((company) => (
+                      <SelectItem key={company.id} value={String(company.id)}>
+                        {company.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            <div className="space-y-2">
+              <Label>应用类型</Label>
+              <Select value={appType} onValueChange={(v) => setAppType(v as Project["app_type"])}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {appTypes.map((item) => (
+                    <SelectItem key={item.value} value={item.value}>
+                      {item.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            {needsPackageName && (
+              <div className="space-y-2">
+                <Label htmlFor="project-package">包名</Label>
+                <Input
+                  id="project-package"
+                  value={packageName}
+                  onChange={(e) => setPackageName(e.target.value)}
+                  placeholder={appType === "ios" ? "com.company.app" : "com.company.app"}
+                />
+              </div>
+            )}
+            <div className="space-y-2">
+              <Label>项目状态</Label>
+              <Select value={String(status)} onValueChange={(v) => setStatus(Number(v) as ProjectStatus)}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {projectStatuses.map((item) => (
+                    <SelectItem key={item.value} value={String(item.value)}>
+                      {item.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div className="space-y-2">
               <Label htmlFor="project-desc">描述</Label>
@@ -174,47 +305,43 @@ export function ProjectsPage() {
               />
             </div>
             {error && <p className="text-sm text-destructive">{error}</p>}
-            <DialogFooter>
+            <div className="flex items-center justify-end gap-2 pt-2">
               <Button type="button" variant="outline" onClick={() => setOpen(false)}>
                 取消
               </Button>
               <Button type="submit" disabled={createMut.isPending}>
                 {createMut.isPending ? "创建中..." : "创建"}
               </Button>
-            </DialogFooter>
+            </div>
           </form>
-        </DialogContent>
-      </Dialog>
+        </SheetContent>
+      </Sheet>
     </AnimatedContent>
-  );
-}
-
-function MetricCard({ label, value, loading }: { label: string; value: number; loading: boolean }) {
-  return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-sm text-muted-foreground">{label}</CardTitle>
-      </CardHeader>
-      <CardContent>
-        {loading ? <Skeleton className="h-7 w-20" /> : <div className="text-2xl font-semibold"><CountUp value={value} /></div>}
-      </CardContent>
-    </Card>
   );
 }
 
 function ProjectRow({
   project,
   pending,
+  statusPending,
   onToggleSignature,
+  onStatusChange,
 }: {
   project: Project;
   pending: boolean;
+  statusPending: boolean;
   onToggleSignature: (project: Project) => void;
+  onStatusChange: (project: Project, status: ProjectStatus) => void;
 }) {
   return (
     <TableRow>
       <TableCell className="font-medium">{project.id}</TableCell>
+      <TableCell className="text-muted-foreground">{project.company_name || "-"}</TableCell>
       <TableCell>{project.name}</TableCell>
+      <TableCell>
+        <Badge variant="outline">{appTypeLabel(project.app_type)}</Badge>
+      </TableCell>
+      <TableCell className="max-w-56 truncate text-muted-foreground">{project.package_name || "-"}</TableCell>
       <TableCell>
         <Token token={project.token} />
       </TableCell>
@@ -222,39 +349,43 @@ function ProjectRow({
       <TableCell>
         <SignatureToggle project={project} pending={pending} onToggle={onToggleSignature} />
       </TableCell>
-      <TableCell>{project.status === 1 ? <Badge variant="success">启用</Badge> : <Badge variant="secondary">禁用</Badge>}</TableCell>
+      <TableCell>
+        <ProjectStatusSelect
+          status={project.status}
+          disabled={statusPending || project.role !== "owner"}
+          onChange={(nextStatus) => onStatusChange(project, nextStatus)}
+        />
+      </TableCell>
       <TableCell className="text-muted-foreground">{formatDateTime(project.created_at)}</TableCell>
     </TableRow>
   );
 }
 
-function ProjectMobileCard({
-  project,
-  pending,
-  onToggleSignature,
+function ProjectStatusSelect({
+  status,
+  disabled,
+  onChange,
 }: {
-  project: Project;
-  pending: boolean;
-  onToggleSignature: (project: Project) => void;
+  status: ProjectStatus;
+  disabled: boolean;
+  onChange: (status: ProjectStatus) => void;
 }) {
+  const meta = projectStatusMeta(status);
   return (
-    <Card>
-      <CardHeader>
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <CardTitle>{project.name}</CardTitle>
-            <p className="mt-1 text-sm text-muted-foreground">ID {project.id}</p>
-          </div>
-          {project.status === 1 ? <Badge variant="success">启用</Badge> : <Badge variant="secondary">禁用</Badge>}
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        <Token token={project.token} />
-        <SignatureToggle project={project} pending={pending} onToggle={onToggleSignature} />
-        <p className="text-sm text-muted-foreground">{project.description || "暂无描述"}</p>
-        <p className="text-xs text-muted-foreground">{formatDateTime(project.created_at)}</p>
-      </CardContent>
-    </Card>
+    <Select value={String(status)} onValueChange={(v) => onChange(Number(v) as ProjectStatus)} disabled={disabled}>
+      <SelectTrigger className="h-8 w-28">
+        <SelectValue>
+          <Badge variant={meta.badge}>{meta.label}</Badge>
+        </SelectValue>
+      </SelectTrigger>
+      <SelectContent>
+        {projectStatuses.map((item) => (
+          <SelectItem key={item.value} value={String(item.value)}>
+            {item.label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   );
 }
 

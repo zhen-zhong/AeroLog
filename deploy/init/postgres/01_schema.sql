@@ -4,11 +4,25 @@
 
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
+CREATE TABLE IF NOT EXISTS organizations (
+    id            BIGSERIAL PRIMARY KEY,
+    name          VARCHAR(255) NOT NULL,
+    industry      VARCHAR(128) NOT NULL DEFAULT '',
+    contact_name  VARCHAR(128) NOT NULL DEFAULT '',
+    contact_phone VARCHAR(64)  NOT NULL DEFAULT '',
+    status        SMALLINT     NOT NULL DEFAULT 1,
+    created_at    TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    updated_at    TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS users (
     id            BIGSERIAL PRIMARY KEY,
+    company_id    BIGINT       REFERENCES organizations(id),
     email         VARCHAR(255) NOT NULL UNIQUE,
     name          VARCHAR(128) NOT NULL,
     password_hash VARCHAR(255) NOT NULL,
+    phone         VARCHAR(64)  NOT NULL DEFAULT '',
+    job_title     VARCHAR(128) NOT NULL DEFAULT '',
     role          VARCHAR(32)  NOT NULL DEFAULT 'member', -- admin | member
     status        SMALLINT     NOT NULL DEFAULT 1,        -- 1 active 0 disabled
     created_at    TIMESTAMPTZ  NOT NULL DEFAULT now(),
@@ -17,26 +31,43 @@ CREATE TABLE IF NOT EXISTS users (
 
 CREATE TABLE IF NOT EXISTS projects (
     id            BIGSERIAL PRIMARY KEY,
+    company_id    BIGINT       REFERENCES organizations(id),
     name          VARCHAR(128) NOT NULL,
+    app_type      VARCHAR(32)  NOT NULL DEFAULT 'web',     -- web | android | ios | mini_program | server | other
+    package_name  VARCHAR(255) NOT NULL DEFAULT '',        -- Android/iOS 包名；Web 项目留空
     token         VARCHAR(64)  NOT NULL UNIQUE,           -- AppKey，SDK 上报凭证
     secret        VARCHAR(128) NOT NULL,                  -- HMAC 签名密钥（仅服务端使用）
     description   TEXT,
     require_signature BOOLEAN NOT NULL DEFAULT false,      -- 是否强制 SDK 请求携带 HMAC 签名
-    status        SMALLINT     NOT NULL DEFAULT 1,
+    status        SMALLINT     NOT NULL DEFAULT 1,        -- 0 未启用 | 1 启用 | 2 冻结 | 3 下线
     created_by    BIGINT       REFERENCES users(id),
     created_at    TIMESTAMPTZ  NOT NULL DEFAULT now(),
     updated_at    TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
 
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS require_signature BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS company_id BIGINT;
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS app_type VARCHAR(32) NOT NULL DEFAULT 'web';
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS package_name VARCHAR(255) NOT NULL DEFAULT '';
+UPDATE projects
+SET package_name = name
+WHERE app_type IN ('android','ios') AND COALESCE(package_name,'') = '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS company_id BIGINT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS phone VARCHAR(64) NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS job_title VARCHAR(128) NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(32) NOT NULL DEFAULT 'member';
 
 CREATE TABLE IF NOT EXISTS project_members (
+    id         BIGSERIAL PRIMARY KEY,
     project_id BIGINT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     user_id    BIGINT NOT NULL REFERENCES users(id)    ON DELETE CASCADE,
     role       VARCHAR(32) NOT NULL DEFAULT 'viewer',  -- owner | editor | viewer
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (project_id, user_id)
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (project_id, user_id)
 );
+ALTER TABLE project_members ADD COLUMN IF NOT EXISTS id BIGSERIAL;
+ALTER TABLE project_members ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
 
 -- 事件元数据：定义事件名、显示名、状态等
 CREATE TABLE IF NOT EXISTS event_definitions (

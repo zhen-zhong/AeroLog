@@ -2,13 +2,31 @@
 
 const BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8082";
 
+function getAuthToken() {
+    if (typeof window === "undefined") return "";
+    try {
+        const raw = localStorage.getItem("aerolog-auth");
+        if (!raw) return "";
+        const parsed = JSON.parse(raw) as { state?: { token?: string } };
+        return parsed.state?.token || "";
+    } catch {
+        return "";
+    }
+}
+
+function authHeaders(init?: RequestInit) {
+    const token = getAuthToken();
+    return {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(init?.headers || {}),
+    };
+}
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
     const res = await fetch(`${BASE}/v1${path}`, {
         ...init,
-        headers: {
-            "Content-Type": "application/json",
-            ...(init?.headers || {}),
-        },
+        headers: authHeaders(init),
         cache: "no-store",
     });
     if (!res.ok) {
@@ -22,10 +40,7 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 async function downloadCsv(path: string, init: RequestInit, filename: string): Promise<void> {
     const res = await fetch(`${BASE}/v1${path}`, {
         ...init,
-        headers: {
-            "Content-Type": "application/json",
-            ...(init?.headers || {}),
-        },
+        headers: authHeaders(init),
         cache: "no-store",
     });
     if (!res.ok) {
@@ -45,10 +60,65 @@ async function downloadCsv(path: string, init: RequestInit, filename: string): P
 
 export interface Project {
     id: number;
+    company_id: number;
+    company_name: string;
     name: string;
+    app_type: "web" | "android" | "ios" | "mini_program" | "server" | "other";
+    package_name: string;
     token: string;
     description: string;
     require_signature: boolean;
+    status: ProjectStatus;
+    role?: "owner" | "editor" | "viewer";
+    created_at: string;
+}
+export type ProjectStatus = 0 | 1 | 2 | 3;
+export interface AuthUser {
+    id: number;
+    email: string;
+    name: string;
+    phone: string;
+    job_title: string;
+    company_id: number;
+    company_name: string;
+    role: "admin" | "member";
+    status: number;
+    created_at: string;
+}
+export interface AuthPayload {
+    token: string;
+    user: AuthUser;
+}
+export interface ProjectMember {
+    id: number;
+    project_id: number;
+    user_id: number;
+    email: string;
+    name: string;
+    role: "owner" | "editor" | "viewer";
+    created_at: string;
+    updated_at: string;
+}
+export interface Company {
+    id: number;
+    name: string;
+    industry: string;
+    contact_name: string;
+    contact_phone: string;
+    status: number;
+    created_at: string;
+}
+export interface MemberAccount {
+    id: number;
+    email: string;
+    name: string;
+    phone: string;
+    job_title: string;
+    role: "admin" | "member";
+    company_id: number;
+    company_name: string;
+    project_count: number;
+    project_names: string;
     status: number;
     created_at: string;
 }
@@ -276,9 +346,66 @@ export interface ApiOne<T> {
 
 // 注意：from / to 统一使用毫秒（ms）时间戳，与 Go API 一致。
 export const api = {
+    login: (body: { email: string; password: string }) =>
+        req<ApiOne<AuthPayload>>("/auth/login", {
+            method: "POST",
+            body: JSON.stringify(body),
+        }),
+    register: (body: {
+        email: string;
+        name?: string;
+        password: string;
+        phone?: string;
+        job_title?: string;
+        company_name: string;
+        company_industry?: string;
+        company_phone?: string;
+    }) =>
+        req<ApiOne<AuthPayload>>("/auth/register", {
+            method: "POST",
+            body: JSON.stringify(body),
+        }),
+    me: () => req<ApiOne<AuthUser>>("/auth/me"),
+    logout: () => req<ApiOne<{ ok: boolean }>>("/auth/logout", { method: "POST" }),
+    listCompanies: () => req<ApiList<Company>>("/companies"),
+    listMembers: () => req<ApiList<MemberAccount>>("/members"),
+    createMemberAccount: (body: {
+        account_type?: "internal" | "company";
+        email: string;
+        name?: string;
+        password: string;
+        phone?: string;
+        job_title?: string;
+        company_id?: number;
+        company_name?: string;
+        company_industry?: string;
+        company_phone?: string;
+        project_ids?: number[];
+        project_role?: ProjectMember["role"];
+    }) =>
+        req<ApiOne<{ id: number; email: string; company_id: number; role: AuthUser["role"] }>>("/members", {
+            method: "POST",
+            body: JSON.stringify(body),
+        }),
     listProjects: () => req<ApiList<Project>>("/projects"),
-    createProject: (body: { name: string; description?: string }) =>
-        req<ApiOne<{ id: number; name: string; token: string; require_signature: boolean }>>("/projects", {
+    createProject: (body: {
+        name: string;
+        company_id?: number;
+        app_type?: Project["app_type"];
+        package_name?: string;
+        description?: string;
+        status?: ProjectStatus;
+    }) =>
+        req<ApiOne<{
+            id: number;
+            company_id: number;
+            name: string;
+            app_type: Project["app_type"];
+            package_name: string;
+            token: string;
+            require_signature: boolean;
+            status: ProjectStatus;
+        }>>("/projects", {
             method: "POST",
             body: JSON.stringify(body),
         }),
@@ -290,6 +417,37 @@ export const api = {
         req<ApiOne<Project>>(`/projects/${id}/security`, {
             method: "PATCH",
             body: JSON.stringify(body),
+        }),
+    updateProjectStatus: (
+        id: number | string,
+        body: { status: ProjectStatus },
+    ) =>
+        req<ApiOne<Project>>(`/projects/${id}/status`, {
+            method: "PATCH",
+            body: JSON.stringify(body),
+        }),
+    listProjectMembers: (id: number | string) =>
+        req<ApiList<ProjectMember>>(`/projects/${id}/members`),
+    addProjectMember: (
+        id: number | string,
+        body: { email: string; role: ProjectMember["role"] },
+    ) =>
+        req<ApiOne<ProjectMember>>(`/projects/${id}/members`, {
+            method: "POST",
+            body: JSON.stringify(body),
+        }),
+    updateProjectMember: (
+        id: number | string,
+        userId: number | string,
+        body: { role: ProjectMember["role"] },
+    ) =>
+        req<ApiOne<ProjectMember>>(`/projects/${id}/members/${userId}`, {
+            method: "PATCH",
+            body: JSON.stringify(body),
+        }),
+    deleteProjectMember: (id: number | string, userId: number | string) =>
+        req<ApiOne<{ deleted: boolean }>>(`/projects/${id}/members/${userId}`, {
+            method: "DELETE",
         }),
     listEvents: (id: number | string) =>
         req<ApiList<EventDefinition>>(`/projects/${id}/events`),

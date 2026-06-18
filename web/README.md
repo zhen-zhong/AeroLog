@@ -1,6 +1,6 @@
 # AeroLog Web Console
 
-AeroLog 管理后台 + 数据看板，基于 Next.js 14 (App Router) + Ant Design + TanStack Query + ECharts。
+AeroLog 管理后台 + 数据看板，基于 Next.js 14 (App Router) + shadcn/ui + TanStack Query + ECharts。
 
 ## 路由说明
 
@@ -25,6 +25,8 @@ NEXT_PUBLIC_API_BASE=http://localhost:8082 npm run dev
 ```
 
 打开 <http://localhost:3000> 即可访问。
+
+本地开发时 `npm run dev` 使用 `.next`；构建检查 `npm run build` 使用 `.next-build`，避免构建过程覆盖 dev server 的静态资源。
 
 ## 环境变量
 

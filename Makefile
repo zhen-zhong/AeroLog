@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: dev infra api collector consumer web test smoke p1-smoke
+.PHONY: dev infra api collector consumer web android-sdk-build test smoke p1-smoke
 
 dev:
 	./scripts/dev.sh
@@ -19,6 +19,9 @@ consumer:
 
 web:
 	cd web && npm run dev
+
+android-sdk-build:
+	./scripts/android-sdk-build.sh
 
 test:
 	cd server/api && GOCACHE=/private/tmp/aerolog-go-cache go test ./...

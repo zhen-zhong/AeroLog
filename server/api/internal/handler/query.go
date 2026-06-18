@@ -35,12 +35,14 @@ func (h *QueryHandler) Register(r *gin.RouterGroup) {
 	r.DELETE("/projects/:id/query_templates/:tid", h.deleteTemplate)
 	r.POST("/projects/:id/query_templates/:tid/share", h.shareTemplate)
 
-	r.GET("/shared/query_templates/:token", h.getSharedTemplate)
-
 	r.POST("/projects/:id/analytics/jobs", h.createJob)
 	r.GET("/projects/:id/analytics/jobs", h.listJobs)
 	r.GET("/projects/:id/analytics/jobs/:job_id", h.getJob)
 	r.GET("/projects/:id/analytics/jobs/:job_id/download", h.downloadJob)
+}
+
+func (h *QueryHandler) RegisterPublic(r *gin.RouterGroup) {
+	r.GET("/shared/query_templates/:token", h.getSharedTemplate)
 }
 
 // QueryTemplate 查询模板。

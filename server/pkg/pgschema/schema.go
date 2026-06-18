@@ -65,6 +65,69 @@ func StartRetentionLoop(ctx context.Context, pg *pgxpool.Pool, retentionDays int
 
 const schemaSQL = `
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS require_signature BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS company_id BIGINT;
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS app_type VARCHAR(32) NOT NULL DEFAULT 'web';
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS package_name VARCHAR(255) NOT NULL DEFAULT '';
+UPDATE projects
+SET package_name = name
+WHERE app_type IN ('android','ios') AND COALESCE(package_name,'') = '';
+
+CREATE TABLE IF NOT EXISTS organizations (
+    id            BIGSERIAL PRIMARY KEY,
+    name          VARCHAR(255) NOT NULL,
+    industry      VARCHAR(128) NOT NULL DEFAULT '',
+    contact_name  VARCHAR(128) NOT NULL DEFAULT '',
+    contact_phone VARCHAR(64)  NOT NULL DEFAULT '',
+    status        SMALLINT     NOT NULL DEFAULT 1,
+    created_at    TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    updated_at    TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_organizations_status
+    ON organizations(status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS users (
+    id            BIGSERIAL PRIMARY KEY,
+    email         VARCHAR(255) NOT NULL UNIQUE,
+    name          VARCHAR(128) NOT NULL DEFAULT '',
+    password_hash TEXT         NOT NULL,
+    status        SMALLINT     NOT NULL DEFAULT 1,
+    created_at    TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    updated_at    TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS company_id BIGINT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS phone VARCHAR(64) NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS job_title VARCHAR(128) NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(32) NOT NULL DEFAULT 'member';
+CREATE INDEX IF NOT EXISTS idx_users_status
+    ON users(status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS auth_sessions (
+    id           BIGSERIAL PRIMARY KEY,
+    user_id      BIGINT       NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token_hash   VARCHAR(64)  NOT NULL UNIQUE,
+    expires_at   TIMESTAMPTZ  NOT NULL,
+    last_seen_at TIMESTAMPTZ,
+    created_at   TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_user
+    ON auth_sessions(user_id, expires_at DESC);
+
+CREATE TABLE IF NOT EXISTS project_members (
+    id         BIGSERIAL PRIMARY KEY,
+    project_id BIGINT       NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    user_id    BIGINT       NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    role       VARCHAR(32)  NOT NULL DEFAULT 'viewer',
+    created_at TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    UNIQUE(project_id, user_id),
+    CONSTRAINT project_members_role_check CHECK (role IN ('owner', 'editor', 'viewer'))
+);
+ALTER TABLE project_members ADD COLUMN IF NOT EXISTS id BIGSERIAL;
+ALTER TABLE project_members ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
+CREATE INDEX IF NOT EXISTS idx_project_members_user
+    ON project_members(user_id, project_id);
+CREATE INDEX IF NOT EXISTS idx_project_members_project
+    ON project_members(project_id, role);
 
 ALTER TABLE property_definitions ADD COLUMN IF NOT EXISTS schema_required BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE property_definitions ADD COLUMN IF NOT EXISTS schema_locked BOOLEAN NOT NULL DEFAULT false;

@@ -4,6 +4,8 @@ const API_BASE = process.env.API_BASE || "http://127.0.0.1:8082";
 const COLLECTOR_BASE = process.env.COLLECTOR_BASE || "http://127.0.0.1:8081";
 const PROJECT_ID = process.env.PROJECT_ID ? Number(process.env.PROJECT_ID) : 0;
 const PROJECT_TOKEN = process.env.PROJECT_TOKEN || "";
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || "admin@aerolog.local";
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "aerolog123";
 const USERS = Number(process.env.USERS || 320);
 const DAYS = Number(process.env.DAYS || 14);
 const BATCH_SIZE = Number(process.env.BATCH_SIZE || 200);
@@ -23,6 +25,7 @@ const productCategories = ["analytics", "storage", "security", "marketing", "aut
 const pages = ["/", "/pricing", "/docs", "/console", "/campaigns", "/checkout"];
 
 let randomState = SEED >>> 0;
+let authToken = "";
 function rand() {
   randomState = (1664525 * randomState + 1013904223) >>> 0;
   return randomState / 0x100000000;
@@ -52,7 +55,11 @@ function eventTime(dayOffset, hour = int(8, 23)) {
 }
 
 async function requestJSON(url, init) {
-  const res = await fetch(url, init);
+  const headers = {
+    ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+    ...(init?.headers || {}),
+  };
+  const res = await fetch(url, { ...init, headers });
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`${res.status} ${res.statusText}: ${text}`);
@@ -60,10 +67,21 @@ async function requestJSON(url, init) {
   return res.json();
 }
 
+async function login() {
+  if (PROJECT_TOKEN) return;
+  const res = await requestJSON(`${API_BASE}/v1/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: ADMIN_EMAIL, password: ADMIN_PASSWORD }),
+  });
+  authToken = res.data.token;
+}
+
 async function resolveProject() {
   if (PROJECT_TOKEN) {
     return { id: PROJECT_ID || 0, name: "env-project", token: PROJECT_TOKEN };
   }
+  await login();
 
   const projects = await requestJSON(`${API_BASE}/v1/projects`);
   if (PROJECT_ID) {

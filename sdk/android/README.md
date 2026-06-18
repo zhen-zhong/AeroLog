@@ -14,7 +14,24 @@ AeroLog Android SDK 是三端统一上报协议的 Android 实现，适合在原
 
 ## 引入
 
-当前仓库提供源码 module，宿主项目可直接 include：
+当前仓库提供标准 Gradle 工程，包含 SDK library module `:aerolog` 和最小示例 App `:sample`。
+
+本地编译：
+
+```bash
+make android-sdk-build
+# 或
+cd sdk/android
+gradle --no-daemon :aerolog:assembleDebug :sample:assembleDebug
+```
+
+CI 编译：
+
+- GitHub Actions: `.github/workflows/android-sdk.yml`
+- 触发范围：`sdk/android/**` 和 Android SDK workflow 自身
+- 编译目标：`:aerolog:assembleDebug`、`:sample:assembleDebug`
+
+宿主项目如需源码集成，可直接 include：
 
 ```kotlin
 // settings.gradle.kts
@@ -34,6 +51,26 @@ SDK module 依赖：
 - OkHttp：HTTP 上报
 - kotlinx-coroutines：异步 flush
 - AndroidX Lifecycle：App 前后台自动采集
+
+## Sample App
+
+示例 App 位于 `sdk/android/sample`，用于验证 SDK 初始化、自定义事件、自定义参数、flush 和 DebugView 本地日志。
+
+默认连接 Android 模拟器访问宿主机 Collector：
+
+```kotlin
+serverUrl = "http://10.0.2.2:8081"
+```
+
+可通过 Gradle 属性覆盖：
+
+```bash
+cd sdk/android
+gradle :sample:assembleDebug \
+  -PAEROLOG_SERVER_URL=http://10.0.2.2:8081 \
+  -PAEROLOG_TOKEN=PROJECT_TOKEN \
+  -PAEROLOG_SECRET=PROJECT_SECRET
+```
 
 ## 初始化
 

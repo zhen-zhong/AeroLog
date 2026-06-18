@@ -36,11 +36,17 @@ Collector (Go)  ──►  Kafka(events.raw)  ──►  Consumer (Go, ETL)  ─
 ## 一键启动开发环境
 
 ```bash
-cd deploy
-docker compose up -d
+./scripts/dev.sh
 ```
 
 启动后包含：PostgreSQL / Redis / Redpanda(Kafka API) / ClickHouse / MinIO。
+
+控制台地址：http://127.0.0.1:3000
+
+默认本地管理员：
+
+- 邮箱：`admin@aerolog.local`
+- 密码：`aerolog123`
 
 ## 文档
 

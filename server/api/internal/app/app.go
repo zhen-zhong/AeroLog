@@ -52,6 +52,10 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 		pool.Close()
 		return nil, err
 	}
+	if err := handler.EnsureDefaultAuth(ctx, pool); err != nil {
+		pool.Close()
+		return nil, err
+	}
 
 	chConn, err := handler.NewCH(cfg.ClickHouse.Addr, cfg.ClickHouse.Database, cfg.ClickHouse.Username, cfg.ClickHouse.Password)
 	if err != nil {
@@ -122,13 +126,21 @@ func newRouter(cfg *config.Config, pool *pgxpool.Pool, chConn driver.Conn) (*gin
 	r.GET("/healthz", func(c *gin.Context) { c.String(http.StatusOK, "ok") })
 
 	v1 := r.Group("/v1")
-	(&handler.ProjectHandler{PG: pool}).Register(v1)
-	(&handler.EventDefHandler{PG: pool}).Register(v1)
-	(&handler.GovernanceHandler{PG: pool, CH: chConn}).Register(v1)
+	auth := &handler.AuthHandler{PG: pool}
+	auth.RegisterPublic(v1)
 	analytics := &handler.AnalyticsHandler{PG: pool, CH: chConn}
-	analytics.Register(v1)
 	queryJobs := &handler.QueryHandler{PG: pool, CH: chConn, Analytics: analytics}
-	queryJobs.Register(v1)
+	queryJobs.RegisterPublic(v1)
+
+	authed := v1.Group("", handler.AuthRequired(pool))
+	auth.RegisterPrivate(authed)
+	(&handler.ProjectHandler{PG: pool}).Register(authed)
+
+	projectScoped := authed.Group("", handler.ProjectAccessRequired(pool))
+	(&handler.EventDefHandler{PG: pool}).Register(projectScoped)
+	(&handler.GovernanceHandler{PG: pool, CH: chConn}).Register(projectScoped)
+	analytics.Register(projectScoped)
+	queryJobs.Register(projectScoped)
 	return r, queryJobs
 }
 

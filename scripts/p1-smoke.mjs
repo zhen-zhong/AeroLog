@@ -4,6 +4,9 @@ const API_BASE = process.env.API_BASE || "http://127.0.0.1:8082";
 const WEB_BASE = process.env.WEB_BASE || "http://127.0.0.1:3000";
 const PROJECT_ID = process.env.PROJECT_ID ? Number(process.env.PROJECT_ID) : 0;
 const TIMEOUT_MS = Number(process.env.P1_SMOKE_TIMEOUT_MS || 30_000);
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || "admin@aerolog.local";
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "aerolog123";
+let authToken = "";
 
 function log(message) {
   process.stdout.write(`${message}\n`);
@@ -17,12 +20,14 @@ function assert(condition, message) {
 
 async function request(path, init = {}) {
   const url = path.startsWith("http") ? path : `${API_BASE}${path}`;
+  const headers = {
+    "Content-Type": "application/json",
+    ...(authToken && !init.public ? { Authorization: `Bearer ${authToken}` } : {}),
+    ...(init.headers || {}),
+  };
   const res = await fetch(url, {
     ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(init.headers || {}),
-    },
+    headers,
   });
   if (!res.ok) {
     const text = await res.text();
@@ -33,6 +38,17 @@ async function request(path, init = {}) {
     return res.json();
   }
   return res.text();
+}
+
+async function login() {
+  log("logging in...");
+  const res = await request("/v1/auth/login", {
+    method: "POST",
+    public: true,
+    body: JSON.stringify({ email: ADMIN_EMAIL, password: ADMIN_PASSWORD }),
+  });
+  authToken = res.data.token;
+  assert(authToken, "login should return token");
 }
 
 async function resolveProject() {
@@ -131,7 +147,7 @@ async function checkQuery(project) {
   });
   assert(template.data.share_token, "shared query template should return share token");
 
-  const shared = await request(`/v1/shared/query_templates/${encodeURIComponent(template.data.share_token)}`);
+  const shared = await request(`/v1/shared/query_templates/${encodeURIComponent(template.data.share_token)}`, { public: true });
   assert(shared.data.id === template.data.id, "shared query template should be readable by token");
 
   const page = await fetch(`${WEB_BASE}/console/query/shared/${encodeURIComponent(template.data.share_token)}`);
@@ -157,7 +173,9 @@ async function checkQuery(project) {
   assert(current.status === "succeeded", `query export job timed out with status=${current.status}`);
   assert(current.result?.download_url, "query export job should expose download_url");
 
-  const download = await fetch(`${API_BASE}${current.result.download_url}`);
+  const download = await fetch(`${API_BASE}${current.result.download_url}`, {
+    headers: { Authorization: `Bearer ${authToken}` },
+  });
   assert(download.ok, `query export job download should return 2xx, got ${download.status}`);
   const body = await download.text();
   assert(body.includes("count"), "query export job download should contain CSV header");
@@ -229,6 +247,7 @@ async function checkGovernance(project) {
 async function main() {
   log("checking health...");
   await request("/healthz");
+  await login();
   const project = await resolveProject();
   log(`project id=${project.id} name=${project.name}`);
 

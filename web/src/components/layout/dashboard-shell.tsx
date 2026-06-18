@@ -1,7 +1,9 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   BarChart3,
   Boxes,
@@ -12,8 +14,10 @@ import {
   LayoutDashboard,
   Menu,
   PanelLeft,
+  RefreshCw,
   Route,
   ShieldCheck,
+  UserCog,
   Users,
   Waypoints,
 } from "lucide-react";
@@ -22,6 +26,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { TopHeader } from "@/components/layout/top-header";
+import { api } from "@/lib/api";
+import { useAuthStore } from "@/stores/auth-store";
 import { useUIStore } from "@/stores/ui-store";
 
 const navGroups = [
@@ -44,11 +50,13 @@ const navGroups = [
     items: [
       { href: "/console/governance", label: "数据治理", icon: ShieldCheck },
       { href: "/admin/projects", label: "项目管理", icon: FolderKanban },
+      { href: "/admin/members", label: "成员管理", icon: UserCog },
     ],
   },
 ];
 
 const navItems = navGroups.flatMap((group) => group.items);
+const routeHistoryKey = "aerolog-route-history";
 
 function useActivePath() {
   const pathname = usePathname() || "/";
@@ -105,8 +113,165 @@ function NavList({
   );
 }
 
+function routeLabel(pathname: string) {
+  const item = [...navItems]
+    .sort((a, b) => b.href.length - a.href.length)
+    .find((nav) => pathname.startsWith(nav.href));
+  return item?.label || pathname;
+}
+
+function RouteHistoryBar() {
+  const pathname = usePathname() || "/";
+  const router = useRouter();
+  const qc = useQueryClient();
+  const [routes, setRoutes] = useState<string[]>([]);
+  const [refreshing, setRefreshing] = useState(false);
+
+  useEffect(() => {
+    if (pathname === "/" || pathname === "/login" || pathname.startsWith("/console/query/shared/")) return;
+    setRoutes((prev) => {
+      const next = [pathname, ...prev.filter((item) => item !== pathname && item !== "/")].slice(0, 8);
+      window.localStorage.setItem(routeHistoryKey, JSON.stringify(next));
+      return next;
+    });
+  }, [pathname]);
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(routeHistoryKey);
+      if (raw) {
+        const next = (JSON.parse(raw) as string[]).filter((item) => item && item !== "/");
+        setRoutes(next);
+        window.localStorage.setItem(routeHistoryKey, JSON.stringify(next));
+      }
+    } catch {
+      setRoutes([]);
+    }
+  }, []);
+
+  function closeRoute(route: string) {
+    setRoutes((prev) => {
+      const next = prev.filter((item) => item !== route);
+      window.localStorage.setItem(routeHistoryKey, JSON.stringify(next));
+      return next;
+    });
+  }
+
+  async function refreshCurrentRoute() {
+    setRefreshing(true);
+    try {
+      await qc.invalidateQueries({ refetchType: "active" });
+      router.refresh();
+    } finally {
+      window.setTimeout(() => setRefreshing(false), 180);
+    }
+  }
+
+  return (
+    <div className="sticky top-14 z-20 border-b bg-card/90 backdrop-blur lg:top-14">
+      <div className="flex min-h-11 items-center justify-between gap-3 px-4 py-2 sm:px-6 lg:px-8">
+        <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto">
+          {routes.length ? (
+            routes.map((route) => (
+              <div
+                key={route}
+                className={cn(
+                  "group flex h-7 shrink-0 items-center rounded-md border text-xs font-medium transition-colors hover:bg-accent hover:text-accent-foreground",
+                  route === pathname
+                    ? "border-primary/30 bg-primary/10 text-primary"
+                    : "border-border text-muted-foreground",
+                )}
+              >
+                <Link href={route} className="px-2.5 py-1">
+                  {routeLabel(route)}
+                </Link>
+                <button
+                  type="button"
+                  className="mr-1 flex h-5 w-5 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    closeRoute(route);
+                  }}
+                  aria-label={`关闭${routeLabel(route)}`}
+                  title="关闭"
+                >
+                  ×
+                </button>
+              </div>
+            ))
+          ) : (
+            <span className="text-xs text-muted-foreground">暂无访问记录</span>
+          )}
+        </div>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 shrink-0"
+          onClick={refreshCurrentRoute}
+          disabled={refreshing}
+          aria-label="刷新当前页面"
+          title="刷新当前页面"
+        >
+          <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} />
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 export function DashboardShell({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname() || "/";
+  const router = useRouter();
+  const token = useAuthStore((s) => s.token);
+  const setAuth = useAuthStore((s) => s.setAuth);
+  const clearAuth = useAuthStore((s) => s.clearAuth);
+  const hasHydrated = useAuthStore((s) => s.hasHydrated);
+  const setHasHydrated = useAuthStore((s) => s.setHasHydrated);
   const collapsed = useUIStore((s) => s.sidebarCollapsed);
+  const isPublicPage = pathname === "/login" || pathname.startsWith("/console/query/shared/");
+
+  useEffect(() => {
+    if (hasHydrated) return;
+    const timer = window.setTimeout(() => setHasHydrated(true), 500);
+    return () => window.clearTimeout(timer);
+  }, [hasHydrated, setHasHydrated]);
+
+  useEffect(() => {
+    if (!hasHydrated || isPublicPage || token) return;
+    const next = encodeURIComponent(pathname);
+    router.replace(`/login?next=${next}`);
+  }, [hasHydrated, isPublicPage, pathname, router, token]);
+
+  useEffect(() => {
+    if (!hasHydrated || isPublicPage || !token) return;
+    let cancelled = false;
+    api.me()
+      .then((res) => {
+        if (!cancelled) setAuth(token, res.data);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          clearAuth();
+          router.replace(`/login?next=${encodeURIComponent(pathname)}`);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [clearAuth, hasHydrated, isPublicPage, pathname, router, setAuth, token]);
+
+  if (isPublicPage) {
+    return <div className="min-h-dvh bg-background">{children}</div>;
+  }
+
+  if (!hasHydrated || !token) {
+    return (
+      <div className="flex min-h-dvh items-center justify-center bg-background px-6 text-sm text-muted-foreground">
+        正在校验登录状态...
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-dvh bg-background">
@@ -179,6 +344,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
         )}
       >
         <TopHeader />
+        <RouteHistoryBar />
         <div className="mx-auto w-full max-w-[1480px] px-4 py-4 sm:px-6 sm:py-6 lg:px-8">
           {children}
         </div>

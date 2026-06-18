@@ -1,0 +1,39 @@
+name: Android SDK Build
+
+on:
+  push:
+    paths:
+      - "sdk/android/**"
+      - ".github/workflows/android-sdk.yml"
+  pull_request:
+    paths:
+      - "sdk/android/**"
+      - ".github/workflows/android-sdk.yml"
+
+jobs:
+  android-sdk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android platform
+        run: sdkmanager "platforms;android-34" "build-tools;34.0.0"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.7"
+
+      - name: Build SDK and sample
+        working-directory: sdk/android
+        run: gradle --no-daemon :aerolog:assembleDebug :sample:assembleDebug

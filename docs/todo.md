@@ -16,6 +16,7 @@
 - 自助查询支持模板/分享/CSV/异步任务：新增 `query_templates`、`analytics_jobs` 表与 `QueryHandler`，模板可保存、复用、分享（48 hex token）；`/analytics/query_table/export` 直接下载 CSV，`/analytics/jobs` 用 PG `FOR UPDATE SKIP LOCKED` 异步执行最多 5 万行结果；Web 查询页新增「保存模板」「导出 CSV」「异步导出」「模板列表」「任务列表」面板。
 - 数据治理支持批量/审计/负责人/状态：`property_definitions` 增加 `owner/archived/hidden`，新增 `property_change_log` 审计表；新增 `PUT /properties/batch`、`GET /properties/:name/change_log`，前端治理页加入勾选 + 批量工具栏、行内归档/隐藏切换以及变更历史抽屉。
 - Android SDK 完善传输与自动采集：`AeroConfig` 增加 `enableGzip / enableLocalDebugLog / debugLogCapacity / autoTrackActivityDuration / autoTrackCrash / autoTrackANR / autoTrackInstall`；`send()` 在 ≥1KB 时启用 gzip 并保持 HMAC 对原始包体签名；新增 `$AppViewScreenEnd($screen_duration)`、`$AppCrash`、`$AppANR`、`$AppInstall/$AppUpdate` 自动事件，并提供 `getDebugLogs()/clearDebugLogs()` 本地环形缓冲。
+- 多项目权限与真实登录：新增 `users/auth_sessions/project_members`，API 支持登录/注册/退出/当前用户，项目成员 owner/editor/viewer 权限控制；历史孤儿项目自动归属默认管理员；Web 增加登录页、成员管理页、顶部退出登录和请求 Bearer token。
 
 ## P0
 
@@ -24,8 +25,8 @@
 ## P1
 
 - [x] P1 端到端验收：覆盖转化目标版本/趋势/导出、自助查询模板/分享/CSV/异步任务、数据治理批量/负责人/状态/审计，并沉淀为 `make p1-smoke`。
-- [ ] Android SDK 增加 root Gradle 工程与 CI 编译验证，避免 SDK 只能靠人工检查。
-- [ ] 多项目权限与成员管理：owner/editor/viewer、项目成员、操作人透传。
+- [x] Android SDK 增加 root Gradle 工程与 CI 编译验证：`sdk/android` 已补 `settings.gradle.kts`、root `build.gradle.kts`、`:sample` 示例 App、`make android-sdk-build` 和 GitHub Actions workflow。
+- [x] 多项目权限与成员管理：owner/editor/viewer、项目成员、操作人透传。
 - [ ] 分享链接增强：过期时间、撤销记录、访问日志和权限边界。
 - [ ] 导出文件存储正规化：本地/MinIO/S3 适配、过期清理、下载鉴权。
 - [ ] SDK Debugger 闭环：按 `$insert_id`、设备、用户、session 串联 SDK 本地日志、Collector、Schema、Consumer、ClickHouse 查询结果。
