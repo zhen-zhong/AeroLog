@@ -58,6 +58,9 @@ wait_http() {
 
 if [[ "${SKIP_INFRA:-0}" != "1" ]]; then
   echo "starting docker compose infra..."
+  # macOS Finder 浏览 deploy/data 后会生成 .DS_Store，会让 ClickHouse 等容器
+  # 入口脚本里的 chown 失败导致死循环重启，启动前先静默清理。
+  find "$ROOT/deploy/data" -name '.DS_Store' -delete 2>/dev/null || true
   docker compose -f "$ROOT/deploy/docker-compose.yml" up -d
 fi
 

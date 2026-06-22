@@ -24,6 +24,11 @@ const (
 	RoleEditor = "editor"
 	RoleOwner  = "owner"
 
+	UserRolePlatformAdmin  = "admin"
+	UserRolePlatformMember = "platform_member"
+	UserRoleCompanyAdmin   = "company_admin"
+	UserRoleMember         = "member"
+
 	authUserIDKey    = "auth_user_id"
 	authUserEmailKey = "auth_user_email"
 	authUserNameKey  = "auth_user_name"
@@ -69,21 +74,32 @@ func (h *AuthHandler) RegisterPrivate(r *gin.RouterGroup) {
 	r.POST("/auth/logout", h.logout)
 	r.GET("/members", h.listMemberAccounts)
 	r.POST("/members", h.createMemberAccount)
+	r.PATCH("/members/:id", h.updateMemberAccount)
+	r.GET("/members/:id/projects", h.listMemberProjects)
+	r.PUT("/members/:id/projects", h.updateMemberProjects)
+}
+
+// MemberProjectGrant 描述某成员在单个项目中的角色。
+type MemberProjectGrant struct {
+	ProjectID   int64  `json:"project_id"`
+	ProjectName string `json:"project_name"`
+	Role        string `json:"role"`
 }
 
 type MemberAccount struct {
-	ID           int64     `json:"id"`
-	Email        string    `json:"email"`
-	Name         string    `json:"name"`
-	Phone        string    `json:"phone"`
-	JobTitle     string    `json:"job_title"`
-	Role         string    `json:"role"`
-	CompanyID    int64     `json:"company_id"`
-	CompanyName  string    `json:"company_name"`
-	ProjectCount int64     `json:"project_count"`
-	ProjectNames string    `json:"project_names"`
-	Status       int16     `json:"status"`
-	CreatedAt    time.Time `json:"created_at"`
+	ID             int64     `json:"id"`
+	Email          string    `json:"email"`
+	Name           string    `json:"name"`
+	Phone          string    `json:"phone"`
+	JobTitle       string    `json:"job_title"`
+	Role           string    `json:"role"`
+	CompanyID      int64     `json:"company_id"`
+	CompanyName    string    `json:"company_name"`
+	ProjectCount   int64     `json:"project_count"`
+	ProjectNames   string    `json:"project_names"`
+	IsCompanyAdmin bool      `json:"is_company_admin"`
+	Status         int16     `json:"status"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 func (h *AuthHandler) login(c *gin.Context) {
@@ -165,10 +181,10 @@ func (h *AuthHandler) register(c *gin.Context) {
 
 	var user AuthUser
 	err = tx.QueryRow(c, `
-		INSERT INTO users(email, name, password_hash, company_id, phone, job_title)
-		VALUES($1,$2,$3,$4,$5,$6)
+		INSERT INTO users(email, name, password_hash, company_id, phone, job_title, role)
+		VALUES($1,$2,$3,$4,$5,$6,$7)
 		RETURNING id, email, COALESCE(name,''), COALESCE(phone,''), COALESCE(job_title,''), COALESCE(company_id,0), COALESCE(role,'member'), status, created_at
-	`, email, name, hash, companyID, strings.TrimSpace(req.Phone), strings.TrimSpace(req.JobTitle)).
+	`, email, name, hash, companyID, strings.TrimSpace(req.Phone), strings.TrimSpace(req.JobTitle), UserRoleCompanyAdmin).
 		Scan(&user.ID, &user.Email, &user.Name, &user.Phone, &user.JobTitle, &user.CompanyID, &user.Role, &user.Status, &user.CreatedAt)
 	if err != nil {
 		c.JSON(http.StatusConflict, gin.H{"err": "email already exists"})
@@ -213,34 +229,51 @@ func (h *AuthHandler) logout(c *gin.Context) {
 }
 
 func (h *AuthHandler) listMemberAccounts(c *gin.Context) {
+	if !CanManageCompany(c) {
+		c.JSON(http.StatusForbidden, gin.H{"err": "需要企业管理员或平台管理员权限"})
+		return
+	}
 	var rows pgx.Rows
 	var err error
 	if IsPlatformAdmin(c) {
 		rows, err = h.PG.Query(c, `
 			SELECT u.id, u.email, COALESCE(u.name,''), COALESCE(u.phone,''), COALESCE(u.job_title,''),
 			       COALESCE(u.role,'member'), COALESCE(u.company_id,0), COALESCE(o.name,''),
-			       count(pm.project_id), COALESCE(string_agg(DISTINCT p.name, ', ' ORDER BY p.name), ''),
+			       COALESCE(g.cnt, 0),
+			       COALESCE(g.names, ''),
+			       COALESCE(u.role,'member')='company_admin',
 			       u.status, u.created_at
 			FROM users u
 			LEFT JOIN organizations o ON o.id=u.company_id
-			LEFT JOIN project_members pm ON pm.user_id=u.id
-			LEFT JOIN projects p ON p.id=pm.project_id
-			WHERE u.status=1
-			GROUP BY u.id, o.name
+			LEFT JOIN (
+				SELECT pm.user_id,
+				       count(DISTINCT pm.project_id) AS cnt,
+			       string_agg(DISTINCT p.name, ', ' ORDER BY p.name) AS names
+				FROM project_members pm
+				JOIN projects p ON p.id=pm.project_id
+				GROUP BY pm.user_id
+			) g ON g.user_id=u.id
 			ORDER BY u.id DESC LIMIT 500
 		`)
 	} else {
 		rows, err = h.PG.Query(c, `
 			SELECT u.id, u.email, COALESCE(u.name,''), COALESCE(u.phone,''), COALESCE(u.job_title,''),
 			       COALESCE(u.role,'member'), COALESCE(u.company_id,0), COALESCE(o.name,''),
-			       count(pm.project_id), COALESCE(string_agg(DISTINCT p.name, ', ' ORDER BY p.name), ''),
+			       COALESCE(g.cnt, 0),
+			       COALESCE(g.names, ''),
+			       COALESCE(u.role,'member')='company_admin',
 			       u.status, u.created_at
 			FROM users u
 			LEFT JOIN organizations o ON o.id=u.company_id
-			LEFT JOIN project_members pm ON pm.user_id=u.id
-			LEFT JOIN projects p ON p.id=pm.project_id
-			WHERE u.status=1 AND u.company_id=$1
-			GROUP BY u.id, o.name
+			LEFT JOIN (
+				SELECT pm.user_id,
+				       count(DISTINCT pm.project_id) AS cnt,
+			       string_agg(DISTINCT p.name, ', ' ORDER BY p.name) AS names
+				FROM project_members pm
+				JOIN projects p ON p.id=pm.project_id
+				GROUP BY pm.user_id
+			) g ON g.user_id=u.id
+			WHERE u.company_id=$1
 			ORDER BY u.id DESC LIMIT 500
 		`, CurrentCompanyID(c))
 	}
@@ -252,7 +285,7 @@ func (h *AuthHandler) listMemberAccounts(c *gin.Context) {
 	out := []MemberAccount{}
 	for rows.Next() {
 		var item MemberAccount
-		if err := rows.Scan(&item.ID, &item.Email, &item.Name, &item.Phone, &item.JobTitle, &item.Role, &item.CompanyID, &item.CompanyName, &item.ProjectCount, &item.ProjectNames, &item.Status, &item.CreatedAt); err == nil {
+		if err := rows.Scan(&item.ID, &item.Email, &item.Name, &item.Phone, &item.JobTitle, &item.Role, &item.CompanyID, &item.CompanyName, &item.ProjectCount, &item.ProjectNames, &item.IsCompanyAdmin, &item.Status, &item.CreatedAt); err == nil {
 			out = append(out, item)
 		}
 	}
@@ -260,6 +293,10 @@ func (h *AuthHandler) listMemberAccounts(c *gin.Context) {
 }
 
 func (h *AuthHandler) createMemberAccount(c *gin.Context) {
+	if !CanManageCompany(c) {
+		c.JSON(http.StatusForbidden, gin.H{"err": "需要企业管理员或平台管理员权限"})
+		return
+	}
 	var req struct {
 		AccountType     string  `json:"account_type"`
 		Email           string  `json:"email"`
@@ -291,29 +328,51 @@ func (h *AuthHandler) createMemberAccount(c *gin.Context) {
 	if name == "" {
 		name = email
 	}
-	accountType := strings.TrimSpace(req.AccountType)
+	accountType := strings.ToLower(strings.TrimSpace(req.AccountType))
 	if accountType == "" {
-		accountType = "company"
+		accountType = "enterprise_member"
 	}
-	userRole := "member"
+	// 兼容已发布客户端的旧枚举值。
+	if accountType == "internal" {
+		accountType = "platform_member"
+	}
+	if accountType == "company" {
+		accountType = "enterprise_member"
+	}
+	userRole := UserRoleMember
 	companyID := CurrentCompanyID(c)
 	enforceProjectCompany := true
 	if IsPlatformAdmin(c) {
-		if accountType == "internal" {
+		switch accountType {
+		case "platform_admin":
+			userRole = UserRolePlatformAdmin
 			enforceProjectCompany = false
-			if req.CompanyID > 0 {
-				companyID = req.CompanyID
-			}
-		} else {
+			companyID = 0
+		case "platform_member":
+			userRole = UserRolePlatformMember
+			enforceProjectCompany = false
+			companyID = 0
+		case "enterprise_admin":
+			userRole = UserRoleCompanyAdmin
+			companyID = req.CompanyID
+		case "enterprise_member":
 			companyID = 0
 			if req.CompanyID > 0 {
 				companyID = req.CompanyID
 			}
+		default:
+			c.JSON(http.StatusBadRequest, gin.H{"err": "账号类型无效"})
+			return
 		}
+	} else {
+		accountType = "enterprise_member"
 	}
-	if !IsPlatformAdmin(c) {
-		userRole = "member"
-		accountType = "company"
+	if IsPlatformAdmin(c) && (accountType == "enterprise_admin" || accountType == "enterprise_member") && companyID == 0 {
+		companyName := strings.TrimSpace(req.CompanyName)
+		if accountType != "enterprise_admin" || companyName == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"err": "请选择所属企业；新建企业时请创建企业管理员"})
+			return
+		}
 	}
 	hash, err := hashPassword(req.Password)
 	if err != nil {
@@ -326,7 +385,7 @@ func (h *AuthHandler) createMemberAccount(c *gin.Context) {
 		return
 	}
 	defer func() { _ = tx.Rollback(c) }()
-	if IsPlatformAdmin(c) && accountType == "company" && companyID == 0 {
+	if IsPlatformAdmin(c) && accountType == "enterprise_admin" && companyID == 0 {
 		companyName := strings.TrimSpace(req.CompanyName)
 		if companyName == "" {
 			c.JSON(http.StatusBadRequest, gin.H{"err": "company_name is required"})
@@ -372,6 +431,310 @@ func (h *AuthHandler) createMemberAccount(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{"id": userID, "email": email, "company_id": companyID, "role": userRole}})
 }
 
+func (h *AuthHandler) updateMemberAccount(c *gin.Context) {
+	if !CanManageCompany(c) {
+		c.JSON(http.StatusForbidden, gin.H{"err": "需要企业管理员或平台管理员权限"})
+		return
+	}
+	userID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || userID <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"err": "user id is invalid"})
+		return
+	}
+	if userID == CurrentUserID(c) {
+		c.JSON(http.StatusForbidden, gin.H{"err": "不能编辑自己的账号"})
+		return
+	}
+	var req struct {
+		Name   *string `json:"name"`
+		Email  *string `json:"email"`
+		Status *int16  `json:"status"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
+		return
+	}
+	var targetCompanyID int64
+	var targetRole string
+	var targetStatus int16
+	if err := h.PG.QueryRow(c, `
+		SELECT COALESCE(company_id,0), COALESCE(role,'member'), status
+		FROM users WHERE id=$1
+	`, userID).Scan(&targetCompanyID, &targetRole, &targetStatus); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"err": "user not found"})
+		return
+	}
+	_ = targetStatus
+	if targetRole == UserRolePlatformAdmin && !IsPlatformAdmin(c) {
+		c.JSON(http.StatusForbidden, gin.H{"err": "平台管理员账号仅平台管理员可编辑"})
+		return
+	}
+	if !IsPlatformAdmin(c) {
+		if targetCompanyID != CurrentCompanyID(c) {
+			c.JSON(http.StatusForbidden, gin.H{"err": "只能编辑同公司成员"})
+			return
+		}
+		if targetRole == UserRoleCompanyAdmin {
+			c.JSON(http.StatusForbidden, gin.H{"err": "企业管理员账号仅平台管理员可编辑"})
+			return
+		}
+	}
+	fields := []string{}
+	args := []any{}
+	idx := 1
+	if req.Name != nil {
+		name := strings.TrimSpace(*req.Name)
+		if name == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"err": "姓名不能为空"})
+			return
+		}
+		fields = append(fields, fmt.Sprintf("name=$%d", idx))
+		args = append(args, name)
+		idx++
+	}
+	if req.Email != nil {
+		email := normalizeEmail(*req.Email)
+		if email == "" || !strings.Contains(email, "@") {
+			c.JSON(http.StatusBadRequest, gin.H{"err": "邮箱格式无效"})
+			return
+		}
+		fields = append(fields, fmt.Sprintf("email=$%d", idx))
+		args = append(args, email)
+		idx++
+	}
+	if req.Status != nil {
+		s := int16(0)
+		if *req.Status == 1 {
+			s = 1
+		}
+		fields = append(fields, fmt.Sprintf("status=$%d", idx))
+		args = append(args, s)
+		idx++
+	}
+	if len(fields) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"err": "无可更新字段"})
+		return
+	}
+	args = append(args, userID)
+	sql := fmt.Sprintf("UPDATE users SET %s, updated_at=now() WHERE id=$%d", strings.Join(fields, ", "), idx)
+	if _, err := h.PG.Exec(c, sql, args...); err != nil {
+		msg := err.Error()
+		if strings.Contains(msg, "users_email") || strings.Contains(strings.ToLower(msg), "duplicate") {
+			c.JSON(http.StatusConflict, gin.H{"err": "邮箱已存在"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"err": msg})
+		return
+	}
+	if req.Status != nil && *req.Status == 0 {
+		_, _ = h.PG.Exec(c, `DELETE FROM auth_sessions WHERE user_id=$1`, userID)
+	}
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"id": userID}})
+}
+
+func (h *AuthHandler) listMemberProjects(c *gin.Context) {
+	if !CanManageCompany(c) {
+		c.JSON(http.StatusForbidden, gin.H{"err": "需要企业管理员或平台管理员权限"})
+		return
+	}
+	userID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || userID <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"err": "user id is invalid"})
+		return
+	}
+	if err := h.ensureMemberVisible(c, userID); err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"err": err.Error()})
+		return
+	}
+	rows, err := h.PG.Query(c, `
+		SELECT pm.project_id, COALESCE(p.name,''), pm.role
+		FROM project_members pm
+		LEFT JOIN projects p ON p.id=pm.project_id
+		WHERE pm.user_id=$1
+		ORDER BY pm.project_id
+	`, userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
+		return
+	}
+	defer rows.Close()
+	out := []MemberProjectGrant{}
+	for rows.Next() {
+		var g MemberProjectGrant
+		if err := rows.Scan(&g.ProjectID, &g.ProjectName, &g.Role); err == nil {
+			out = append(out, g)
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out})
+}
+
+func (h *AuthHandler) updateMemberProjects(c *gin.Context) {
+	if !CanManageCompany(c) {
+		c.JSON(http.StatusForbidden, gin.H{"err": "需要企业管理员或平台管理员权限"})
+		return
+	}
+	userID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || userID <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"err": "user id is invalid"})
+		return
+	}
+	var req struct {
+		Projects []struct {
+			ProjectID int64  `json:"project_id"`
+			Role      string `json:"role"`
+		} `json:"projects"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
+		return
+	}
+	var targetCompanyID int64
+	var targetRole string
+	if err := h.PG.QueryRow(c, `
+		SELECT COALESCE(company_id,0), COALESCE(role,'member')
+		FROM users WHERE id=$1 AND status=1
+	`, userID).Scan(&targetCompanyID, &targetRole); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"err": "user not found"})
+		return
+	}
+	if targetRole == UserRolePlatformAdmin {
+		c.JSON(http.StatusForbidden, gin.H{"err": "平台管理员的项目授权不在这里维护"})
+		return
+	}
+	enforceCompany := !IsPlatformAdmin(c)
+	if enforceCompany && targetCompanyID != CurrentCompanyID(c) {
+		c.JSON(http.StatusForbidden, gin.H{"err": "只能维护同公司成员的项目授权"})
+		return
+	}
+	desired := map[int64]string{}
+	for _, g := range req.Projects {
+		if g.ProjectID > 0 {
+			desired[g.ProjectID] = normalizeRole(g.Role)
+		}
+	}
+	tx, err := h.PG.BeginTx(c, pgx.TxOptions{})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
+		return
+	}
+	defer func() { _ = tx.Rollback(c) }()
+
+	rows, err := tx.Query(c, `SELECT project_id, role FROM project_members WHERE user_id=$1`, userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
+		return
+	}
+	current := map[int64]string{}
+	for rows.Next() {
+		var pid int64
+		var role string
+		if err := rows.Scan(&pid, &role); err == nil {
+			current[pid] = role
+		}
+	}
+	rows.Close()
+
+	canDowngradeOwner := func(pid int64) error {
+		var cnt int64
+		if err := tx.QueryRow(c, `
+			SELECT count(*) FROM project_members
+			WHERE project_id=$1 AND role='owner' AND user_id<>$2
+		`, pid, userID).Scan(&cnt); err != nil {
+			return err
+		}
+		if cnt == 0 {
+			return fmt.Errorf("project %d must keep at least one owner", pid)
+		}
+		return nil
+	}
+
+	for pid, role := range desired {
+		existing, exists := current[pid]
+		if exists && existing == role {
+			continue
+		}
+		if err := h.canAssignProject(c, tx, pid, targetCompanyID, enforceCompany); err != nil {
+			c.JSON(http.StatusForbidden, gin.H{"err": err.Error()})
+			return
+		}
+		if exists && existing == RoleOwner && role != RoleOwner {
+			if err := canDowngradeOwner(pid); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
+				return
+			}
+		}
+		if _, err := tx.Exec(c, `
+			INSERT INTO project_members(project_id, user_id, role)
+			VALUES($1,$2,$3)
+			ON CONFLICT(project_id, user_id) DO UPDATE SET role=EXCLUDED.role, updated_at=now()
+		`, pid, userID, role); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
+			return
+		}
+	}
+
+	for pid, existing := range current {
+		if _, ok := desired[pid]; ok {
+			continue
+		}
+		if err := h.canAssignProject(c, tx, pid, targetCompanyID, enforceCompany); err != nil {
+			c.JSON(http.StatusForbidden, gin.H{"err": err.Error()})
+			return
+		}
+		if existing == RoleOwner {
+			if err := canDowngradeOwner(pid); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
+				return
+			}
+		}
+		if _, err := tx.Exec(c, `DELETE FROM project_members WHERE project_id=$1 AND user_id=$2`, pid, userID); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
+			return
+		}
+	}
+
+	if err := tx.Commit(c); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
+		return
+	}
+
+	rows2, err := h.PG.Query(c, `
+		SELECT pm.project_id, COALESCE(p.name,''), pm.role
+		FROM project_members pm
+		LEFT JOIN projects p ON p.id=pm.project_id
+		WHERE pm.user_id=$1
+		ORDER BY pm.project_id
+	`, userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
+		return
+	}
+	defer rows2.Close()
+	out := []MemberProjectGrant{}
+	for rows2.Next() {
+		var g MemberProjectGrant
+		if err := rows2.Scan(&g.ProjectID, &g.ProjectName, &g.Role); err == nil {
+			out = append(out, g)
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out})
+}
+
+// ensureMemberVisible 检查当前用户是否有权查看该成员的信息。
+func (h *AuthHandler) ensureMemberVisible(c *gin.Context, userID int64) error {
+	if IsPlatformAdmin(c) {
+		return nil
+	}
+	var companyID int64
+	if err := h.PG.QueryRow(c, `SELECT COALESCE(company_id,0) FROM users WHERE id=$1`, userID).Scan(&companyID); err != nil {
+		return fmt.Errorf("user not found")
+	}
+	if companyID != CurrentCompanyID(c) {
+		return fmt.Errorf("只能查看同公司成员")
+	}
+	return nil
+}
+
 func (h *AuthHandler) canAssignProject(c *gin.Context, tx pgx.Tx, projectID, targetCompanyID int64, enforceCompany bool) error {
 	var companyID int64
 	if err := tx.QueryRow(c, `SELECT COALESCE(company_id,0) FROM projects WHERE id=$1`, projectID).Scan(&companyID); err != nil {
@@ -380,11 +743,8 @@ func (h *AuthHandler) canAssignProject(c *gin.Context, tx pgx.Tx, projectID, tar
 	if enforceCompany && companyID != targetCompanyID {
 		return fmt.Errorf("project %d does not belong to target company", projectID)
 	}
-	if !IsPlatformAdmin(c) {
-		role, err := projectRole(c, h.PG, projectID, CurrentUserID(c))
-		if err != nil || !roleAllows(role, RoleOwner) {
-			return fmt.Errorf("no owner permission for project %d", projectID)
-		}
+	if !CanManageCompany(c) {
+		return fmt.Errorf("enterprise admin permission required")
 	}
 	return nil
 }
@@ -473,6 +833,16 @@ func requireProjectRole(c *gin.Context, pg *pgxpool.Pool, required string) {
 		c.Next()
 		return
 	}
+	if IsCompanyAdmin(c) {
+		var companyID int64
+		if err := pg.QueryRow(c, `SELECT COALESCE(company_id,0) FROM projects WHERE id=$1`, pid).Scan(&companyID); err != nil || companyID != CurrentCompanyID(c) {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"err": "project permission denied"})
+			return
+		}
+		c.Set(projectRoleKey, RoleOwner)
+		c.Next()
+		return
+	}
 	role, err := projectRole(c, pg, pid, CurrentUserID(c))
 	if err != nil || !roleAllows(role, required) {
 		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"err": "project permission denied"})
@@ -516,7 +886,19 @@ func CurrentUserRole(c *gin.Context) string {
 }
 
 func IsPlatformAdmin(c *gin.Context) bool {
-	return CurrentUserRole(c) == "admin"
+	return CurrentUserRole(c) == UserRolePlatformAdmin
+}
+
+// IsCompanyAdmin reports whether the current account manages all projects and
+// members in its own organization.
+func IsCompanyAdmin(c *gin.Context) bool {
+	return CurrentUserRole(c) == UserRoleCompanyAdmin
+}
+
+// CanManageCompany is deliberately role-based. Project ownership grants
+// authority inside one project only; it must never become company-wide access.
+func CanManageCompany(c *gin.Context) bool {
+	return IsPlatformAdmin(c) || IsCompanyAdmin(c)
 }
 
 func CurrentProjectRole(c *gin.Context) string {

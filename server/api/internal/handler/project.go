@@ -88,6 +88,16 @@ func (h *ProjectHandler) list(c *gin.Context) {
 			LEFT JOIN organizations o ON o.id=p.company_id
 			ORDER BY p.id DESC LIMIT 500
 		`)
+	} else if IsCompanyAdmin(c) {
+		rows, err = h.PG.Query(c, `
+			SELECT p.id, COALESCE(p.company_id,0), COALESCE(o.name,''), p.name, COALESCE(p.app_type,'web'),
+			       COALESCE(p.package_name,''), p.token, COALESCE(p.description,''), COALESCE(p.require_signature,false),
+			       p.status, 'owner'::text, p.created_at
+			FROM projects p
+			LEFT JOIN organizations o ON o.id=p.company_id
+			WHERE p.company_id=$1
+			ORDER BY p.id DESC LIMIT 200
+		`, CurrentCompanyID(c))
 	} else {
 		rows, err = h.PG.Query(c, `
 			SELECT p.id, COALESCE(p.company_id,0), COALESCE(o.name,''), p.name, COALESCE(p.app_type,'web'),
@@ -144,6 +154,10 @@ type createProjectReq struct {
 }
 
 func (h *ProjectHandler) create(c *gin.Context) {
+	if !CanManageCompany(c) {
+		c.JSON(http.StatusForbidden, gin.H{"err": "需要企业管理员或平台管理员权限"})
+		return
+	}
 	var req createProjectReq
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(400, gin.H{"err": err.Error()})

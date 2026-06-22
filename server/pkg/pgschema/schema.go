@@ -129,6 +129,51 @@ CREATE INDEX IF NOT EXISTS idx_project_members_user
 CREATE INDEX IF NOT EXISTS idx_project_members_project
     ON project_members(project_id, role);
 
+CREATE TABLE IF NOT EXISTS aerolog_schema_migrations (
+    name       VARCHAR(128) PRIMARY KEY,
+    applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Older installations used a project Owner as an implicit enterprise admin.
+-- Migrate that legacy convention only once: new project Owners remain
+-- enterprise members with project-scoped authority.
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM aerolog_schema_migrations WHERE name = 'company_roles_v1') THEN
+        UPDATE users u
+        SET role = 'company_admin'
+        WHERE u.role = 'member'
+          AND EXISTS (
+              SELECT 1
+              FROM project_members pm
+              JOIN projects p ON p.id = pm.project_id
+              WHERE pm.user_id = u.id
+                AND pm.role = 'owner'
+                AND p.company_id = u.company_id
+          );
+
+        WITH first_members AS (
+            SELECT DISTINCT ON (u.company_id) u.id, u.company_id
+            FROM users u
+            WHERE u.company_id IS NOT NULL
+              AND u.status = 1
+              AND u.role = 'member'
+              AND NOT EXISTS (
+                  SELECT 1 FROM users admin
+                  WHERE admin.company_id = u.company_id
+                    AND admin.role IN ('admin', 'company_admin')
+              )
+            ORDER BY u.company_id, u.created_at, u.id
+        )
+        UPDATE users u
+        SET role = 'company_admin', updated_at = now()
+        FROM first_members fm
+        WHERE u.id = fm.id;
+
+        INSERT INTO aerolog_schema_migrations(name) VALUES ('company_roles_v1');
+    END IF;
+END $$;
+
 ALTER TABLE property_definitions ADD COLUMN IF NOT EXISTS schema_required BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE property_definitions ADD COLUMN IF NOT EXISTS schema_locked BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE property_definitions ADD COLUMN IF NOT EXISTS enum_values JSONB NOT NULL DEFAULT '[]'::jsonb;

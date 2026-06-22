@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: dev infra api collector consumer web android-sdk-build test smoke p1-smoke
+.PHONY: dev infra api collector consumer web restart-web restart-dev-clean android-sdk-build test smoke p1-smoke
 
 dev:
 	./scripts/dev.sh
@@ -19,6 +19,12 @@ consumer:
 
 web:
 	cd web && npm run dev
+
+restart-web:
+	./scripts/restart-web.sh
+
+restart-dev-clean:
+	./scripts/restart-dev-clean.sh
 
 android-sdk-build:
 	./scripts/android-sdk-build.sh

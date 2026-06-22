@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   BarChart3,
   Boxes,
@@ -50,7 +50,7 @@ const navGroups = [
     items: [
       { href: "/console/governance", label: "数据治理", icon: ShieldCheck },
       { href: "/admin/projects", label: "项目管理", icon: FolderKanban },
-      { href: "/admin/members", label: "成员管理", icon: UserCog },
+      { href: "/admin/members", label: "成员管理", icon: UserCog, requires: "company_admin" as const },
     ],
   },
 ];
@@ -73,6 +73,10 @@ function NavList({
   closeOnNavigate?: boolean;
 }) {
   const activePath = useActivePath();
+  const user = useAuthStore((s) => s.user);
+  const isPlatformAdmin = user?.role === "admin";
+  const isCompanyAdmin = user?.role === "company_admin";
+  const canManageMembers = isPlatformAdmin || isCompanyAdmin;
   return (
     <nav className={cn("flex flex-col", collapsed ? "gap-3" : "gap-5")}>
       {navGroups.map((group) => (
@@ -81,7 +85,14 @@ function NavList({
             <div className="mb-2 px-3 text-xs font-medium text-muted-foreground">{group.label}</div>
           )}
           <div className="flex flex-col gap-1">
-            {group.items.map((item) => {
+            {group.items
+              .filter((item) => {
+                if ("requires" in item && item.requires === "company_admin") {
+                  return canManageMembers;
+                }
+                return true;
+              })
+              .map((item) => {
               const Icon = item.icon;
               const active = activePath === item.href;
               const link = (

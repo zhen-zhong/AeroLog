@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS users (
     password_hash VARCHAR(255) NOT NULL,
     phone         VARCHAR(64)  NOT NULL DEFAULT '',
     job_title     VARCHAR(128) NOT NULL DEFAULT '',
-    role          VARCHAR(32)  NOT NULL DEFAULT 'member', -- admin | member
+    role          VARCHAR(32)  NOT NULL DEFAULT 'member', -- admin | platform_member | company_admin | member
     status        SMALLINT     NOT NULL DEFAULT 1,        -- 1 active 0 disabled
     created_at    TIMESTAMPTZ  NOT NULL DEFAULT now(),
     updated_at    TIMESTAMPTZ  NOT NULL DEFAULT now()

@@ -67,6 +67,7 @@ export function ProjectsPage() {
   const [error, setError] = useState("");
   const user = useAuthStore((s) => s.user);
   const isPlatformAdmin = user?.role === "admin";
+  const canManageProjects = isPlatformAdmin || user?.role === "company_admin";
 
   const { data, isLoading } = useQuery({
     queryKey: ["projects"],
@@ -162,12 +163,12 @@ export function ProjectsPage() {
       <PageHeader
         title="项目管理"
         description="项目对应一个具体接入应用，例如 Web 站点、Android App、iOS App 或小程序。"
-        actions={
+        actions={canManageProjects ? (
           <Button onClick={() => setOpen(true)}>
             <Plus className="h-4 w-4" />
             新建项目
           </Button>
-        }
+        ) : undefined}
       />
 
       <Card className="min-w-0">
@@ -347,7 +348,7 @@ function ProjectRow({
       </TableCell>
       <TableCell className="max-w-xs truncate text-muted-foreground">{project.description || "-"}</TableCell>
       <TableCell>
-        <SignatureToggle project={project} pending={pending} onToggle={onToggleSignature} />
+        <SignatureToggle project={project} pending={pending || project.role !== "owner"} onToggle={onToggleSignature} />
       </TableCell>
       <TableCell>
         <ProjectStatusSelect

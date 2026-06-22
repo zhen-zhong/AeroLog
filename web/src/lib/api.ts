@@ -81,7 +81,7 @@ export interface AuthUser {
     job_title: string;
     company_id: number;
     company_name: string;
-    role: "admin" | "member";
+    role: "admin" | "platform_member" | "company_admin" | "member";
     status: number;
     created_at: string;
 }
@@ -114,13 +114,19 @@ export interface MemberAccount {
     name: string;
     phone: string;
     job_title: string;
-    role: "admin" | "member";
+    role: "admin" | "platform_member" | "company_admin" | "member";
     company_id: number;
     company_name: string;
     project_count: number;
     project_names: string;
+    is_company_admin: boolean;
     status: number;
     created_at: string;
+}
+export interface MemberProjectGrant {
+    project_id: number;
+    project_name: string;
+    role: ProjectMember["role"];
 }
 export interface EventDefinition {
     id: number;
@@ -370,7 +376,7 @@ export const api = {
     listCompanies: () => req<ApiList<Company>>("/companies"),
     listMembers: () => req<ApiList<MemberAccount>>("/members"),
     createMemberAccount: (body: {
-        account_type?: "internal" | "company";
+        account_type?: "platform_admin" | "platform_member" | "enterprise_admin" | "enterprise_member";
         email: string;
         name?: string;
         password: string;
@@ -385,6 +391,24 @@ export const api = {
     }) =>
         req<ApiOne<{ id: number; email: string; company_id: number; role: AuthUser["role"] }>>("/members", {
             method: "POST",
+            body: JSON.stringify(body),
+        }),
+    listMemberProjects: (id: number | string) =>
+        req<ApiList<MemberProjectGrant>>(`/members/${id}/projects`),
+    updateMemberAccount: (
+        id: number | string,
+        body: { name?: string; email?: string; status?: 0 | 1 },
+    ) =>
+        req<ApiOne<{ id: number }>>(`/members/${id}`, {
+            method: "PATCH",
+            body: JSON.stringify(body),
+        }),
+    updateMemberProjects: (
+        id: number | string,
+        body: { projects: Array<{ project_id: number; role: ProjectMember["role"] }> },
+    ) =>
+        req<ApiList<MemberProjectGrant>>(`/members/${id}/projects`, {
+            method: "PUT",
             body: JSON.stringify(body),
         }),
     listProjects: () => req<ApiList<Project>>("/projects"),
