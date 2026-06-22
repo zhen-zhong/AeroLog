@@ -17,6 +17,9 @@
 - 数据治理支持批量/审计/负责人/状态：`property_definitions` 增加 `owner/archived/hidden`，新增 `property_change_log` 审计表；新增 `PUT /properties/batch`、`GET /properties/:name/change_log`，前端治理页加入勾选 + 批量工具栏、行内归档/隐藏切换以及变更历史抽屉。
 - Android SDK 完善传输与自动采集：`AeroConfig` 增加 `enableGzip / enableLocalDebugLog / debugLogCapacity / autoTrackActivityDuration / autoTrackCrash / autoTrackANR / autoTrackInstall`；`send()` 在 ≥1KB 时启用 gzip 并保持 HMAC 对原始包体签名；新增 `$AppViewScreenEnd($screen_duration)`、`$AppCrash`、`$AppANR`、`$AppInstall/$AppUpdate` 自动事件，并提供 `getDebugLogs()/clearDebugLogs()` 本地环形缓冲。
 - 多项目权限与真实登录：新增 `users/auth_sessions/project_members`，API 支持登录/注册/退出/当前用户，项目成员 owner/editor/viewer 权限控制；历史孤儿项目自动归属默认管理员；Web 增加登录页、成员管理页、顶部退出登录和请求 Bearer token。
+- 成员管理增强：成员列表支持姓名/邮箱/手机/公司/项目/职位关键词实时过滤；编辑抽屉覆盖基本信息、启停状态、项目授权一次性提交；公司主账号路由保护与 `project_count` 计数 bug 修复。
+- 事件归因（首次/末次/线性）：新增 `POST /v1/projects/:id/analytics/attribution`，三种模型基于触点回看窗口聚合 credit/users/avg_lag；Web 新增「归因」页（自上而下流式布局，工具栏 5 列对齐：开始/结束时间 + 回看窗口 + 模型 + 转化事件 + 触点选择）。
+- 接口文档站：手写 `docs/openapi.yaml` 覆盖现有路由，按认证/成员/项目/事件元数据/行为分析/查询任务/治理/用户画像/分享 9 个 Tag 分组；API 服务通过 `//go:embed` 内嵌并暴露 `GET /swagger/`（Swagger UI，CDN 加载）和 `GET /swagger/openapi.yaml`（规格文件），无需新增 Go 依赖。
 
 ## P0
 
@@ -35,7 +38,7 @@
 
 - 分群：支持静态/动态用户分群、按事件行为和用户属性圈选。
 - 用户路径分析：按 session 和身份合并后的行为路径做节点流转。
-- 事件归因：支持渠道、活动、首次/末次触点等基础归因模型。
+- 事件归因增强：在已落地的 first/last/linear 之上补充渠道、活动等触点维度，以及无触点用户占比、归因窗口分桶等扩展。
 - 留存细分：留存矩阵按事件属性、用户属性和渠道拆解。
 - 漏斗按属性分组：漏斗每一步支持参数过滤和分组对比。
 - 指标看板保存与订阅：保存报表卡片、定时邮件/告警推送。
