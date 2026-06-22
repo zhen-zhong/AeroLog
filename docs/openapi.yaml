@@ -1,0 +1,397 @@
+openapi: 3.0.3
+info:
+  title: AeroLog Internal API
+  version: "0.1.0"
+  description: |
+    AeroLog 控制台和 SDK 共用的内部 HTTP API。所有 `/v1/...` 接口除登录/注册外均需要在
+    请求头中携带 `Authorization: Bearer <session_token>`。
+servers:
+  - url: http://localhost:8082
+    description: 本地开发
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque
+  schemas:
+    Error:
+      type: object
+      properties:
+        err:
+          type: string
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string }
+    LoginResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            token: { type: string }
+            user:
+              $ref: "#/components/schemas/User"
+    User:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        email: { type: string }
+        name: { type: string }
+        role: { type: string, enum: [admin, member] }
+        company_id: { type: integer }
+        company_name: { type: string }
+    AttributionRequest:
+      type: object
+      required: [conversion_event, touch_events]
+      properties:
+        conversion_event: { type: string, example: pay_success }
+        touch_events:
+          type: array
+          items: { type: string }
+        from: { type: integer, format: int64, description: 起始时间(ms) }
+        to:   { type: integer, format: int64, description: 结束时间(ms) }
+        window_seconds: { type: integer, default: 604800 }
+        model: { type: string, enum: [first, last, linear], default: last }
+    AttributionResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            model: { type: string }
+            total_users: { type: integer }
+            total_credit: { type: number }
+            window_seconds: { type: integer }
+            rows:
+              type: array
+              items:
+                type: object
+                properties:
+                  event: { type: string }
+                  credit: { type: number }
+                  users: { type: integer }
+                  share: { type: number }
+                  avg_lag_seconds: { type: number }
+security:
+  - bearerAuth: []
+tags:
+  - { name: 认证,     description: 登录 / 注册 / 当前用户 }
+  - { name: 成员,     description: 平台成员管理与项目授权 }
+  - { name: 项目,     description: 项目 CRUD 与项目成员 }
+  - { name: 事件元数据, description: 事件 / 属性 / Schema }
+  - { name: 行为分析,  description: 趋势 / 漏斗 / 留存 / 归因 / 转化 }
+  - { name: 查询任务,  description: 自助查询、模板与异步导出 }
+  - { name: 治理,     description: 调试事件、Schema 异常 }
+  - { name: 用户画像, description: 用户列表、画像、行为流 }
+  - { name: 分享,     description: 公开分享链接 }
+
+paths:
+  /healthz:
+    get:
+      tags: [认证]
+      summary: 健康检查
+      security: []
+      responses:
+        "200": { description: ok }
+
+  # ---------- 认证 ----------
+  /v1/auth/login:
+    post:
+      tags: [认证]
+      summary: 登录
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LoginRequest" }
+      responses:
+        "200":
+          description: 登录成功
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LoginResponse" }
+        "401":
+          description: 邮箱或密码错误
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /v1/auth/register:
+    post:
+      tags: [认证]
+      summary: 注册（首个公司主账号）
+      security: []
+      requestBody: { required: true, content: { application/json: { schema: { type: object } } } }
+      responses: { "200": { description: ok } }
+  /v1/auth/logout:
+    post:
+      tags: [认证]
+      summary: 退出登录
+      responses: { "200": { description: ok } }
+  /v1/auth/me:
+    get:
+      tags: [认证]
+      summary: 当前登录用户
+      responses:
+        "200":
+          description: ok
+          content: { application/json: { schema: { type: object, properties: { data: { $ref: "#/components/schemas/User" } } } } }
+
+  # ---------- 成员 ----------
+  /v1/members:
+    get:
+      tags: [成员]
+      summary: 成员列表（公司主账号或平台 Admin）
+      responses: { "200": { description: ok } }
+    post:
+      tags: [成员]
+      summary: 添加成员（同时完成账号注册）
+      requestBody: { required: true, content: { application/json: { schema: { type: object } } } }
+      responses: { "200": { description: ok } }
+  /v1/members/{id}:
+    parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+    patch:
+      tags: [成员]
+      summary: 修改成员姓名 / 邮箱 / 启停状态
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:   { type: string }
+                email:  { type: string }
+                status: { type: integer, enum: [0, 1] }
+      responses: { "200": { description: ok } }
+  /v1/members/{id}/projects:
+    parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+    get:
+      tags: [成员]
+      summary: 该成员被授权的项目列表
+      responses: { "200": { description: ok } }
+    put:
+      tags: [成员]
+      summary: 整体覆盖式更新该成员的项目授权
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                projects:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      project_id: { type: integer }
+                      role: { type: string, enum: [owner, editor, viewer] }
+      responses: { "200": { description: ok } }
+  /v1/companies:
+    get: { tags: [成员], summary: 公司清单, responses: { "200": { description: ok } } }
+
+  # ---------- 项目 ----------
+  /v1/projects:
+    get: { tags: [项目], summary: 项目列表（仅可见的项目）, responses: { "200": { description: ok } } }
+    post:
+      tags: [项目]
+      summary: 创建项目
+      requestBody: { required: true, content: { application/json: { schema: { type: object } } } }
+      responses: { "200": { description: ok } }
+  /v1/projects/{id}:
+    parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+    get: { tags: [项目], summary: 项目详情, responses: { "200": { description: ok } } }
+  /v1/projects/{id}/status:
+    parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+    patch: { tags: [项目], summary: 启停项目, responses: { "200": { description: ok } } }
+  /v1/projects/{id}/security:
+    parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+    patch: { tags: [项目], summary: 修改 ingest token / app_id 等安全设置, responses: { "200": { description: ok } } }
+  /v1/projects/{id}/members:
+    parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+    get:  { tags: [项目], summary: 项目成员列表, responses: { "200": { description: ok } } }
+    post: { tags: [项目], summary: 添加项目成员, responses: { "200": { description: ok } } }
+  /v1/projects/{id}/members/{user_id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer } }
+      - { name: user_id, in: path, required: true, schema: { type: integer } }
+    patch:  { tags: [项目], summary: 修改项目成员角色, responses: { "200": { description: ok } } }
+    delete: { tags: [项目], summary: 移除项目成员, responses: { "200": { description: ok } } }
+
+  # ---------- 事件元数据 ----------
+  /v1/projects/{id}/events:
+    parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+    get: { tags: [事件元数据], summary: 事件清单, responses: { "200": { description: ok } } }
+  /v1/projects/{id}/events/{event}/schema:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer } }
+      - { name: event, in: path, required: true, schema: { type: string } }
+    put: { tags: [事件元数据], summary: 配置事件级 Schema, responses: { "200": { description: ok } } }
+  /v1/projects/{id}/properties:
+    parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+    get: { tags: [事件元数据], summary: 属性清单, responses: { "200": { description: ok } } }
+  /v1/projects/{id}/properties/batch:
+    parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+    put: { tags: [事件元数据], summary: 批量更新属性定义, responses: { "200": { description: ok } } }
+  /v1/projects/{id}/properties/{property}/schema:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer } }
+      - { name: property, in: path, required: true, schema: { type: string } }
+    put: { tags: [事件元数据], summary: 配置属性 Schema, responses: { "200": { description: ok } } }
+  /v1/projects/{id}/properties/{property}/change_log:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer } }
+      - { name: property, in: path, required: true, schema: { type: string } }
+    get: { tags: [事件元数据], summary: 属性变更历史, responses: { "200": { description: ok } } }
+
+  # ---------- 行为分析 ----------
+  /v1/projects/{id}/analytics/trend:
+    parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+    get:
+      tags: [行为分析]
+      summary: 事件趋势
+      parameters:
+        - { name: event, in: query, required: true, schema: { type: string } }
+        - { name: from, in: query, schema: { type: integer, format: int64 } }
+        - { name: to,   in: query, schema: { type: integer, format: int64 } }
+        - { name: interval, in: query, schema: { type: string, enum: [hour, day] } }
+      responses: { "200": { description: ok } }
+  /v1/projects/{id}/analytics/top_events:
+    parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+    get: { tags: [行为分析], summary: 头部事件列表, responses: { "200": { description: ok } } }
+  /v1/projects/{id}/analytics/property_values:
+    parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+    get: { tags: [行为分析], summary: 属性枚举值, responses: { "200": { description: ok } } }
+  /v1/projects/{id}/analytics/query_table:
+    parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+    post: { tags: [行为分析], summary: 多维分析（表格）, responses: { "200": { description: ok } } }
+  /v1/projects/{id}/analytics/query_table/export:
+    parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+    post: { tags: [行为分析], summary: 多维分析导出 CSV, responses: { "200": { description: ok } } }
+  /v1/projects/{id}/analytics/funnel:
+    parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+    post: { tags: [行为分析], summary: 漏斗分析, responses: { "200": { description: ok } } }
+  /v1/projects/{id}/analytics/retention:
+    parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+    get:
+      tags: [行为分析]
+      summary: 留存分析
+      parameters:
+        - { name: initial_event, in: query, required: true, schema: { type: string } }
+        - { name: return_event,  in: query, required: true, schema: { type: string } }
+        - { name: from, in: query, schema: { type: integer, format: int64 } }
+        - { name: to,   in: query, schema: { type: integer, format: int64 } }
+        - { name: days, in: query, schema: { type: integer } }
+      responses: { "200": { description: ok } }
+  /v1/projects/{id}/analytics/conversion:
+    parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+    post: { tags: [行为分析], summary: 转化漏斗（基于已保存目标）, responses: { "200": { description: ok } } }
+  /v1/projects/{id}/analytics/conversion_trend:
+    parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+    post: { tags: [行为分析], summary: 转化趋势, responses: { "200": { description: ok } } }
+  /v1/projects/{id}/analytics/conversion_export:
+    parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+    post: { tags: [行为分析], summary: 转化结果 CSV 导出, responses: { "200": { description: ok } } }
+  /v1/projects/{id}/analytics/attribution:
+    parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+    post:
+      tags: [行为分析]
+      summary: 事件归因（首次/末次/线性）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AttributionRequest" }
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AttributionResponse" }
+  /v1/projects/{id}/conversion_goals:
+    parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+    get:  { tags: [行为分析], summary: 转化目标列表, responses: { "200": { description: ok } } }
+    post: { tags: [行为分析], summary: 创建转化目标, responses: { "200": { description: ok } } }
+  /v1/projects/{id}/conversion_goals/{goal_id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer } }
+      - { name: goal_id, in: path, required: true, schema: { type: integer } }
+    delete: { tags: [行为分析], summary: 删除转化目标, responses: { "200": { description: ok } } }
+  /v1/projects/{id}/conversion_goals/{goal_id}/versions:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer } }
+      - { name: goal_id, in: path, required: true, schema: { type: integer } }
+    get: { tags: [行为分析], summary: 转化目标版本历史, responses: { "200": { description: ok } } }
+
+  # ---------- 查询任务 ----------
+  /v1/projects/{id}/analytics/jobs:
+    parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+    get:  { tags: [查询任务], summary: 异步任务列表, responses: { "200": { description: ok } } }
+    post: { tags: [查询任务], summary: 创建异步导出任务, responses: { "200": { description: ok } } }
+  /v1/projects/{id}/analytics/jobs/{job_id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer } }
+      - { name: job_id, in: path, required: true, schema: { type: integer } }
+    get: { tags: [查询任务], summary: 任务详情, responses: { "200": { description: ok } } }
+  /v1/projects/{id}/analytics/jobs/{job_id}/download:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer } }
+      - { name: job_id, in: path, required: true, schema: { type: integer } }
+    get: { tags: [查询任务], summary: 下载任务结果 CSV, responses: { "200": { description: ok } } }
+  /v1/projects/{id}/query_templates:
+    parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+    get:  { tags: [查询任务], summary: 查询模板列表, responses: { "200": { description: ok } } }
+    post: { tags: [查询任务], summary: 创建查询模板, responses: { "200": { description: ok } } }
+  /v1/projects/{id}/query_templates/{tid}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer } }
+      - { name: tid, in: path, required: true, schema: { type: integer } }
+    get:    { tags: [查询任务], summary: 模板详情, responses: { "200": { description: ok } } }
+    put:    { tags: [查询任务], summary: 更新模板, responses: { "200": { description: ok } } }
+    delete: { tags: [查询任务], summary: 删除模板, responses: { "200": { description: ok } } }
+  /v1/projects/{id}/query_templates/{tid}/share:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer } }
+      - { name: tid, in: path, required: true, schema: { type: integer } }
+    post: { tags: [查询任务], summary: 开关分享链接, responses: { "200": { description: ok } } }
+  /v1/shared/query_templates/{token}:
+    parameters: [{ name: token, in: path, required: true, schema: { type: string } }]
+    get:
+      tags: [分享]
+      summary: 公开访问分享模板
+      security: []
+      responses: { "200": { description: ok } }
+
+  # ---------- 治理 ----------
+  /v1/projects/{id}/debug/events:
+    parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+    get: { tags: [治理], summary: 调试事件流, responses: { "200": { description: ok } } }
+  /v1/projects/{id}/debug/schema_issues:
+    parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+    get: { tags: [治理], summary: Schema 异常明细, responses: { "200": { description: ok } } }
+  /v1/projects/{id}/debug/schema_issue_groups:
+    parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+    get: { tags: [治理], summary: Schema 异常聚合, responses: { "200": { description: ok } } }
+
+  # ---------- 用户画像 ----------
+  /v1/projects/{id}/identities:
+    parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+    get: { tags: [用户画像], summary: 身份合并视图, responses: { "200": { description: ok } } }
+  /v1/projects/{id}/users:
+    parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+    get: { tags: [用户画像], summary: 用户列表, responses: { "200": { description: ok } } }
+  /v1/projects/{id}/users/{distinct_id}/profile:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer } }
+      - { name: distinct_id, in: path, required: true, schema: { type: string } }
+    get: { tags: [用户画像], summary: 用户画像, responses: { "200": { description: ok } } }
+  /v1/projects/{id}/users/{distinct_id}/events:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer } }
+      - { name: distinct_id, in: path, required: true, schema: { type: string } }
+    get: { tags: [用户画像], summary: 用户行为流, responses: { "200": { description: ok } } }

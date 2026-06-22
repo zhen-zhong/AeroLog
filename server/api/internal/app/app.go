@@ -12,6 +12,7 @@ import (
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/aerolog/server/api/internal/config"
+	"github.com/aerolog/server/api/internal/docs"
 	"github.com/aerolog/server/api/internal/handler"
 	"github.com/aerolog/server/pkg/metrics"
 	"github.com/aerolog/server/pkg/pgschema"
@@ -124,6 +125,7 @@ func newRouter(cfg *config.Config, pool *pgxpool.Pool, chConn driver.Conn) (*gin
 	r := gin.New()
 	r.Use(gin.Recovery(), corsMiddleware(cfg.AllowOrigins), metricsMiddleware())
 	r.GET("/healthz", func(c *gin.Context) { c.String(http.StatusOK, "ok") })
+	docs.Register(r)
 
 	v1 := r.Group("/v1")
 	auth := &handler.AuthHandler{PG: pool}
