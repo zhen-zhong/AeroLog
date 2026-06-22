@@ -45,6 +45,7 @@ func (h *AnalyticsHandler) Register(r *gin.RouterGroup) {
 	r.POST("/projects/:id/analytics/conversion_export", h.conversionExport)
 	r.POST("/projects/:id/analytics/funnel", h.funnel)
 	r.GET("/projects/:id/analytics/retention", h.retention)
+	r.POST("/projects/:id/analytics/attribution", h.attribution)
 	r.GET("/projects/:id/users/:distinct_id/events", h.userEvents)
 }
 

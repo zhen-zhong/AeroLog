@@ -878,4 +878,33 @@ export const api = {
             `/projects/${id}/analytics/retention?${q}`,
         );
     },
+    attribution: (
+        id: number | string,
+        body: {
+            conversion_event: string;
+            touch_events: string[];
+            from?: number;
+            to?: number;
+            window_seconds?: number;
+            model?: "first" | "last" | "linear";
+        },
+    ) =>
+        req<
+            ApiOne<{
+                model: "first" | "last" | "linear";
+                total_users: number;
+                total_credit: number;
+                window_seconds: number;
+                rows: {
+                    event: string;
+                    credit: number;
+                    users: number;
+                    share: number;
+                    avg_lag_seconds: number;
+                }[];
+            }>
+        >(`/projects/${id}/analytics/attribution`, {
+            method: "POST",
+            body: JSON.stringify(body),
+        }),
 };

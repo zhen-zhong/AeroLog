@@ -68,6 +68,7 @@ export default function MembersPage() {
   const [companyPhone, setCompanyPhone] = useState("");
   const [selectedProjectIds, setSelectedProjectIds] = useState<number[]>([]);
   const [projectRole, setProjectRole] = useState<ProjectMember["role"]>("viewer");
+  const [search, setSearch] = useState("");
   const [error, setError] = useState("");
 
   const projectsQuery = useQuery({
@@ -97,6 +98,20 @@ export default function MembersPage() {
 
   const members = membersQuery.data?.data || [];
   const companies = companiesQuery.data?.data || [];
+  const filteredMembers = useMemo(() => {
+    const kw = search.trim().toLowerCase();
+    if (!kw) return members;
+    return members.filter((m) => {
+      return (
+        m.name.toLowerCase().includes(kw) ||
+        m.email.toLowerCase().includes(kw) ||
+        (m.phone || "").toLowerCase().includes(kw) ||
+        (m.company_name || "").toLowerCase().includes(kw) ||
+        (m.project_names || "").toLowerCase().includes(kw) ||
+        (m.job_title || "").toLowerCase().includes(kw)
+      );
+    });
+  }, [members, search]);
   const selectedCompanyId = companyChoice && companyChoice !== "new" ? Number(companyChoice) : undefined;
   const needsEnterprise = accountType === "enterprise_admin" || accountType === "enterprise_member";
 
@@ -186,10 +201,18 @@ export default function MembersPage() {
         title="成员管理"
         description="平台与企业身份彼此独立；成员仅能访问被明确授权的项目。"
         actions={
-          <Button onClick={openDrawer}>
-            <UserPlus className="h-4 w-4" />
-            添加成员
-          </Button>
+          <div className="flex items-center gap-2">
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="搜索姓名/邮箱/手机/公司/项目"
+              className="h-9 w-64"
+            />
+            <Button onClick={openDrawer}>
+              <UserPlus className="h-4 w-4" />
+              添加成员
+            </Button>
+          </div>
         }
       />
 
@@ -217,8 +240,8 @@ export default function MembersPage() {
                       </TableCell>
                     </TableRow>
                   ))
-                ) : members.length ? (
-                  members.map((member) => (
+                ) : filteredMembers.length ? (
+                  filteredMembers.map((member) => (
                     <MemberRow
                       key={member.id}
                       member={member}
@@ -229,7 +252,7 @@ export default function MembersPage() {
                 ) : (
                   <TableRow>
                     <TableCell colSpan={7} className="h-28 text-center text-sm text-muted-foreground">
-                      暂无成员
+                      {search.trim() ? `未找到包含「${search.trim()}」的成员` : "暂无成员"}
                     </TableCell>
                   </TableRow>
                 )}
