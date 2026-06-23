@@ -1,0 +1,28 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: aerolog-production
+
+scrape_configs:
+  - job_name: aerolog-api
+    static_configs:
+      - targets: ["api:9103"]
+        labels:
+          service: api
+
+  - job_name: aerolog-collector
+    static_configs:
+      - targets: ["collector:9101"]
+        labels:
+          service: collector
+
+  - job_name: aerolog-consumer
+    static_configs:
+      - targets: ["consumer:9102"]
+        labels:
+          service: consumer
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
