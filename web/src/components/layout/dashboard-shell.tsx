@@ -60,6 +60,19 @@ const navGroups = [
 const navItems = navGroups.flatMap((group) => group.items);
 const routeHistoryKey = "aerolog-route-history";
 
+function isPublicRoute(pathname: string) {
+  return (
+    pathname === "/" ||
+    pathname === "/login" ||
+    pathname === "/about" ||
+    pathname === "/privacy" ||
+    pathname === "/docs" ||
+    pathname.startsWith("/docs/") ||
+    pathname === "/api-reference" ||
+    pathname.startsWith("/console/query/shared/")
+  );
+}
+
 function useActivePath() {
   const pathname = usePathname() || "/";
   return [...navItems]
@@ -141,7 +154,7 @@ function RouteHistoryBar() {
   const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
-    if (pathname === "/" || pathname === "/login" || pathname.startsWith("/console/query/shared/")) return;
+    if (isPublicRoute(pathname)) return;
     setRoutes((prev) => {
       const cleaned = prev.filter((item) => item && item !== "/");
       const next = cleaned.includes(pathname) ? cleaned : [...cleaned, pathname].slice(-8);
@@ -243,7 +256,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   const hasHydrated = useAuthStore((s) => s.hasHydrated);
   const setHasHydrated = useAuthStore((s) => s.setHasHydrated);
   const collapsed = useUIStore((s) => s.sidebarCollapsed);
-  const isPublicPage = pathname === "/login" || pathname.startsWith("/console/query/shared/");
+  const isPublicPage = isPublicRoute(pathname);
 
   useEffect(() => {
     if (hasHydrated) return;

@@ -34,7 +34,9 @@ function LoginPanel() {
   const searchParams = useSearchParams();
   const token = useAuthStore((s) => s.token);
   const setAuth = useAuthStore((s) => s.setAuth);
-  const [mode, setMode] = useState<"login" | "register">("login");
+  const [mode, setMode] = useState<"login" | "register">(
+    () => (searchParams.get("mode") === "register" ? "register" : "login"),
+  );
   const [email, setEmail] = useState("admin@aerolog.local");
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
