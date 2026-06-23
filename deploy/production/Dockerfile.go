@@ -1,6 +1,7 @@
 FROM golang:1.22-alpine AS build
 
 ARG SERVICE
+ENV GOPROXY=https://goproxy.cn,direct
 WORKDIR /src
 COPY server ./server
 RUN cd "/src/server/${SERVICE}" && \
