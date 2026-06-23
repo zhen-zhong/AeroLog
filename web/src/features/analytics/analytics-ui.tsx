@@ -2,7 +2,7 @@
 
 import dayjs, { Dayjs } from "dayjs";
 import type { ReactNode } from "react";
-import { Check, Clock3, Filter, Layers3, Sparkles } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Clock3, Filter, Layers3, Sparkles } from "lucide-react";
 import { AnimatedContent } from "@/components/react-bits/animated-content";
 import { CountUp } from "@/components/react-bits/count-up";
 import { Badge } from "@/components/ui/badge";
@@ -385,6 +385,14 @@ export function EventStepSelector({
     if (value.length < 8) onChange([...value, event]);
   };
 
+  const move = (index: number, direction: -1 | 1) => {
+    const nextIndex = index + direction;
+    if (nextIndex < 0 || nextIndex >= value.length) return;
+    const next = [...value];
+    [next[index], next[nextIndex]] = [next[nextIndex], next[index]];
+    onChange(next);
+  };
+
   return (
     <div className="grid gap-3">
       <div className="flex flex-wrap gap-2">
@@ -411,9 +419,27 @@ export function EventStepSelector({
         当前顺序：
         {value.length ? (
           value.map((item, index) => (
-            <Badge key={`${item}:${index}`} variant="info">
-              {index + 1}. {item}
-            </Badge>
+            <span key={`${item}:${index}`} className="inline-flex items-center gap-0.5 rounded-md border bg-info/10 py-0.5 pl-2 pr-0.5 text-info-foreground">
+              <span>{index + 1}. {item}</span>
+              <button
+                type="button"
+                aria-label={`将 ${item} 前移`}
+                disabled={index === 0}
+                onClick={() => move(index, -1)}
+                className="rounded p-0.5 hover:bg-background disabled:cursor-not-allowed disabled:opacity-35"
+              >
+                <ChevronLeft className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
+                aria-label={`将 ${item} 后移`}
+                disabled={index === value.length - 1}
+                onClick={() => move(index, 1)}
+                className="rounded p-0.5 hover:bg-background disabled:cursor-not-allowed disabled:opacity-35"
+              >
+                <ChevronRight className="h-3.5 w-3.5" />
+              </button>
+            </span>
           ))
         ) : (
           <span>请选择 2-8 个事件</span>

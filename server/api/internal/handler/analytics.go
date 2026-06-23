@@ -3,7 +3,9 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -14,6 +16,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+const maxBreakdownGroups = 12
 
 // AnalyticsHandler 提供事件趋势/Top 事件等查询。
 type AnalyticsHandler struct {
@@ -413,14 +417,16 @@ func (h *AnalyticsHandler) conversion(c *gin.Context) {
 		return
 	}
 	breakdown := []conversionBreakdownRow{}
+	breakdownTruncated := false
 	if body.BreakdownProperty != "" {
 		breakdown, err = h.computeFunnelBreakdown(ctx, uint32(pid), body.Events, body.From, body.To, body.WindowSeconds, body.BreakdownProperty)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
 			return
 		}
+		breakdown, breakdownTruncated = limitFunnelBreakdown(breakdown, maxBreakdownGroups)
 	}
-	c.JSON(http.StatusOK, gin.H{"data": gin.H{"steps": steps, "breakdown": breakdown}})
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"steps": steps, "breakdown": breakdown, "breakdown_truncated": breakdownTruncated}})
 }
 
 type funnelStep struct {
@@ -529,6 +535,51 @@ func (h *AnalyticsHandler) computeFunnelBreakdown(ctx context.Context, pid uint3
 		out = append(out, conversionBreakdownRow{Raw: raw, Value: value, Label: label, Steps: steps, Users: users, Conversion: conversion})
 	}
 	return out, nil
+}
+
+// limitFunnelBreakdown bounds high-cardinality dimensions without losing the
+// total: a user belongs to exactly one first-step dimension, so the tail can
+// be safely merged into an explicit "other" row.
+func limitFunnelBreakdown(rows []conversionBreakdownRow, max int) ([]conversionBreakdownRow, bool) {
+	if max < 2 || len(rows) <= max {
+		sort.Slice(rows, func(i, j int) bool {
+			if rows[i].Users == rows[j].Users {
+				return rows[i].Label < rows[j].Label
+			}
+			return rows[i].Users > rows[j].Users
+		})
+		return rows, false
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].Users == rows[j].Users {
+			return rows[i].Label < rows[j].Label
+		}
+		return rows[i].Users > rows[j].Users
+	})
+	kept := append([]conversionBreakdownRow(nil), rows[:max-1]...)
+	tail := rows[max-1:]
+	other := conversionBreakdownRow{
+		Raw:   "__other__",
+		Label: fmt.Sprintf("其他（%d 个取值）", len(tail)),
+		Steps: make([]funnelStep, len(rows[0].Steps)),
+	}
+	for _, row := range tail {
+		other.Users += row.Users
+		for i, step := range row.Steps {
+			other.Steps[i].Event = step.Event
+			other.Steps[i].Users += step.Users
+		}
+	}
+	if len(other.Steps) > 0 && other.Users > 0 {
+		for i := range other.Steps {
+			other.Steps[i].Conversion = float64(other.Steps[i].Users) / float64(other.Users)
+			if i > 0 && other.Steps[i-1].Users > 0 {
+				other.Steps[i].Dropoff = 1 - float64(other.Steps[i].Users)/float64(other.Steps[i-1].Users)
+			}
+		}
+		other.Conversion = other.Steps[len(other.Steps)-1].Conversion
+	}
+	return append(kept, other), true
 }
 
 func buildFunnelSteps(events []string, levelCounts map[uint8]uint64) []funnelStep {
@@ -978,15 +1029,17 @@ func atoi64(s string) int64 {
 	return v
 }
 
-// /v1/projects/:id/analytics/funnel  body: {events:["a","b","c"], from, to, window_seconds}
+// /v1/projects/:id/analytics/funnel  body: {events:["a","b","c"], from, to, window_seconds, breakdown_property}
 // 实现思路：按 distinct_id 拉出窗口内的事件序列，根据初始事件时间点 + window_seconds 递次判断后续事件是否出现。
+// 提供 breakdown_property 后另外调用 computeFunnelBreakdown 返回分组对比。
 func (h *AnalyticsHandler) funnel(c *gin.Context) {
 	pid, _ := strconv.ParseUint(c.Param("id"), 10, 32)
 	var body struct {
-		Events        []string `json:"events"`
-		From          int64    `json:"from"`
-		To            int64    `json:"to"`
-		WindowSeconds int64    `json:"window_seconds"`
+		Events            []string `json:"events"`
+		From              int64    `json:"from"`
+		To                int64    `json:"to"`
+		WindowSeconds     int64    `json:"window_seconds"`
+		BreakdownProperty string   `json:"breakdown_property"`
 	}
 	if err := c.BindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
@@ -1006,64 +1059,27 @@ func (h *AnalyticsHandler) funnel(c *gin.Context) {
 		body.WindowSeconds = 24 * 3600
 	}
 
-	// ClickHouse 漏斗：windowFunnel 函数
-	// SELECT level, count() FROM ( SELECT distinct_id, windowFunnel(W)(time, e=ev1, e=ev2, ...) AS level ... ) GROUP BY level
-	conds := make([]string, 0, len(body.Events))
-	args := make([]any, 0, len(body.Events)+3)
-	for _, ev := range body.Events {
-		conds = append(conds, "event = ?")
-		args = append(args, ev)
-	}
-	args = append(args, uint32(pid), body.From, body.To)
-
-	inner := `SELECT distinct_id, windowFunnel(` + strconv.FormatInt(body.WindowSeconds, 10) + `)(toDateTime(time), ` + joinStrs(conds, ", ") + `) AS level
-	          FROM events
-	          WHERE project_id = ? AND time BETWEEN fromUnixTimestamp64Milli(?) AND fromUnixTimestamp64Milli(?)
-	          GROUP BY distinct_id`
-	q := `SELECT level, count() FROM (` + inner + `) GROUP BY level ORDER BY level`
-	rows, err := h.CH.Query(c, q, args...)
+	steps, err := h.computeFunnel(c.Request.Context(), uint32(pid), body.Events, body.From, body.To, body.WindowSeconds)
 	if err != nil {
-		c.JSON(500, gin.H{"err": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
 		return
 	}
-	defer rows.Close()
-
-	levelCounts := make(map[uint8]uint64)
-	for rows.Next() {
-		var lv uint8
-		var cnt uint64
-		if err := rows.Scan(&lv, &cnt); err == nil {
-			levelCounts[lv] = cnt
+	breakdown := []conversionBreakdownRow{}
+	breakdownTruncated := false
+	if body.BreakdownProperty != "" {
+		breakdown, err = h.computeFunnelBreakdown(c.Request.Context(), uint32(pid), body.Events, body.From, body.To, body.WindowSeconds, body.BreakdownProperty)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
+			return
 		}
+		breakdown, breakdownTruncated = limitFunnelBreakdown(breakdown, maxBreakdownGroups)
 	}
-	// 累加：达到 step k 表示还达到了后面所有等级 ≥ k
-	type Step struct {
-		Event      string  `json:"event"`
-		Users      uint64  `json:"users"`
-		Conversion float64 `json:"conversion"`
-	}
-	n := len(body.Events)
-	cum := make([]uint64, n+1) // cum[k] = users reach level >= k
-	for lv, c2 := range levelCounts {
-		for i := 0; i <= int(lv); i++ {
-			cum[i] += c2
-		}
-	}
-	steps := make([]Step, n)
-	first := cum[1]
-	for i := 0; i < n; i++ {
-		u := cum[i+1]
-		conv := 0.0
-		if first > 0 {
-			conv = float64(u) / float64(first)
-		}
-		steps[i] = Step{Event: body.Events[i], Users: u, Conversion: conv}
-	}
-	c.JSON(http.StatusOK, gin.H{"data": gin.H{"steps": steps}})
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"steps": steps, "breakdown": breakdown, "breakdown_truncated": breakdownTruncated}})
 }
 
-// /v1/projects/:id/analytics/retention?initial_event=xxx&return_event=yyy&from=&to=&days=7
-// 以初始事件发生当天为同期，计算 0..days 天后是否发生返回事件
+// /v1/projects/:id/analytics/retention?initial_event=xxx&return_event=yyy&from=&to=&days=7&breakdown_property=ppp
+// 以初始事件发生当天为同期，计算 0..days 天后是否发生返回事件。
+// 如果传入 breakdown_property，则在总体同期之外返回按初始事件首次属性值拆解的多组同期。
 func (h *AnalyticsHandler) retention(c *gin.Context) {
 	pid, _ := strconv.ParseUint(c.Param("id"), 10, 32)
 	initEv := c.Query("initial_event")
@@ -1084,10 +1100,40 @@ func (h *AnalyticsHandler) retention(c *gin.Context) {
 	if from == 0 {
 		from = to - int64(days+7)*24*3600*1000
 	}
+	breakdownProp := c.Query("breakdown_property")
+	ctx := c.Request.Context()
+	overall, err := h.computeRetention(ctx, uint32(pid), initEv, retEv, from, to, days)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
+		return
+	}
+	breakdown := []retentionBreakdownRow{}
+	if breakdownProp != "" {
+		breakdown, err = h.computeRetentionBreakdown(ctx, uint32(pid), initEv, retEv, from, to, days, breakdownProp)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
+			return
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"overall": overall, "breakdown": breakdown}})
+}
 
-	// 简单实现：分两步
-	// 1) cohort_users: 初始事件当天首次发生的 (date, distinct_id)
-	// 2) 等值 join 返回事件，再在聚合条件里计算偏移天数。
+type retentionRow struct {
+	Cohort time.Time `json:"cohort"`
+	Size   uint64    `json:"size"`
+	Values []uint64  `json:"values"`
+}
+
+type retentionBreakdownRow struct {
+	Raw       string         `json:"raw"`
+	Value     any            `json:"value"`
+	Label     string         `json:"label"`
+	Rows      []retentionRow `json:"rows"`
+	TotalSize uint64         `json:"total_size"`
+	DayOne    float64        `json:"day_one"`
+}
+
+func (h *AnalyticsHandler) computeRetention(ctx context.Context, pid uint32, initEv, retEv string, from, to int64, days int) ([]retentionRow, error) {
 	valueExprs := make([]string, 0, days)
 	for i := 0; i < days; i++ {
 		valueExprs = append(valueExprs, "uniqExactIf(c.distinct_id, dateDiff('day', c.d0, r.d) = "+strconv.Itoa(i)+")")
@@ -1113,28 +1159,100 @@ func (h *AnalyticsHandler) retention(c *gin.Context) {
 	GROUP BY c.d0
 	ORDER BY c.d0
 	`
-	rows, err := h.CH.Query(c, q,
-		uint32(pid), initEv, from, to,
-		uint32(pid), retEv, from, to,
-	)
+	rows, err := h.CH.Query(ctx, q, pid, initEv, from, to, pid, retEv, from, to)
 	if err != nil {
-		c.JSON(500, gin.H{"err": err.Error()})
-		return
+		return nil, err
 	}
 	defer rows.Close()
-	type Row struct {
-		Cohort time.Time `json:"cohort"`
-		Size   uint64    `json:"size"`
-		Values []uint64  `json:"values"`
-	}
-	out := []Row{}
+	out := []retentionRow{}
 	for rows.Next() {
-		var r Row
+		var r retentionRow
 		if err := rows.Scan(&r.Cohort, &r.Size, &r.Values); err == nil {
 			out = append(out, r)
 		}
 	}
-	c.JSON(http.StatusOK, gin.H{"data": out})
+	return out, nil
+}
+
+func (h *AnalyticsHandler) computeRetentionBreakdown(ctx context.Context, pid uint32, initEv, retEv string, from, to int64, days int, property string) ([]retentionBreakdownRow, error) {
+	valueExprs := make([]string, 0, days)
+	for i := 0; i < days; i++ {
+		valueExprs = append(valueExprs, "uniqExactIf(c.distinct_id, dateDiff('day', c.d0, r.d) = "+strconv.Itoa(i)+")")
+	}
+	// cohort 上取初始事件首次出现时的属性值作为 dim
+	q := `
+	WITH cohort AS (
+		SELECT distinct_id,
+		       min(toDate(time)) AS d0,
+		       argMin(JSONExtractRaw(properties, ?), time) AS dim
+		FROM events
+		WHERE project_id = ? AND event = ? AND time BETWEEN fromUnixTimestamp64Milli(?) AND fromUnixTimestamp64Milli(?)
+		GROUP BY distinct_id
+	),
+	ret AS (
+		SELECT distinct_id, toDate(time) AS d
+		FROM events
+		WHERE project_id = ? AND event = ? AND time BETWEEN fromUnixTimestamp64Milli(?) AND fromUnixTimestamp64Milli(?)
+		GROUP BY distinct_id, d
+	)
+	SELECT c.dim AS dim,
+	       c.d0  AS cohort,
+	       count(DISTINCT c.distinct_id) AS size,
+	       [` + joinStrs(valueExprs, ", ") + `] AS values
+	FROM cohort AS c
+	LEFT JOIN ret AS r ON c.distinct_id = r.distinct_id
+	WHERE c.dim != ''
+	GROUP BY c.dim, c.d0
+	ORDER BY c.dim, c.d0
+	`
+	rows, err := h.CH.Query(ctx, q, property, pid, initEv, from, to, pid, retEv, from, to)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	byDim := map[string][]retentionRow{}
+	order := []string{}
+	for rows.Next() {
+		var dim string
+		var r retentionRow
+		if err := rows.Scan(&dim, &r.Cohort, &r.Size, &r.Values); err != nil {
+			continue
+		}
+		if _, ok := byDim[dim]; !ok {
+			order = append(order, dim)
+		}
+		byDim[dim] = append(byDim[dim], r)
+	}
+	out := make([]retentionBreakdownRow, 0, len(order))
+	for _, raw := range order {
+		list := byDim[raw]
+		total := uint64(0)
+		dayOneNumer := uint64(0)
+		for _, row := range list {
+			total += row.Size
+			if len(row.Values) > 1 {
+				dayOneNumer += row.Values[1]
+			}
+		}
+		dayOne := 0.0
+		if total > 0 {
+			dayOne = float64(dayOneNumer) / float64(total)
+		}
+		value, label := parsePropertyValue(raw)
+		out = append(out, retentionBreakdownRow{
+			Raw: raw, Value: value, Label: label,
+			Rows: list, TotalSize: total, DayOne: dayOne,
+		})
+	}
+	// 按同期总量降序，保证列表稳定且头部优先
+	for i := 0; i < len(out); i++ {
+		for j := i + 1; j < len(out); j++ {
+			if out[j].TotalSize > out[i].TotalSize {
+				out[i], out[j] = out[j], out[i]
+			}
+		}
+	}
+	return out, nil
 }
 
 func joinStrs(ss []string, sep string) string {

@@ -343,6 +343,43 @@ export interface ConversionBreakdownRow {
     users: number;
     conversion: number;
 }
+export interface RetentionCohort {
+    cohort: string;
+    size: number;
+    values: number[];
+}
+export interface RetentionBreakdownGroup {
+    raw: string;
+    value: unknown;
+    label: string;
+    rows: RetentionCohort[];
+    total_size: number;
+    day_one: number;
+}
+export interface AttributionRow {
+    event: string;
+    credit: number;
+    users: number;
+    share: number;
+    avg_lag_seconds: number;
+}
+export interface AttributionLagBucket {
+    key: string;
+    label: string;
+    credit: number;
+    users: number;
+    share: number;
+}
+export interface AttributionBreakdownGroup {
+    raw: string;
+    value: unknown;
+    label: string;
+    total_credit: number;
+    users: number;
+    top_event: string;
+    top_share: number;
+    rows: AttributionRow[];
+}
 export interface ApiList<T> {
     data: T[];
 }
@@ -849,10 +886,15 @@ export const api = {
             from?: number;
             to?: number;
             window_seconds?: number;
+            breakdown_property?: string;
         },
     ) =>
         req<
-            ApiOne<{ steps: { event: string; users: number; conversion: number }[] }>
+            ApiOne<{
+                steps: ConversionStep[];
+                breakdown: ConversionBreakdownRow[];
+                breakdown_truncated: boolean;
+            }>
         >(`/projects/${id}/analytics/funnel`, {
             method: "POST",
             body: JSON.stringify(body),
@@ -865,6 +907,7 @@ export const api = {
             from?: number;
             to?: number;
             days?: number;
+            breakdown_property?: string;
         },
     ) => {
         const q = new URLSearchParams({
@@ -874,9 +917,13 @@ export const api = {
         if (params.from) q.set("from", String(params.from));
         if (params.to) q.set("to", String(params.to));
         if (params.days) q.set("days", String(params.days));
-        return req<ApiList<{ cohort: string; size: number; values: number[] }>>(
-            `/projects/${id}/analytics/retention?${q}`,
-        );
+        if (params.breakdown_property) q.set("breakdown_property", params.breakdown_property);
+        return req<
+            ApiOne<{
+                overall: RetentionCohort[];
+                breakdown: RetentionBreakdownGroup[];
+            }>
+        >(`/projects/${id}/analytics/retention?${q}`);
     },
     attribution: (
         id: number | string,
@@ -887,21 +934,23 @@ export const api = {
             to?: number;
             window_seconds?: number;
             model?: "first" | "last" | "linear";
+            breakdown_property?: string;
         },
     ) =>
         req<
             ApiOne<{
                 model: "first" | "last" | "linear";
                 total_users: number;
+                attributed_users: number;
+                unattributed_users: number;
+                unattributed_share: number;
                 total_credit: number;
                 window_seconds: number;
-                rows: {
-                    event: string;
-                    credit: number;
-                    users: number;
-                    share: number;
-                    avg_lag_seconds: number;
-                }[];
+                breakdown_property: string;
+                breakdown_truncated: boolean;
+                rows: AttributionRow[];
+                lag_buckets: AttributionLagBucket[];
+                breakdown: AttributionBreakdownGroup[];
             }>
         >(`/projects/${id}/analytics/attribution`, {
             method: "POST",

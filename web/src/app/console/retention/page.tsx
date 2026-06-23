@@ -14,22 +14,21 @@ import {
   ToolbarPanel,
 } from "@/features/analytics/analytics-ui";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { api } from "@/lib/api";
+import { api, RetentionBreakdownGroup, RetentionCohort } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { useProjectStore } from "@/stores/project-store";
 
-interface RetRow {
-  cohort: string;
-  size: number;
-  values: number[];
-}
+const NONE = "__none__";
 
 export default function RetentionPage() {
   const projectId = useProjectStore((s) => s.projectId);
   const [initEvent, setInitEvent] = useState<string | undefined>();
   const [retEvent, setRetEvent] = useState<string | undefined>();
   const [days, setDays] = useState<number>(7);
+  const [breakdownProperty, setBreakdownProperty] = useState<string>("");
   const [range, setRange] = useState<[Dayjs, Dayjs]>([
     dayjs().subtract(14, "day").startOf("day"),
     dayjs().endOf("day"),
@@ -39,6 +38,7 @@ export default function RetentionPage() {
   useEffect(() => {
     setInitEvent(undefined);
     setRetEvent(undefined);
+    setBreakdownProperty("");
   }, [projectId]);
 
   const { data: top, isLoading: topLoading } = useQuery({
@@ -52,13 +52,19 @@ export default function RetentionPage() {
     enabled: !!projectId,
   });
 
+  const { data: properties } = useQuery({
+    queryKey: ["retention_properties", projectId],
+    queryFn: () => api.listProperties(projectId!, { scope: "event" }),
+    enabled: !!projectId,
+  });
+
   useEffect(() => {
     if (!initEvent && top?.data?.length) setInitEvent(top.data[0].event);
     if (!retEvent && top?.data?.length) setRetEvent(top.data[0].event);
   }, [top, initEvent, retEvent]);
 
   const { data, isFetching } = useQuery({
-    queryKey: ["retention", projectId, initEvent, retEvent, days, range],
+    queryKey: ["retention", projectId, initEvent, retEvent, days, range, breakdownProperty],
     queryFn: () =>
       api.retention(projectId!, {
         initial_event: initEvent!,
@@ -66,17 +72,19 @@ export default function RetentionPage() {
         days,
         from: range[0].valueOf(),
         to: range[1].valueOf(),
+        breakdown_property: breakdownProperty || undefined,
       }),
     enabled: !!projectId && !!initEvent && !!retEvent,
   });
 
-  const rows = data?.data || [];
-  const totalCohort = rows.reduce((sum, row) => sum + row.size, 0);
+  const overall: RetentionCohort[] = data?.data?.overall || [];
+  const breakdown: RetentionBreakdownGroup[] = data?.data?.breakdown || [];
+  const totalCohort = overall.reduce((sum, row) => sum + row.size, 0);
   const dayOneAvg = useMemo(() => {
-    if (!rows.length) return 0;
-    const retained = rows.reduce((sum, row) => sum + (row.values[1] || 0), 0);
+    if (!overall.length) return 0;
+    const retained = overall.reduce((sum, row) => sum + (row.values[1] || 0), 0);
     return totalCohort ? Math.round((retained / totalCohort) * 10000) / 100 : 0;
-  }, [rows, totalCohort]);
+  }, [overall, totalCohort]);
 
   return (
     <div>
@@ -89,11 +97,15 @@ export default function RetentionPage() {
         range={range}
         onRangeChange={setRange}
         comparison="上个周期"
-        filters={[initEvent ? `initial = ${initEvent}` : "选择初始事件", retEvent ? `return = ${retEvent}` : "选择返回事件"]}
+        filters={[
+          initEvent ? `initial = ${initEvent}` : "选择初始事件",
+          retEvent ? `return = ${retEvent}` : "选择返回事件",
+          breakdownProperty ? `分组 = ${breakdownProperty}` : "未分组",
+        ]}
       />
 
       <ToolbarPanel>
-        <div className="grid gap-4 xl:grid-cols-[240px_240px_160px] xl:items-end">
+        <div className="grid gap-4 xl:grid-cols-[240px_240px_160px_240px] xl:items-end">
           <div className="grid gap-1.5">
             <span className="text-sm font-medium">初始事件</span>
             <EventPicker events={top?.data || []} value={initEvent} onChange={setInitEvent} placeholder="初始事件" className="sm:w-full" />
@@ -103,18 +115,37 @@ export default function RetentionPage() {
             <EventPicker events={top?.data || []} value={retEvent} onChange={setRetEvent} placeholder="返回事件" className="sm:w-full" />
           </div>
           <NumberField label="观察天数" min={2} max={30} value={days} onChange={setDays} />
+          <div className="grid gap-1.5">
+            <Label>分组参数（可选）</Label>
+            <Select
+              value={breakdownProperty || NONE}
+              onValueChange={(v) => setBreakdownProperty(v === NONE ? "" : v)}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="不分组" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={NONE}>不分组</SelectItem>
+                {(properties?.data || []).map((p) => (
+                  <SelectItem key={p.name} value={p.name}>
+                    {p.display_name || p.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         </div>
       </ToolbarPanel>
 
       <div className="mb-5 grid gap-3 sm:grid-cols-3">
         <MetricTile label="同期用户" value={totalCohort} loading={isFetching || topLoading} />
-        <MetricTile label="同期批次" value={rows.length} loading={isFetching} />
+        <MetricTile label="同期批次" value={overall.length} loading={isFetching} />
         <MetricTile label="Day1 平均留存" value={dayOneAvg} hint="百分比" loading={isFetching} />
       </div>
 
       <div className="grid gap-5 xl:grid-cols-[360px_minmax(0,1fr)]">
         <ChartPanel title="Cohort 总览" description="每个同期日的用户规模和 Day1 留存" contentClassName="pt-3 sm:pt-3">
-          {rows.length ? <CohortOverview rows={rows} /> : <EmptyAnalysis title="暂无同期批次" />}
+          {overall.length ? <CohortOverview rows={overall} /> : <EmptyAnalysis title="暂无同期批次" />}
         </ChartPanel>
         <ChartPanel title="留存热力矩阵" description="每行是一个同期日，每列是 DayN 回访比例">
           {!initEvent || !retEvent ? (
@@ -125,18 +156,29 @@ export default function RetentionPage() {
                 <Skeleton key={index} className="h-10 w-full" />
               ))}
             </div>
-          ) : rows.length === 0 ? (
+          ) : overall.length === 0 ? (
             <EmptyAnalysis title="暂无留存数据" description="当前时间范围内没有满足条件的同期用户。" />
           ) : (
-            <RetentionHeatmap rows={rows} days={days} />
+            <RetentionHeatmap rows={overall} days={days} />
           )}
         </ChartPanel>
       </div>
+
+      {breakdownProperty && breakdown.length > 0 ? (
+        <div className="mt-5">
+          <ChartPanel
+            title={`按 ${breakdownProperty} 分组对比`}
+            description="按维度取值聚合各同期日的总规模与 Day1 留存，颜色越深代表 DayN 平均留存越高。"
+          >
+            <BreakdownTable groups={breakdown} days={days} dimension={breakdownProperty} />
+          </ChartPanel>
+        </div>
+      ) : null}
     </div>
   );
 }
 
-function CohortOverview({ rows }: { rows: RetRow[] }) {
+function CohortOverview({ rows }: { rows: RetentionCohort[] }) {
   const maxSize = rows.reduce((max, row) => Math.max(max, row.size), 0);
   return (
     <div className="grid gap-3">
@@ -161,7 +203,7 @@ function CohortOverview({ rows }: { rows: RetRow[] }) {
   );
 }
 
-function RetentionHeatmap({ rows, days }: { rows: RetRow[]; days: number }) {
+function RetentionHeatmap({ rows, days }: { rows: RetentionCohort[]; days: number }) {
   return (
     <div className="overflow-x-auto">
       <Table className="min-w-[920px]">
@@ -196,6 +238,74 @@ function RetentionHeatmap({ rows, days }: { rows: RetRow[]; days: number }) {
                       )}
                       style={{ backgroundColor: `rgba(8, 145, 178, ${alpha})` }}
                       title={`${value} 人`}
+                    >
+                      {rate.toFixed(1)}%
+                    </div>
+                  </TableCell>
+                );
+              })}
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </div>
+  );
+}
+
+function BreakdownTable({
+  groups,
+  days,
+  dimension,
+}: {
+  groups: RetentionBreakdownGroup[];
+  days: number;
+  dimension: string;
+}) {
+  // 计算每组的 DayN 平均留存（对各 cohort 加权按 size）
+  const enriched = groups.map((g) => {
+    const avg: number[] = [];
+    for (let i = 0; i < days; i++) {
+      let retained = 0;
+      let total = 0;
+      g.rows.forEach((row) => {
+        retained += row.values[i] || 0;
+        total += row.size;
+      });
+      avg.push(total ? (retained / total) * 100 : 0);
+    }
+    return { ...g, avg };
+  });
+  return (
+    <div className="overflow-x-auto">
+      <Table className="min-w-[820px]">
+        <TableHeader>
+          <TableRow>
+            <TableHead className="min-w-[160px]">{dimension}</TableHead>
+            <TableHead className="text-right">总同期用户</TableHead>
+            <TableHead className="text-right">Day1 留存</TableHead>
+            {Array.from({ length: days }).map((_, index) => (
+              <TableHead key={index} className="text-center">
+                Day{index}
+              </TableHead>
+            ))}
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {enriched.map((g) => (
+            <TableRow key={g.raw}>
+              <TableCell className="font-medium">{g.label || "(空)"}</TableCell>
+              <TableCell className="text-right font-mono">{g.total_size.toLocaleString()}</TableCell>
+              <TableCell className="text-right font-mono">{(g.day_one * 100).toFixed(2)}%</TableCell>
+              {g.avg.map((rate, index) => {
+                const alpha = Math.min(0.88, 0.1 + rate / 100);
+                return (
+                  <TableCell key={index} className="p-1.5 text-center">
+                    <div
+                      className={cn(
+                        "rounded-md px-2 py-2 font-mono text-xs tabular-nums",
+                        rate > 45 ? "text-white" : "text-foreground",
+                      )}
+                      style={{ backgroundColor: `rgba(8, 145, 178, ${alpha})` }}
                     >
                       {rate.toFixed(1)}%
                     </div>
