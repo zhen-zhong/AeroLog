@@ -1,0 +1,9 @@
+.git
+.run
+.DS_Store
+**/.DS_Store
+**/node_modules
+web/.next
+web/.next-build
+deploy/data
+deploy/production/.env

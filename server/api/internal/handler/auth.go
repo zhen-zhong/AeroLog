@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -1042,11 +1043,17 @@ func randomBase64URL(n int) (string, error) {
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
-// EnsureDefaultAuth creates a local admin account and makes it owner of orphan projects.
+// EnsureDefaultAuth creates bootstrap platform-admin accounts and makes the
+// primary account owner of orphan projects. AEROLOG_BOOTSTRAP_ADMIN_EMAILS and
+// AEROLOG_BOOTSTRAP_ADMIN_PASSWORD are intended for first production startup;
+// leaving them unset preserves the local development defaults.
 func EnsureDefaultAuth(ctx context.Context, pg *pgxpool.Pool) error {
 	if pg == nil {
 		return nil
 	}
+	adminEmails := bootstrapAdminEmails()
+	adminPassword := bootstrapAdminPassword()
+	resetExistingPassword := strings.TrimSpace(os.Getenv("AEROLOG_BOOTSTRAP_ADMIN_EMAILS")) == ""
 	var companyID int64
 	err := pg.QueryRow(ctx, `SELECT id FROM organizations WHERE name=$1 ORDER BY id LIMIT 1`, "AeroLog Local").Scan(&companyID)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -1061,39 +1068,15 @@ func EnsureDefaultAuth(ctx context.Context, pg *pgxpool.Pool) error {
 		return err
 	}
 
-	var adminID int64
-	err = pg.QueryRow(ctx, `SELECT id FROM users WHERE email=$1 LIMIT 1`, defaultAdminEmail).Scan(&adminID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		hash, err := hashPassword(defaultAdminPassword)
+	var primaryAdminID int64
+	for i, email := range adminEmails {
+		adminID, err := ensureBootstrapAdmin(ctx, pg, email, adminPassword, companyID, resetExistingPassword)
 		if err != nil {
 			return err
 		}
-		if err := pg.QueryRow(ctx, `
-			INSERT INTO users(email, name, password_hash, role)
-			VALUES($1,$2,$3,'admin')
-			RETURNING id
-		`, defaultAdminEmail, defaultAdminName, hash).Scan(&adminID); err != nil {
-			return err
+		if i == 0 {
+			primaryAdminID = adminID
 		}
-	} else if err != nil {
-		return err
-	} else {
-		hash, err := hashPassword(defaultAdminPassword)
-		if err != nil {
-			return err
-		}
-		if _, err := pg.Exec(ctx, `
-			UPDATE users
-			SET name=COALESCE(NULLIF(name,''), $2), password_hash=$3, role='admin', status=1, updated_at=now()
-			WHERE id=$1
-		`, adminID, defaultAdminName, hash); err != nil {
-			return err
-		}
-	}
-	if _, err := pg.Exec(ctx, `
-		UPDATE users SET company_id=$2 WHERE id=$1 AND company_id IS NULL
-	`, adminID, companyID); err != nil {
-		return err
 	}
 	if _, err := pg.Exec(ctx, `
 		UPDATE projects SET company_id=$1 WHERE company_id IS NULL
@@ -1108,6 +1091,75 @@ func EnsureDefaultAuth(ctx context.Context, pg *pgxpool.Pool) error {
 			SELECT 1 FROM project_members m WHERE m.project_id=p.id
 		)
 		ON CONFLICT (project_id, user_id) DO NOTHING
-	`, adminID)
+	`, primaryAdminID)
 	return err
+}
+
+func bootstrapAdminEmails() []string {
+	raw := strings.TrimSpace(os.Getenv("AEROLOG_BOOTSTRAP_ADMIN_EMAILS"))
+	if raw == "" {
+		return []string{defaultAdminEmail}
+	}
+	seen := make(map[string]struct{})
+	emails := make([]string, 0, 2)
+	for _, candidate := range strings.Split(raw, ",") {
+		email := normalizeEmail(candidate)
+		if email == "" || !strings.Contains(email, "@") {
+			continue
+		}
+		if _, ok := seen[email]; ok {
+			continue
+		}
+		seen[email] = struct{}{}
+		emails = append(emails, email)
+	}
+	if len(emails) == 0 {
+		return []string{defaultAdminEmail}
+	}
+	return emails
+}
+
+func bootstrapAdminPassword() string {
+	if password := strings.TrimSpace(os.Getenv("AEROLOG_BOOTSTRAP_ADMIN_PASSWORD")); password != "" {
+		return password
+	}
+	return defaultAdminPassword
+}
+
+func ensureBootstrapAdmin(ctx context.Context, pg *pgxpool.Pool, email, password string, companyID int64, resetExistingPassword bool) (int64, error) {
+	var adminID int64
+	err := pg.QueryRow(ctx, `SELECT id FROM users WHERE email=$1 LIMIT 1`, email).Scan(&adminID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		hash, err := hashPassword(password)
+		if err != nil {
+			return 0, err
+		}
+		err = pg.QueryRow(ctx, `
+			INSERT INTO users(email, name, password_hash, company_id, role, status)
+			VALUES($1,$2,$3,$4,'admin',1)
+			RETURNING id
+		`, email, defaultAdminName, hash, companyID).Scan(&adminID)
+		return adminID, err
+	}
+	if err != nil {
+		return 0, err
+	}
+	if resetExistingPassword {
+		hash, err := hashPassword(password)
+		if err != nil {
+			return 0, err
+		}
+		_, err = pg.Exec(ctx, `
+			UPDATE users
+			SET name=COALESCE(NULLIF(name,''), $2), password_hash=$3, company_id=COALESCE(company_id,$4), role='admin', status=1, updated_at=now()
+			WHERE id=$1
+		`, adminID, defaultAdminName, hash, companyID)
+		return adminID, err
+	}
+	_, err = pg.Exec(ctx, `
+		UPDATE users
+		SET name=COALESCE(NULLIF(name,''), $2), company_id=COALESCE(company_id,$3), role='admin', status=1, updated_at=now()
+		WHERE id=$1
+	`, adminID, defaultAdminName, companyID)
+	return adminID, err
 }

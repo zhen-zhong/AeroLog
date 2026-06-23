@@ -44,6 +44,7 @@ sdk/ios/Pods/
 # ===== Deploy =====
 deploy/data/
 deploy/.env
+deploy/production/.env
 
 # ===== Runtime exports =====
 data/exports/

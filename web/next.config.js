@@ -6,9 +6,15 @@ const nextConfig = {
     NEXT_PUBLIC_API_BASE: process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8082",
   },
   async rewrites() {
+    const apiBase = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8082";
+    // Production uses Nginx to proxy the relative /api path. Rewriting a
+    // relative path here would cause /api/v1 requests to be rewritten twice.
+    if (!/^https?:\/\//.test(apiBase)) {
+      return [];
+    }
     return [
       // 让前端在浏览器侧也能直接走相对路径调用 API（可选）
-      { source: "/api/:path*", destination: `${process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8082"}/v1/:path*` },
+      { source: "/api/:path*", destination: `${apiBase}/v1/:path*` },
     ];
   },
 };
