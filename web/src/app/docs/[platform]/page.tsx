@@ -31,10 +31,10 @@ AeroLog.init(
   web: {
     title: "Web 接入",
     subtitle: "使用 TypeScript SDK 采集网站与 Web 应用行为。",
-    install: "安装 Web SDK：pnpm add @aerolog/web",
+    install: "安装 Web SDK:pnpm add @aerolog/web",
     setup: `import { init } from "@aerolog/web";
 
-// SaaS：默认上报到 https://collector.aerolog.cc
+// SaaS:默认上报到 https://collector.aerolog.cc
 const aero = init({ token: "YOUR_PROJECT_TOKEN" });
 
 // 私有化部署：覆盖 serverUrl
@@ -49,8 +49,8 @@ const aero2 = init({
   ios: {
     title: "iOS 接入",
     subtitle: "使用 Swift Package SDK 采集原生 iOS 应用行为。",
-    install: "在 Xcode 中添加 AeroLog Swift Package，并引入 AeroLog。",
-    setup: `// SaaS：默认上报到 https://collector.aerolog.cc
+    install: "在 Xcode 中添加 AeroLog Swift Package,并引入 AeroLog。",
+    setup: `// SaaS:默认上报到 https://collector.aerolog.cc
 AeroLog.shared.setup(AeroConfig(token: "YOUR_PROJECT_TOKEN"))
 
 // 私有化部署：覆盖 serverUrl
