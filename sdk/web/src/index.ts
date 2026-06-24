@@ -1,7 +1,7 @@
 // AeroLog Web SDK
 // 三阶段上报：内存批量 → 失败落 IndexedDB → 退避重传
 
-import type { AeroEvent, AeroLogConfig, EventType, Lib } from "./types";
+import { DEFAULT_SERVER_URL, type AeroEvent, type AeroLogConfig, type EventType, type Lib } from "./types";
 import { EventStore, type StoredEvent } from "./storage";
 import { backoffMs, detectBrowser, detectNetwork, detectOS, isOnline, nowMs, uuid } from "./utils";
 
@@ -27,7 +27,7 @@ export class AeroLog {
 
   constructor(cfg: AeroLogConfig) {
     this.cfg = {
-      serverUrl: cfg.serverUrl.replace(/\/$/, ""),
+      serverUrl: (cfg.serverUrl ?? DEFAULT_SERVER_URL).replace(/\/$/, ""),
       token: cfg.token,
       batchSize: cfg.batchSize ?? 50,
       flushInterval: cfg.flushInterval ?? 5000,
@@ -296,6 +296,7 @@ export class AeroLog {
   }
 }
 
+export { DEFAULT_SERVER_URL };
 export type { AeroEvent, AeroLogConfig, EventType, Lib, StoredEvent };
 
 /** 默认导出工厂：const aero = init({...}) */

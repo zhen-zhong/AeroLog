@@ -74,7 +74,25 @@ gradle :sample:assembleDebug \
 
 ## 初始化
 
-建议在自定义 `Application` 中初始化：
+建议在自定义 `Application` 中初始化。
+
+### 方式一：SaaS 接入（推荐，一行搯定）
+
+```kotlin
+class App : Application() {
+    override fun onCreate() {
+        super.onCreate()
+        AeroLog.init(
+            this,
+            AeroConfig(token = BuildConfig.AEROLOG_TOKEN),
+        )
+    }
+}
+```
+
+默认将上报到 AeroLog 官方 SaaS Collector：`https://collector.aerolog.cc`。
+
+### 方式二：私有化部署 / 本地联调
 
 ```kotlin
 class App : Application() {
@@ -84,8 +102,8 @@ class App : Application() {
         AeroLog.init(
             this,
             AeroConfig(
-                serverUrl = "https://collector.aerolog.example",
                 token = BuildConfig.AEROLOG_TOKEN,
+                serverUrl = "https://collector.your-company.com", // 覆盖为你自部署地址
                 secret = BuildConfig.AEROLOG_SECRET, // 可选：开启 HMAC-SHA256 签名上报
                 batchSize = 50,
                 flushIntervalMs = 5_000L,
@@ -368,8 +386,8 @@ SDK 也会在以下场景自动 flush：
 AeroLog.init(
     this,
     AeroConfig(
-        serverUrl = "http://10.0.2.2:8081",
         token = "PROJECT_TOKEN",
+        serverUrl = "http://10.0.2.2:8081",
         debug = true,
     ),
 )

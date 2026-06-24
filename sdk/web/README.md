@@ -10,12 +10,26 @@ pnpm add @aerolog/web
 
 ## 快速开始
 
+### 方式一：SaaS 接入（推荐）
+
 ```ts
 import { init } from "@aerolog/web";
 
 const aero = init({
-  serverUrl: "https://collector.aerolog.example",
   token: "YOUR_PROJECT_TOKEN",
+});
+```
+
+默认上报到 `https://collector.aerolog.cc`。
+
+### 方式二：私有化部署
+
+```ts
+import { init } from "@aerolog/web";
+
+const aero = init({
+  token: "YOUR_PROJECT_TOKEN",
+  serverUrl: "https://collector.your-company.com",
   autoTrackPageView: true,
   autoTrackClick: false,
   debug: false,

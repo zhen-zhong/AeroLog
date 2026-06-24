@@ -13,21 +13,34 @@ Swift Package。最低 iOS 13。
 
 ## 用法
 
+### 方式一：SaaS 接入（推荐）
+
 ```swift
 import AeroLog
 
 @main
 struct App: App {
     init() {
-        AeroLog.shared.setup(AeroConfig(
-            serverUrl: "https://collector.aerolog.example",
-            token: "YOUR_TOKEN"
-        ))
+        AeroLog.shared.setup(AeroConfig(token: "YOUR_TOKEN"))
     }
     var body: some Scene { WindowGroup { ContentView() } }
 }
+```
 
-// 业务使用
+默认上报到 `https://collector.aerolog.cc`。
+
+### 方式二：私有化部署
+
+```swift
+AeroLog.shared.setup(AeroConfig(
+    token: "YOUR_TOKEN",
+    serverUrl: "https://collector.your-company.com"
+))
+```
+
+### 业务调用
+
+```swift
 AeroLog.shared.track("button_click", properties: ["btn": "checkout"])
 AeroLog.shared.identify("user_1024")
 AeroLog.shared.setProfile(["vip_level": 3])

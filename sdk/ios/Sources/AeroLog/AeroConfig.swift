@@ -1,6 +1,9 @@
 import Foundation
 
 public struct AeroConfig {
+    /// AeroLog SaaS 官方 Collector 入口；私有化客户请覆盖 `serverUrl`。
+    public static let defaultServerUrl = "https://collector.aerolog.cc"
+
     public let serverUrl: String
     public let token: String
     public let batchSize: Int
@@ -10,8 +13,8 @@ public struct AeroConfig {
     public let debug: Bool
 
     public init(
-        serverUrl: String,
         token: String,
+        serverUrl: String = AeroConfig.defaultServerUrl,
         batchSize: Int = 50,
         flushInterval: TimeInterval = 5,
         storageLimit: Int = 10_000,
