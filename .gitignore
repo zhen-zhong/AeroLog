@@ -45,6 +45,8 @@ sdk/ios/Pods/
 deploy/data/
 deploy/.env
 deploy/production/.env
+deploy/production/data/
+deploy/production/queue.htpasswd
 
 # ===== Runtime exports =====
 data/exports/
