@@ -9,20 +9,30 @@ const guides = {
     title: "Android 接入",
     subtitle: "使用 Kotlin / Java SDK 采集应用行为。",
     install: "在宿主工程中引入 AeroLog Android SDK。",
-    setup: `// SaaS：默认上报到 https://collector.aerolog.cc
-AeroLog.init(
-  this,
-  AeroConfig(token = "YOUR_PROJECT_TOKEN")
-)
+    setup: `import android.app.Application
+import dev.aerolog.sdk.AeroLog
+import dev.aerolog.sdk.AeroConfig
 
-// 私有化部署：覆盖 serverUrl
-AeroLog.init(
-  this,
-  AeroConfig(
-    token = "YOUR_PROJECT_TOKEN",
-    serverUrl = "https://collector.your-company.com"
-  )
-)`,
+class MyApp : Application() {
+  override fun onCreate() {
+    super.onCreate()
+
+    // SaaS：默认上报到 https://collector.aerolog.cc
+    AeroLog.init(
+      this,
+      AeroConfig(token = "YOUR_PROJECT_TOKEN")
+    )
+
+    // 私有化部署：覆盖 serverUrl
+    AeroLog.init(
+      this,
+      AeroConfig(
+        token = "YOUR_PROJECT_TOKEN",
+        serverUrl = "https://collector.your-company.com"
+      )
+    )
+  }
+}`,
     track: `AeroLog.track(
   "button_click",
   mapOf("button" to "checkout")
@@ -31,16 +41,20 @@ AeroLog.init(
   web: {
     title: "Web 接入",
     subtitle: "使用 TypeScript SDK 采集网站与 Web 应用行为。",
-    install: "安装 Web SDK:pnpm add @aerolog/web",
-    setup: `import { init } from "@aerolog/web";
+    install: "安装 Web SDK：pnpm add @aerolog/web（或 npm i / yarn add）。",
+    setup: `// 建议在应用入口初始化，如 Next.js 的 app/layout.tsx 顶部
+// 或传统 SPA 的 src/main.ts / src/index.ts
+import { init } from "@aerolog/web";
 
-// SaaS:默认上报到 https://collector.aerolog.cc
-const aero = init({ token: "YOUR_PROJECT_TOKEN" });
+// SaaS：默认上报到 https://collector.aerolog.cc
+export const aero = init({
+  token: "YOUR_PROJECT_TOKEN",
+});
 
 // 私有化部署：覆盖 serverUrl
-const aero2 = init({
+export const aero2 = init({
   token: "YOUR_PROJECT_TOKEN",
-  serverUrl: "https://collector.your-company.com"
+  serverUrl: "https://collector.your-company.com",
 });`,
     track: `aero.track("button_click", {
   button: "checkout"
@@ -49,15 +63,29 @@ const aero2 = init({
   ios: {
     title: "iOS 接入",
     subtitle: "使用 Swift Package SDK 采集原生 iOS 应用行为。",
-    install: "在 Xcode 中添加 AeroLog Swift Package,并引入 AeroLog。",
-    setup: `// SaaS:默认上报到 https://collector.aerolog.cc
-AeroLog.shared.setup(AeroConfig(token: "YOUR_PROJECT_TOKEN"))
+    install: "在 Xcode 中添加 AeroLog Swift Package（File → Add Packages）。",
+    setup: `import UIKit
+import AeroLog
 
-// 私有化部署：覆盖 serverUrl
-AeroLog.shared.setup(AeroConfig(
-  token: "YOUR_PROJECT_TOKEN",
-  serverUrl: "https://collector.your-company.com"
-))`,
+@main
+class AppDelegate: UIResponder, UIApplicationDelegate {
+  func application(
+    _ application: UIApplication,
+    didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
+  ) -> Bool {
+
+    // SaaS：默认上报到 https://collector.aerolog.cc
+    AeroLog.shared.setup(AeroConfig(token: "YOUR_PROJECT_TOKEN"))
+
+    // 私有化部署：覆盖 serverUrl
+    AeroLog.shared.setup(AeroConfig(
+      token: "YOUR_PROJECT_TOKEN",
+      serverUrl: "https://collector.your-company.com"
+    ))
+
+    return true
+  }
+}`,
     track: `AeroLog.shared.track(
   "button_click",
   properties: ["button": "checkout"]

@@ -118,7 +118,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: aerolog
     volumes:
-      - ./data/postgres:/var/lib/postgresql/data
+      - /var/lib/aerolog/postgres:/var/lib/postgresql/data
       - ../init/postgres:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U aerolog"]
@@ -134,7 +134,7 @@ services:
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
-      - ./data/redis:/data
+      - /var/lib/aerolog/redis:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -159,7 +159,7 @@ services:
       - --kafka-addr=PLAINTEXT://0.0.0.0:9092
       - --advertise-kafka-addr=PLAINTEXT://redpanda:9092
     volumes:
-      - ./data/redpanda:/var/lib/redpanda/data
+      - /var/lib/aerolog/redpanda:/var/lib/redpanda/data
     healthcheck:
       test: ["CMD-SHELL", "rpk cluster health --api-urls=localhost:9644"]
       interval: 10s
@@ -196,7 +196,7 @@ services:
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
       CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
     volumes:
-      - ./data/clickhouse:/var/lib/clickhouse
+      - /var/lib/aerolog/clickhouse:/var/lib/clickhouse
       - ../init/clickhouse:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8123/ping"]
@@ -216,7 +216,7 @@ services:
       - --web.enable-lifecycle
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - ./data/prometheus:/prometheus
+      - /var/lib/aerolog/prometheus:/prometheus
     networks:
       - internal
     mem_limit: 220m
@@ -238,7 +238,7 @@ services:
     volumes:
       - ../grafana/provisioning:/etc/grafana/provisioning:ro
       - ../grafana/dashboards:/var/lib/grafana/dashboards:ro
-      - ./data/grafana:/var/lib/grafana
+      - /var/lib/aerolog/grafana:/var/lib/grafana
     networks:
       - internal
     mem_limit: 180m
