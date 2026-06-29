@@ -66,25 +66,7 @@ export function UsersPage() {
     enabled: !!projectId,
   });
 
-  const identities = useQuery({
-    queryKey: ["identities", projectId, selected?.user_id, selected?.anonymous_id],
-    queryFn: () =>
-      api.listIdentities(projectId!, {
-        user_id: selected?.user_id || undefined,
-        anonymous_id: selected?.user_id ? undefined : selected?.anonymous_id || undefined,
-        limit: 50,
-      }),
-    enabled: !!projectId && !!selected && (!!selected.user_id || !!selected.anonymous_id),
-  });
-
   const rows = users.data?.data || [];
-  const profileRows = useMemo(() => {
-    if (!selected) return [];
-    return Object.entries(selected.properties || {}).map(([key, value]) => ({
-      key,
-      value: compactValue(value),
-    }));
-  }, [selected]);
 
   useEffect(() => {
     if (!timelinePreset.distinctId || selected || !rows.length) return;
@@ -227,9 +209,6 @@ export function UsersPage() {
       <ProfileSheet
         projectId={projectId}
         selected={selected}
-        identities={identities.data?.data || []}
-        identityLoading={identities.isLoading}
-        profileRows={profileRows}
         timelinePreset={timelinePreset}
         onClose={() => {
           setSelected(null);
@@ -253,23 +232,38 @@ function MetricCard({ label, value, loading }: { label: string; value: number; l
   );
 }
 
-function ProfileSheet({
+export function ProfileSheet({
   projectId,
   selected,
-  identities,
-  identityLoading,
-  profileRows,
-  timelinePreset,
+  timelinePreset = {},
   onClose,
 }: {
   projectId?: number;
   selected: UserProfile | null;
-  identities: IdentityMapping[];
-  identityLoading: boolean;
-  profileRows: { key: string; value: string }[];
-  timelinePreset: { from?: number; to?: number; event?: string; distinctId?: string };
+  timelinePreset?: { from?: number; to?: number; event?: string; distinctId?: string };
   onClose: () => void;
 }) {
+  const identities = useQuery({
+    queryKey: ["identities", projectId, selected?.user_id, selected?.anonymous_id],
+    queryFn: () =>
+      api.listIdentities(projectId!, {
+        user_id: selected?.user_id || undefined,
+        anonymous_id: selected?.user_id ? undefined : selected?.anonymous_id || undefined,
+        limit: 50,
+      }),
+    enabled: !!projectId && !!selected && (!!selected.user_id || !!selected.anonymous_id),
+  });
+
+  const profileRows = useMemo(() => {
+    if (!selected) return [];
+    return Object.entries(selected.properties || {}).map(([key, value]) => ({
+      key,
+      value: compactValue(value),
+    }));
+  }, [selected]);
+
+  const identityList = identities.data?.data || [];
+  const identityLoading = identities.isLoading;
   const [from, setFrom] = useState<Dayjs>(() => dayjs().subtract(7, "day").startOf("day"));
   const [to, setTo] = useState<Dayjs>(() => dayjs().endOf("day"));
   const [eventFilter, setEventFilter] = useState("");
@@ -414,8 +408,8 @@ function ProfileSheet({
                           <TableRow>
                             <TableCell colSpan={3}><Skeleton className="h-8 w-full" /></TableCell>
                           </TableRow>
-                        ) : identities.length ? (
-                          identities.map((item) => (
+                        ) : identityList.length ? (
+                          identityList.map((item) => (
                             <TableRow key={item.id}>
                               <TableCell><code className="rounded bg-muted px-2 py-1 text-xs">{item.anonymous_id}</code></TableCell>
                               <TableCell><Badge variant="success">{item.user_id}</Badge></TableCell>

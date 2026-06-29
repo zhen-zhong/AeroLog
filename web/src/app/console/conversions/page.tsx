@@ -193,7 +193,7 @@ export default function ConversionsPage() {
         <div className="min-w-0 grid gap-5">
           <Card>
             <CardContent className="grid gap-4 pt-4 sm:pt-4">
-              <DateTimeRange value={range} onChange={setRange} />
+              <DateTimeRange value={range} onChange={setRange} stacked />
               <div className="grid gap-1.5">
                 <div className="text-sm font-medium">转化目标名称</div>
                 <Input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：购买转化" />

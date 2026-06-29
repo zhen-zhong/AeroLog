@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import dayjs, { Dayjs } from "dayjs";
 import {
@@ -25,6 +24,7 @@ import {
   DateTimeRange,
   EmptyAnalysis,
 } from "@/features/analytics/analytics-ui";
+import { ProfileSheet } from "@/features/users/users-page";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -37,7 +37,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { api, AnalyticsJob, QueryDimension, QueryFilter, QueryTemplate } from "@/lib/api";
+import { api, AnalyticsJob, QueryDimension, QueryFilter, QueryTemplate, UserProfile } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { useProjectStore } from "@/stores/project-store";
 
@@ -74,6 +74,7 @@ export default function QueryBuilderPage() {
   const [tplDesc, setTplDesc] = useState("");
   const [tplShared, setTplShared] = useState(false);
   const [shareLink, setShareLink] = useState<string>("");
+  const [profileUser, setProfileUser] = useState<UserProfile | null>(null);
   const queryClient = useQueryClient();
 
   useEffect(() => {
@@ -312,7 +313,7 @@ export default function QueryBuilderPage() {
         <div className="grid min-w-0 auto-rows-max content-start gap-5 self-start">
           <Card className="min-w-0 overflow-hidden">
             <CardContent className="grid gap-4 pt-4 sm:pt-4">
-              <DateTimeRange value={range} onChange={setRange} />
+              <DateTimeRange value={range} onChange={setRange} stacked />
               <div className="min-w-0">
                 <div className="mb-2 flex items-center justify-between gap-3">
                   <div className="text-sm font-medium">事件集合</div>
@@ -538,14 +539,21 @@ export default function QueryBuilderPage() {
                             {row.sample_users?.length ? (
                               <div className="flex max-w-44 flex-wrap gap-1">
                                 {row.sample_users.slice(0, 3).map((user) => (
-                                  <Link
+                                  <button
                                     key={user}
-                                    href={`/console/users?project_id=${projectId}&distinct_id=${encodeURIComponent(user)}&from=${tsRange.from}&to=${tsRange.to}`}
+                                    type="button"
+                                    onClick={() => setProfileUser({
+                                      distinct_id: user,
+                                      user_id: "",
+                                      anonymous_id: "",
+                                      properties: {},
+                                      updated_at: "",
+                                    })}
                                     className="max-w-full truncate rounded-md bg-secondary px-2 py-1 text-xs text-primary hover:bg-accent hover:text-accent-foreground"
                                     title="查看用户时间线"
                                   >
                                     {user}
-                                  </Link>
+                                  </button>
                                 ))}
                               </div>
                             ) : "-"}
@@ -581,6 +589,13 @@ export default function QueryBuilderPage() {
         </ChartPanel>
         </div>
       </div>
+
+      <ProfileSheet
+        projectId={projectId}
+        selected={profileUser}
+        timelinePreset={profileUser ? { distinctId: profileUser.distinct_id, from: tsRange.from, to: tsRange.to } : {}}
+        onClose={() => setProfileUser(null)}
+      />
     </div>
   );
 }
