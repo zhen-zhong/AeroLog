@@ -29,11 +29,23 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
         headers: authHeaders(init),
         cache: "no-store",
     });
-    if (!res.ok) {
-        const text = await res.text();
-        throw new Error(text || `HTTP ${res.status}`);
+    const text = await res.text();
+    let payload: unknown = null;
+    if (text) {
+        try {
+            payload = JSON.parse(text);
+        } catch {
+            payload = null;
+        }
     }
-    return res.json() as Promise<T>;
+    if (!res.ok) {
+        const message =
+            typeof payload === "object" && payload !== null && "message" in payload
+                ? String((payload as { message?: unknown }).message || "")
+                : "";
+        throw new Error(message || text || `HTTP ${res.status}`);
+    }
+    return payload as T;
 }
 
 // downloadCsv 触发浏览器下载，由后端返回 text/csv。
@@ -381,9 +393,13 @@ export interface AttributionBreakdownGroup {
     rows: AttributionRow[];
 }
 export interface ApiList<T> {
+    code: number;
+    message: string;
     data: T[];
 }
 export interface ApiOne<T> {
+    code: number;
+    message: string;
     data: T;
 }
 

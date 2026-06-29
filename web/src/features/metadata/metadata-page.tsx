@@ -35,6 +35,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 
 type MetadataView = "events" | "eventProps" | "userProps";
 
+function listData<T>(response?: { data?: T[] | null } | null): T[] {
+  return Array.isArray(response?.data) ? response.data : [];
+}
+
 export function MetadataPage() {
   const projectId = useProjectStore((s) => s.projectId);
   const [view, setView] = useState<MetadataView>("events");
@@ -82,19 +86,21 @@ export function MetadataPage() {
     enabled: !!projectId,
   });
 
+  const eventRows = useMemo(() => listData<EventDefinition>(events.data), [events.data]);
+  const eventPropertyRows = useMemo(() => listData<PropertyDefinition>(eventProps.data), [eventProps.data]);
+  const userPropertyRows = useMemo(() => listData<PropertyDefinition>(userProps.data), [userProps.data]);
   const currentData = useMemo(() => {
-    if (view === "events") return events.data?.data || [];
-    if (view === "eventProps") return eventProps.data?.data || [];
-    return userProps.data?.data || [];
-  }, [eventProps.data?.data, events.data?.data, userProps.data?.data, view]);
+    if (view === "events") return eventRows;
+    if (view === "eventProps") return eventPropertyRows;
+    return userPropertyRows;
+  }, [eventPropertyRows, eventRows, userPropertyRows, view]);
 
   const loading =
     view === "events" ? events.isLoading :
     view === "eventProps" ? eventProps.isLoading :
     userProps.isLoading;
 
-  const isPropertyView = view !== "events";
-  const propertyRows = isPropertyView ? (currentData as PropertyDefinition[]) : [];
+  const propertyRows = view === "eventProps" ? eventPropertyRows : view === "userProps" ? userPropertyRows : [];
   const selectedIds = Object.entries(selected).filter(([, v]) => v).map(([k]) => Number(k));
 
   const batch = useMutation({
@@ -161,9 +167,9 @@ export function MetadataPage() {
       />
 
       <div className="mb-5 grid gap-3 sm:grid-cols-3">
-        <MetricCard label="事件字典" value={events.data?.data.length || 0} loading={events.isLoading} />
-        <MetricCard label="事件属性" value={eventProps.data?.data.length || 0} loading={eventProps.isLoading} />
-        <MetricCard label="用户属性" value={userProps.data?.data.length || 0} loading={userProps.isLoading} />
+        <MetricCard label="事件字典" value={eventRows.length} loading={events.isLoading} />
+        <MetricCard label="事件属性" value={eventPropertyRows.length} loading={eventProps.isLoading} />
+        <MetricCard label="用户属性" value={userPropertyRows.length} loading={userProps.isLoading} />
       </div>
 
       {!projectId ? (
@@ -194,7 +200,7 @@ export function MetadataPage() {
                 onChange={(e) => setEventFilter(e.target.value)}
               >
                 <option value="">全部（含全局默认）</option>
-                {(events.data?.data || []).map((e) => (
+                {eventRows.map((e) => (
                   <option key={e.id} value={e.name}>{e.name}</option>
                 ))}
               </select>
@@ -452,6 +458,7 @@ function ChangeLogSheet({
     }),
     enabled: open && !!projectId && !!property,
   });
+  const logRows = useMemo(() => listData(log.data), [log.data]);
   return (
     <Sheet open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
       <SheetContent className="w-[480px] sm:max-w-md">
@@ -468,8 +475,8 @@ function ChangeLogSheet({
         <div className="mt-4 space-y-3 overflow-y-auto pr-1" style={{ maxHeight: "calc(100vh - 160px)" }}>
           {log.isLoading ? (
             <Skeleton className="h-24 w-full" />
-          ) : (log.data?.data || []).length ? (
-            (log.data?.data || []).map((entry) => (
+          ) : logRows.length ? (
+            logRows.map((entry) => (
               <div key={entry.id} className="rounded-md border bg-background p-3 text-xs">
                 <div className="mb-1 flex items-center justify-between gap-2 text-sm">
                   <Badge variant={entry.change_type === "delete" ? "danger" : "info"}>{entry.change_type}</Badge>

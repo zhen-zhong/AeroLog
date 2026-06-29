@@ -59,10 +59,14 @@ func (h *TrackHandler) Register(r *gin.Engine) {
 }
 
 type trackResp struct {
-	Code     int    `json:"code"`
-	Msg      string `json:"msg"`
-	Accepted int    `json:"accepted"`
-	Rejected int    `json:"rejected,omitempty"`
+	Data    trackRespData `json:"data"`
+	Message string        `json:"message"`
+	Code    int           `json:"code"`
+}
+
+type trackRespData struct {
+	Accepted int `json:"accepted"`
+	Rejected int `json:"rejected"`
 }
 
 func (h *TrackHandler) handle(c *gin.Context) {
@@ -80,7 +84,7 @@ func (h *TrackHandler) handle(c *gin.Context) {
 	if err != nil {
 		status = "unauthorized"
 		h.recordRejected(c.Request.Context(), nil, nil, token, "invalid token", nil, c)
-		c.JSON(http.StatusUnauthorized, trackResp{Code: 4001, Msg: "invalid token"})
+		c.JSON(http.StatusUnauthorized, trackResp{Code: 4001, Message: "invalid token"})
 		return
 	}
 
@@ -88,14 +92,14 @@ func (h *TrackHandler) handle(c *gin.Context) {
 	if err != nil {
 		status = "bad_request"
 		h.recordRejected(c.Request.Context(), &pid, nil, token, err.Error(), nil, c)
-		c.JSON(http.StatusBadRequest, trackResp{Code: 4004, Msg: err.Error()})
+		c.JSON(http.StatusBadRequest, trackResp{Code: 4004, Message: err.Error()})
 		return
 	}
 	requireSignature := h.RequireSignature || projectRequireSignature
 	if ok, reason := validSignature(c, secret, body, requireSignature); !ok {
 		status = "unauthorized"
 		h.recordRejected(c.Request.Context(), &pid, nil, token, reason, body, c)
-		c.JSON(http.StatusUnauthorized, trackResp{Code: 4002, Msg: reason})
+		c.JSON(http.StatusUnauthorized, trackResp{Code: 4002, Message: reason})
 		return
 	}
 
@@ -103,7 +107,7 @@ func (h *TrackHandler) handle(c *gin.Context) {
 	if err != nil {
 		status = "bad_request"
 		h.recordRejected(c.Request.Context(), &pid, nil, token, err.Error(), body, c)
-		c.JSON(http.StatusBadRequest, trackResp{Code: 4004, Msg: err.Error()})
+		c.JSON(http.StatusBadRequest, trackResp{Code: 4004, Message: err.Error()})
 		return
 	}
 
@@ -143,13 +147,13 @@ func (h *TrackHandler) handle(c *gin.Context) {
 		if err != nil {
 			mKafkaSendErrors.WithLabelValues().Inc()
 			status = "queue_unavailable"
-			c.JSON(http.StatusServiceUnavailable, trackResp{Code: 5001, Msg: "queue unavailable"})
+			c.JSON(http.StatusServiceUnavailable, trackResp{Code: 5001, Message: "queue unavailable"})
 			return
 		}
 		accepted++
 		mEventsReceived.WithLabelValues(projectLabel, "accepted").Inc()
 	}
-	c.JSON(http.StatusOK, trackResp{Code: 0, Msg: "ok", Accepted: accepted, Rejected: rejected})
+	c.JSON(http.StatusOK, trackResp{Code: 0, Message: "ok", Data: trackRespData{Accepted: accepted, Rejected: rejected}})
 }
 
 func validSignature(c *gin.Context, secret string, body []byte, required bool) (bool, string) {

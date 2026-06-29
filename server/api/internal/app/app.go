@@ -2,7 +2,9 @@
 package app
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
@@ -127,7 +129,7 @@ func newRouter(cfg *config.Config, pool *pgxpool.Pool, chConn driver.Conn) (*gin
 	r.GET("/healthz", func(c *gin.Context) { c.String(http.StatusOK, "ok") })
 	docs.Register(r)
 
-	v1 := r.Group("/v1")
+	v1 := r.Group("/v1", responseEnvelopeMiddleware())
 	auth := &handler.AuthHandler{PG: pool}
 	auth.RegisterPublic(v1)
 	analytics := &handler.AnalyticsHandler{PG: pool, CH: chConn}
@@ -144,6 +146,125 @@ func newRouter(cfg *config.Config, pool *pgxpool.Pool, chConn driver.Conn) (*gin
 	analytics.Register(projectScoped)
 	queryJobs.Register(projectScoped)
 	return r, queryJobs
+}
+
+type responseEnvelope struct {
+	Data    interface{} `json:"data"`
+	Message string      `json:"message"`
+	Code    int         `json:"code"`
+}
+
+type envelopeWriter struct {
+	gin.ResponseWriter
+	body bytes.Buffer
+}
+
+func (w *envelopeWriter) Write(data []byte) (int, error) {
+	return w.body.Write(data)
+}
+
+func (w *envelopeWriter) WriteString(s string) (int, error) {
+	return w.body.WriteString(s)
+}
+
+func responseEnvelopeMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if strings.HasSuffix(c.Request.URL.Path, "/download") {
+			c.Next()
+			return
+		}
+
+		writer := &envelopeWriter{ResponseWriter: c.Writer}
+		c.Writer = writer
+		c.Next()
+
+		status := writer.Status()
+		body := bytes.TrimSpace(writer.body.Bytes())
+		if len(body) == 0 {
+			writer.ResponseWriter.WriteHeader(status)
+			return
+		}
+
+		contentType := writer.Header().Get("Content-Type")
+		if !strings.Contains(contentType, "application/json") {
+			writer.ResponseWriter.WriteHeader(status)
+			_, _ = writer.ResponseWriter.Write(body)
+			return
+		}
+
+		payload, err := wrapAPIResponse(status, body)
+		if err != nil {
+			writer.ResponseWriter.WriteHeader(status)
+			_, _ = writer.ResponseWriter.Write(body)
+			return
+		}
+
+		writer.Header().Del("Content-Length")
+		writer.ResponseWriter.WriteHeader(status)
+		_, _ = writer.ResponseWriter.Write(payload)
+	}
+}
+
+func wrapAPIResponse(status int, body []byte) ([]byte, error) {
+	var decoded interface{}
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		return nil, err
+	}
+
+	success := status >= http.StatusOK && status < http.StatusBadRequest
+	env := responseEnvelope{
+		Code:    0,
+		Message: "ok",
+		Data:    nil,
+	}
+	if !success {
+		env.Code = status
+		env.Message = http.StatusText(status)
+	}
+
+	if obj, ok := decoded.(map[string]interface{}); ok {
+		if data, ok := obj["data"]; ok {
+			env.Data = data
+		} else if success {
+			env.Data = decoded
+		}
+		if message := responseMessage(obj); message != "" {
+			env.Message = message
+		}
+		if code := responseCode(obj); code != nil {
+			env.Code = *code
+		}
+	} else if success {
+		env.Data = decoded
+	}
+
+	return json.Marshal(env)
+}
+
+func responseMessage(obj map[string]interface{}) string {
+	for _, key := range []string{"message", "err", "error", "msg"} {
+		if value, ok := obj[key].(string); ok && strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func responseCode(obj map[string]interface{}) *int {
+	value, ok := obj["code"]
+	if !ok {
+		return nil
+	}
+	var code int
+	switch v := value.(type) {
+	case float64:
+		code = int(v)
+	case int:
+		code = v
+	default:
+		return nil
+	}
+	return &code
 }
 
 func metricsMiddleware() gin.HandlerFunc {
