@@ -231,7 +231,10 @@ export function UsersPage() {
         identityLoading={identities.isLoading}
         profileRows={profileRows}
         timelinePreset={timelinePreset}
-        onClose={() => setSelected(null)}
+        onClose={() => {
+          setSelected(null);
+          setTimelinePreset({});
+        }}
       />
     </AnimatedContent>
   );
@@ -317,23 +320,25 @@ function ProfileSheet({
                 <h3 className="mb-2 text-sm font-semibold">用户时间线</h3>
                 <Card>
                   <CardContent className="grid gap-3 pt-3 sm:pt-3">
-                    <div className="grid gap-2 sm:grid-cols-[1fr_1fr_160px]">
+                    <div className="grid gap-2 sm:grid-cols-2">
                       <Input
+                        className="min-w-0"
                         type="datetime-local"
                         value={toInputDateTime(from)}
                         onChange={(event) => setFrom(fromInputDateTime(event.target.value, from))}
                       />
                       <Input
+                        className="min-w-0"
                         type="datetime-local"
                         value={toInputDateTime(to)}
                         onChange={(event) => setTo(fromInputDateTime(event.target.value, to))}
                       />
-                      <Input
-                        value={eventFilter}
-                        onChange={(event) => setEventFilter(event.target.value)}
-                        placeholder="事件名过滤"
-                      />
                     </div>
+                    <Input
+                      value={eventFilter}
+                      onChange={(event) => setEventFilter(event.target.value)}
+                      placeholder="事件名过滤"
+                    />
                     {userEvents.isLoading ? (
                       Array.from({ length: 4 }).map((_, index) => <Skeleton key={index} className="h-20 w-full" />)
                     ) : sessionGroups.length ? (

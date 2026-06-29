@@ -7,6 +7,7 @@
 > - 2026-06-23：SDK 改造为 *SaaS 默认 + 私有化覆盖* 双模式，默认 `serverUrl = https://collector.aerolog.cc`。本部署当前仅能以「私有化」模式接入，必须在 SDK 初始化时显式传入 `serverUrl`。
 > - 2026-06-25：生产持久化数据已从仓库目录迁移到 `/var/lib/aerolog/*`，避免代码目录权限修复误伤数据库、队列和监控数据。
 > - 2026-06-25：新增独立工具集合入口，当前 `tools/moive` 通过 `/tools/moive/` 访问。
+> - 2026-06-29：API 与 Collector JSON 响应统一为 `data` / `message` / `code` 三段结构；Web SDK npm 包名为 `aerolog`。
 > - 域名与 HTTPS。`aerolog.cc` 不在工信部备案白名单内，本机器位于腾讯云北京节点，未备案时 `80/443` 会被拦截；详见§12。
 
 ## 1. 当前部署概览
@@ -96,7 +97,7 @@ AeroLog.init(
 
 ```ts
 // Web
-import { init } from "@aerolog/web";
+import { init } from "aerolog";
 const aero = init({
     token: "YOUR_PROJECT_TOKEN",
     serverUrl: "http://82.156.142.135/collect",
@@ -115,6 +116,34 @@ AeroLog.shared.setup(AeroConfig(
 - SDK 请求路径为 `${serverUrl}/v1/track?token=...`，与 Nginx 反代规则 `/collect/v1/*` 对齐。
 - 未完成备案之前不能用 HTTPS。**iOS App 默认拒绝明文 HTTP**，如需联调请临时在 `Info.plist` 中为该主机加一条 ATS 例外；Android 9+ 同理，需 `usesCleartextTraffic` 的网络安全配置。
 - **生产上线的正确做法是备案 / 换香港机（§12）**，不要以 IP 明文形式对外发 SDK。
+
+### 2.2 接口响应结构
+
+API 与 Collector 的 JSON 响应统一为三段：
+
+```json
+{
+  "data": {},
+  "message": "ok",
+  "code": 0
+}
+```
+
+约定：
+
+- `data`：业务数据。错误场景通常为 `null`；Collector 会返回 `{ "accepted": 0, "rejected": 0 }` 这类处理统计。
+- `message`：人类可读提示。成功默认为 `ok`；错误时放错误原因。
+- `code`：业务码。成功为 `0`；API 普通错误默认使用 HTTP 状态码；Collector 保留更细的采集错误码，例如无效 token 为 `4001`。
+
+示例：
+
+```json
+{"data":null,"message":"unauthorized","code":401}
+```
+
+```json
+{"data":{"accepted":0,"rejected":0},"message":"invalid token","code":4001}
+```
 
 ## 3. 首次部署步骤（已执行）
 
@@ -204,6 +233,23 @@ sudo docker compose ps
 ```
 
 构建 Go 服务时已固定使用 `goproxy.cn`，用于规避服务器无法稳定连接 `proxy.golang.org` 的问题。
+
+服务重建后如果 Nginx 短暂返回 `502 Bad Gateway`，通常是 Docker 容器 IP 变化后 Nginx upstream 还未重新解析。确认目标容器健康后执行：
+
+```bash
+sudo docker compose ps api collector web nginx
+sudo docker compose exec nginx nginx -t
+sudo docker compose exec nginx nginx -s reload
+```
+
+然后重新验证：
+
+```bash
+curl -i http://127.0.0.1/api/v1/auth/me
+curl -i -X POST 'http://127.0.0.1/collect/v1/track?token=invalid' \
+  -H 'Content-Type: application/json' \
+  --data '[]'
+```
 
 仅更新前端时可缩短为：
 

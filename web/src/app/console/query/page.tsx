@@ -51,6 +51,13 @@ type DraftFilter = {
 
 const DRAFT_STORAGE_KEY = "aerolog:query-builder:draft";
 
+function createFilterId() {
+  if (typeof globalThis.crypto?.randomUUID === "function") {
+    return globalThis.crypto.randomUUID();
+  }
+  return `filter_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
 export default function QueryBuilderPage() {
   const projectId = useProjectStore((s) => s.projectId);
   const [range, setRange] = useState<[Dayjs, Dayjs]>([
@@ -60,7 +67,7 @@ export default function QueryBuilderPage() {
   const [events, setEvents] = useState<string[]>([]);
   const [dimensions, setDimensions] = useState<QueryDimension[]>([{ type: "event", key: "event" }]);
   const [filters, setFilters] = useState<DraftFilter[]>([
-    { id: crypto.randomUUID(), event: "", property: "", op: "eq", value: "" },
+    { id: createFilterId(), event: "", property: "", op: "eq", value: "" },
   ]);
   const [draftReady, setDraftReady] = useState(false);
   const [tplName, setTplName] = useState("");
@@ -87,7 +94,7 @@ export default function QueryBuilderPage() {
       if (Array.isArray(draft.events)) setEvents(draft.events);
       if (Array.isArray(draft.dimensions) && draft.dimensions.length) setDimensions(draft.dimensions);
       if (Array.isArray(draft.filters) && draft.filters.length) {
-        setFilters(draft.filters.map((item) => ({ ...item, id: item.id || crypto.randomUUID() })));
+        setFilters(draft.filters.map((item) => ({ ...item, id: item.id || createFilterId() })));
       }
     } catch {
       // ignore broken local draft
@@ -240,13 +247,13 @@ export default function QueryBuilderPage() {
       setFilters(
         list.length
           ? list.map((it) => ({
-              id: crypto.randomUUID(),
+              id: createFilterId(),
               event: it.event || "",
               property: it.property || "",
               op: (it.op as DraftFilter["op"]) || "eq",
               value: typeof it.value === "string" ? it.value : "",
             }))
-          : [{ id: crypto.randomUUID(), event: "", property: "", op: "eq", value: "" }],
+          : [{ id: createFilterId(), event: "", property: "", op: "eq", value: "" }],
       );
     }
   }
@@ -338,7 +345,7 @@ export default function QueryBuilderPage() {
                   type="button"
                   size="sm"
                   variant="outline"
-                  onClick={() => setFilters((current) => [...current, { id: crypto.randomUUID(), event: "", property: "", op: "eq", value: "" }])}
+                  onClick={() => setFilters((current) => [...current, { id: createFilterId(), event: "", property: "", op: "eq", value: "" }])}
                 >
                   <Plus className="h-4 w-4" />
                   条件
@@ -440,7 +447,7 @@ export default function QueryBuilderPage() {
                   onClick={() => {
                     setEvents([]);
                     setDimensions([{ type: "event", key: "event" }]);
-                    setFilters([{ id: crypto.randomUUID(), event: "", property: "", op: "eq", value: "" }]);
+                    setFilters([{ id: createFilterId(), event: "", property: "", op: "eq", value: "" }]);
                     window.localStorage.removeItem(DRAFT_STORAGE_KEY);
                     query.reset();
                   }}
