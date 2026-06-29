@@ -1,5 +1,5 @@
 {
-  "name": "@aerolog/web",
+  "name": "aerolog",
   "version": "0.1.0",
   "description": "AeroLog Web SDK — 三端统一上报协议的浏览器端实现",
   "type": "module",

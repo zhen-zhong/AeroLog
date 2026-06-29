@@ -1,11 +1,11 @@
-# @aerolog/web
+# aerolog
 
 AeroLog Web SDK：浏览器端埋点采集，支持批量、压缩、IndexedDB 离线兜底与指数退避重传。
 
 ## 安装
 
 ```bash
-pnpm add @aerolog/web
+pnpm add aerolog
 ```
 
 ## 快速开始
@@ -13,7 +13,7 @@ pnpm add @aerolog/web
 ### 方式一：SaaS 接入（推荐）
 
 ```ts
-import { init } from "@aerolog/web";
+import { init } from "aerolog";
 
 const aero = init({
   token: "YOUR_PROJECT_TOKEN",
@@ -25,7 +25,7 @@ const aero = init({
 ### 方式二：私有化部署
 
 ```ts
-import { init } from "@aerolog/web";
+import { init } from "aerolog";
 
 const aero = init({
   token: "YOUR_PROJECT_TOKEN",
@@ -67,3 +67,8 @@ pnpm build
 ```
 
 输出 `dist/index.js`（ESM）、`dist/index.cjs`（CJS）、`dist/index.global.js`（IIFE，UMD 风格）。
+
+发新版
+npm version patch
+npm run build
+npm publish
