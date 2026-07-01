@@ -1,0 +1,24 @@
+name: aerolog-tools
+
+services:
+  movie:
+    build:
+      context: .
+      args:
+        VITE_BASE_PATH: /tools/movie/
+        VITE_CMS_API_BASE: /tools/movie/cms-api/api.php/provide/vod/
+    container_name: aerolog-tools-movie
+    restart: unless-stopped
+    networks:
+      aerolog_edge:
+      aerolog_internal:
+        aliases:
+          - movie
+          - moive
+    mem_limit: 96m
+
+networks:
+  aerolog_edge:
+    external: true
+  aerolog_internal:
+    external: true
