@@ -7,6 +7,7 @@
 .run/
 *.iml
 .qoder/repowiki/
+paper/
 
 # ===== Go =====
 server/**/bin/

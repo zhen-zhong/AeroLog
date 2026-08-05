@@ -17,6 +17,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -402,12 +403,21 @@ func (h *AuthHandler) createMemberAccount(c *gin.Context) {
 		}
 	}
 	var userID int64
+	var insertCompanyID any = companyID
+	if companyID == 0 {
+		insertCompanyID = nil
+	}
 	if err := tx.QueryRow(c, `
 		INSERT INTO users(email, name, password_hash, company_id, phone, job_title, role)
 		VALUES($1,$2,$3,$4,$5,$6,$7)
 		RETURNING id
-	`, email, name, hash, companyID, strings.TrimSpace(req.Phone), strings.TrimSpace(req.JobTitle), userRole).Scan(&userID); err != nil {
-		c.JSON(http.StatusConflict, gin.H{"err": "email already exists"})
+	`, email, name, hash, insertCompanyID, strings.TrimSpace(req.Phone), strings.TrimSpace(req.JobTitle), userRole).Scan(&userID); err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "users_email_key" {
+			c.JSON(http.StatusConflict, gin.H{"err": "email already exists"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
 		return
 	}
 	projectRole := normalizeRole(req.ProjectRole)
