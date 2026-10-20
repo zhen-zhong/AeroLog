@@ -1,5 +1,6 @@
 .git
 .run
+.qoder
 .DS_Store
 **/.DS_Store
 **/node_modules
@@ -7,3 +8,4 @@ web/.next
 web/.next-build
 deploy/data
 deploy/production/.env
+
