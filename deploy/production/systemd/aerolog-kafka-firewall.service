@@ -1,0 +1,14 @@
+[Unit]
+Description=Restrict the AeroLog external Kafka listener
+After=docker.service
+Wants=docker.service
+PartOf=docker.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/default/aerolog-kafka-firewall
+ExecStart=/usr/local/lib/aerolog/apply-kafka-firewall.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

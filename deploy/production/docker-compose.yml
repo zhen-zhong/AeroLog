@@ -138,8 +138,14 @@ services:
       - --overprovisioned
       - --node-id=0
       - --check=false
-      - --kafka-addr=PLAINTEXT://0.0.0.0:9092
-      - --advertise-kafka-addr=PLAINTEXT://redpanda:9092
+      # Keep the AeroLog pipeline on the Docker-only listener. The external
+      # listener is exclusively for Sensors Data's Kafka subscription.
+      - --kafka-addr=INTERNAL://0.0.0.0:9092,EXTERNAL://0.0.0.0:19092
+      - --advertise-kafka-addr=INTERNAL://redpanda:9092,EXTERNAL://${AEROLOG_KAFKA_EXTERNAL_ADVERTISED_ADDR:-kafka.example.com}:9092
+    ports:
+      # Bind IPv4 only. Access is restricted by the cloud security group and
+      # deploy/production/scripts/apply-kafka-firewall.sh on the host.
+      - "0.0.0.0:9092:19092"
     volumes:
       - /var/lib/aerolog/redpanda:/var/lib/redpanda/data
     healthcheck:

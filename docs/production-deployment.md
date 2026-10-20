@@ -19,7 +19,7 @@
 浏览器 / SDK
         │
         ▼
-      Nginx :80
+  外部反向代理（独立管理）
       ├── /              → Next.js Web（AeroLog）
       ├── /aerolg        → AeroLog 入口跳转
       ├── /aerolog       → AeroLog 入口跳转
@@ -39,14 +39,14 @@ Collector → Redpanda → Consumer → ClickHouse
 
 | 服务 | 作用 | 是否直接暴露公网 |
 |---|---|---|
-| Nginx | 唯一入口、反向代理 | 是，仅 `80` |
+| 外部反向代理 | 唯一入口、反向代理；不由本编排管理 | 是，由网关单独管理 |
 | Web | AeroLog 控制台与营销页面 | 否 |
 | API | 登录、项目、分析接口 | 否 |
 | Collector | SDK 埋点接收 | 否，通过 `/collect/` |
 | Consumer | 消费事件并写入 ClickHouse | 否 |
 | PostgreSQL | 用户、权限、项目等元数据 | 否 |
 | Redis | 缓存与辅助状态 | 否 |
-| Redpanda | Kafka 兼容消息队列 | 否 |
+| Redpanda | Kafka 兼容消息队列 | 默认否；神策订阅专用 `9092` 仅允许白名单来源 |
 | Redpanda Console | Topic、消费组查看工具 | 否，通过 `/queue/` 且需认证 |
 | ClickHouse | 事件明细与分析查询 | 否 |
 | Prometheus | API、Collector、Consumer 运行指标采集（保留 7 天） | 否 |
@@ -223,6 +223,7 @@ sudo docker compose logs -f web
 
 ```bash
 cd <deployment-root>
+git status --short
 git pull --ff-only
 
 cd deploy/production
@@ -231,14 +232,14 @@ sudo docker compose up -d --no-build
 sudo docker compose ps
 ```
 
+这是唯一的常规发布流程：**本地修改并提交推送 → 服务器 `git pull --ff-only` → 构建并启动服务**。`git status --short` 必须为空；不要用 `git reset`、`git checkout --` 或 `git clean` 覆盖服务器文件。外部反向代理由其独立配置和发布流程管理，不执行已移除的 `docker compose ... nginx` 命令。
+
 构建 Go 服务时已固定使用 `goproxy.cn`，用于规避服务器无法稳定连接 `proxy.golang.org` 的问题。
 
-服务重建后如果 Nginx 短暂返回 `502 Bad Gateway`，通常是 Docker 容器 IP 变化后 Nginx upstream 还未重新解析。确认目标容器健康后执行：
+服务重建后如果外部网关短暂返回 `502 Bad Gateway`，确认目标容器健康，并按网关自身的发布方式重新加载其配置：
 
 ```bash
-sudo docker compose ps api collector web nginx
-sudo docker compose exec nginx nginx -t
-sudo docker compose exec nginx nginx -s reload
+sudo docker compose ps api collector web
 ```
 
 然后重新验证：
@@ -279,6 +280,23 @@ sudo docker compose restart consumer
 ```
 
 不要使用 `docker compose down -v`，除非明确要删除所有数据库、队列与分析数据。
+
+### 6.1 神策 Kafka 订阅入口
+
+Redpanda 保留容器内 `redpanda:9092` 给 AeroLog 自身使用，并单独映射主机 IPv4 `9092` 给神策私有化服务器。外部 listener 的公告地址仅通过服务器私有 `.env` 的 `AEROLOG_KAFKA_EXTERNAL_ADVERTISED_ADDR` 配置，不能提交真实 IP 或域名。
+
+云安全组和主机防火墙都必须只放行神策服务器的单个 IPv4 地址。安装防火墙规则：
+
+```bash
+sudo install -D -m 755 deploy/production/scripts/apply-kafka-firewall.sh /usr/local/lib/aerolog/apply-kafka-firewall.sh
+sudo install -D -m 644 deploy/production/systemd/aerolog-kafka-firewall.service /etc/systemd/system/aerolog-kafka-firewall.service
+sudo sh -c 'printf "%s\n" "AEROLOG_SENSORS_KAFKA_SOURCE_CIDR=<sensors-server-ip>/32" > /etc/default/aerolog-kafka-firewall'
+sudo systemctl daemon-reload
+sudo systemctl enable --now aerolog-kafka-firewall.service
+sudo systemctl status aerolog-kafka-firewall.service --no-pager
+```
+
+从神策服务器验证时使用 `nc -vz -w 5 <aerolog-kafka-public-host> 9092`，再使用 `kcat -b '<aerolog-kafka-public-host>:9092' -L`。不得对其他公网地址开放该端口；本期也不启用离线导出、JDBC 或历史回补。
 
 ## 7. 数据与备份
 
@@ -386,10 +404,10 @@ sudo docker compose ps
 sudo docker compose logs --tail=100 redpanda clickhouse postgres api collector consumer
 ```
 
-若网页仍不可访问，优先确认 Nginx 与 Web：
+若网页仍不可访问，优先确认外部网关与 Web：
 
 ```bash
-sudo docker compose restart web nginx
+sudo docker compose restart web
 curl -I http://127.0.0.1/
 ```
 
@@ -403,7 +421,7 @@ sudo docker compose restart collector consumer
 
 部署要求：
 
-- 仅由反向代理暴露 `80/443`；数据库、队列和监控服务保持在私有网络。
+- 仅由反向代理暴露 `80/443`；数据库、监控服务保持在私有网络。神策实时订阅例外：Kafka `9092` 仅对批准的源 IP 开放，并受云安全组和主机防火墙双重限制。
 - 在 `.env` 中定义 `AEROLOG_PUBLIC_HOST`，并在 DNS 与 TLS 证书中配置同一个域名。
 - Nginx 默认 `server_name _;`，不会将某个部署域名写入仓库。
 - `/aerolog` 用作控制台快捷入口；`/tools/` 用作工具集入口；`/tools/movie/` 访问 movie 工具。

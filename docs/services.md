@@ -1,6 +1,6 @@
 # AeroLog 运行时服务说明
 
-本文从**容器视角**梳理 AeroLog 在生产环境（`<deployment-root>/deploy/production/docker-compose.yml`）启动的全部 12 个容器及其角色、依赖、排查路径。
+本文从**容器视角**梳理 AeroLog 在生产环境（`<deployment-root>/deploy/production/docker-compose.yml`）启动的全部 11 个容器及其角色、依赖、排查路径。外部反向代理独立管理，不属于该编排。
 
 > 与 [`architecture.md`](./architecture.md) 互补：`architecture.md` 描述设计架构与模块边界；本文聚焦"线上跑着的具体容器是什么、出问题去哪看"。
 
@@ -182,7 +182,7 @@ curl -I http://127.0.0.1/queue/      # 期望 401（未认证）
 
 > 详见 [`production-deployment.md`](./production-deployment.md) §1–§2。
 
-- 唯一对外端口：`80`（Nginx）
+- 常规对外入口由独立反向代理管理。神策实时订阅专用 `9092` 仅对云安全组和主机防火墙白名单中的源 IP 开放。
 - 内网容器互相通过 Docker 网络 `aerolog-net` 用容器名互访（如 `postgres:5432`、`redpanda:9092`）
 - Prometheus / Grafana / 数据库等**不**在公网暴露，仅 `127.0.0.1` 本地可访问
 
