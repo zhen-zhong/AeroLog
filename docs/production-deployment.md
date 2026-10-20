@@ -1,24 +1,17 @@
 # AeroLog 生产部署与维护手册
 
-本文记录 2026-06-23 在 Ubuntu 服务器上的首次部署方案、已验证结果，以及后续更新和故障处理方式。
+本文提供可复用的生产部署模板与故障处理方式。不记录任何具体主机、账号、域名或供应商信息。
 
 > **最近更新**
-> - 2026-06-23：首次部署完成，包含 Prometheus + Grafana 监控栈。
-> - 2026-06-23：SDK 改造为 *SaaS 默认 + 私有化覆盖* 双模式，默认 `serverUrl = https://collector.aerolog.cc`。本部署当前仅能以「私有化」模式接入，必须在 SDK 初始化时显式传入 `serverUrl`。
-> - 2026-06-25：生产持久化数据已从仓库目录迁移到 `/var/lib/aerolog/*`，避免代码目录权限修复误伤数据库、队列和监控数据。
-> - 2026-06-25：新增独立工具集合入口，当前 `tools/moive` 通过 `/tools/movie/` 访问；历史 `/tools/moive/` 会 301 到新路径。
-> - 2026-06-29：API 与 Collector JSON 响应统一为 `data` / `message` / `code` 三段结构；Web SDK npm 包名为 `aerolog`。
-> - 2026-07-01：`liyang.live` / `www.liyang.live` 已通过 Cloudflare 指向本部署；公网 HTTPS 可访问，源站仍由 Docker Nginx 监听 `80`。
+> **使用前**：在私有 `.env` 填入实际值；不要将主机、域名、账号、密码或证书信息提交到仓库。
 
 ## 1. 当前部署概览
 
-服务器：`ubuntu@82.156.142.135`
+服务器：`<deploy-user>@<server-host>`
 
-应用目录：`/opt/aerolog`
+应用目录：`<deployment-root>`
 
-生产编排目录：`/opt/aerolog/deploy/production`
-
-代码来源：GitHub `main` 分支。
+生产编排目录：`<deployment-root>/deploy/production`
 
 当前部署的是核心分析链路、Redpanda Console 与监控栈：
 
@@ -64,31 +57,31 @@ MinIO 当前未部署；Prometheus 指标保留期设为 7 天，以控制小规
 
 ## 2. 访问地址与账户
 
-- AeroLog：首页 `https://liyang.live/`，快捷入口 `https://liyang.live/aerolg`
-- API：`https://liyang.live/api/v1/`
-- 埋点入口：`https://liyang.live/collect/v1/track`
-- Redpanda Console：`https://liyang.live/queue/`
-- Grafana 监控面板：`https://liyang.live/monitor/`
-- 工具集合索引：`https://liyang.live/tools/`
-- 工具集合 / movie：`https://liyang.live/tools/movie/`
+- AeroLog：首页 `https://analytics.example.com/`，快捷入口 `https://analytics.example.com/aerolog`
+- API：`https://analytics.example.com/api/v1/`
+- 埋点入口：`https://analytics.example.com/collect/v1/track`
+- Redpanda Console：`https://analytics.example.com/queue/`
+- Grafana 监控面板：`https://analytics.example.com/monitor/`
+- 工具集合索引：`https://analytics.example.com/tools/`
+- 工具集合 / movie：`https://analytics.example.com/tools/movie/`
 
 `/queue/` 与 `/monitor/` 需要 Nginx Basic Auth；`/tools/` 与 `/tools/movie/` 不接入 AeroLog 登录态，也不配置 Basic Auth。
 
-Grafana 先经过 Nginx Basic Auth，再显示 Grafana 自身登录页；两层认证均使用已配置的管理员账号。当前 Grafana 根地址固定为服务器 IP；接入域名与 HTTPS 时应同步修改 `GF_SERVER_DOMAIN` 和 `GF_SERVER_ROOT_URL`。不要直接开放 Grafana 的 `3000` 端口。
+Grafana 先经过 Nginx Basic Auth，再显示 Grafana 自身登录页；两层认证均使用已配置的管理员账号。通过 `.env` 配置 `GF_SERVER_DOMAIN` 与 `GF_SERVER_ROOT_URL`。不要直接开放 Grafana 的 `3000` 端口。
 
 首次启动已创建两个平台管理员账户。账户邮箱和初始密码只保存在服务器的受限环境文件中，不要在代码、Issue、文档或截图中记录明文密码。
 
 环境文件位置：
 
 ```bash
-sudo ls -l /opt/aerolog/deploy/production/.env
+sudo ls -l <deployment-root>/deploy/production/.env
 ```
 
 它应始终保持 `600` 权限、由 `root` 拥有。该文件包含数据库密码、ClickHouse 密码、JWT 密钥和首次管理员初始化参数。
 
 ### 2.1 SDK 接入到当前部署
 
-SDK 默认上报到官方 SaaS（`https://collector.aerolog.cc`）。接入当前服务器这套部署时，**必须显式覆盖 `serverUrl`**，指向 Nginx 的 `/collect` 路由：
+生产环境必须显式覆盖 SDK 的 `serverUrl`，指向 Nginx 的 `/collect` 路由：
 
 ```kotlin
 // Android
@@ -96,7 +89,7 @@ AeroLog.init(
     application,
     AeroConfig(
         token = "YOUR_PROJECT_TOKEN",
-        serverUrl = "https://liyang.live/collect",
+        serverUrl = "https://analytics.example.com/collect",
     ),
 )
 ```
@@ -106,7 +99,7 @@ AeroLog.init(
 import { init } from "aerolog";
 const aero = init({
     token: "YOUR_PROJECT_TOKEN",
-    serverUrl: "https://liyang.live/collect",
+    serverUrl: "https://analytics.example.com/collect",
 });
 ```
 
@@ -114,14 +107,14 @@ const aero = init({
 // iOS
 AeroLog.shared.setup(AeroConfig(
     token: "YOUR_PROJECT_TOKEN",
-    serverUrl: "https://liyang.live/collect"
+    serverUrl: "https://analytics.example.com/collect"
 ))
 ```
 
 说明：
 - SDK 请求路径为 `${serverUrl}/v1/track?token=...`，与 Nginx 反代规则 `/collect/v1/*` 对齐。
-- 公网当前通过 Cloudflare 提供 HTTPS；源站容器仍监听 HTTP `80`。
-- 如果绕过 Cloudflare 直接使用源站 IP 调试，则属于明文 HTTP。iOS App 默认拒绝明文 HTTP，如需联调请临时在 `Info.plist` 中为该主机加一条 ATS 例外；Android 9+ 同理，需 `usesCleartextTraffic` 的网络安全配置。
+- 推荐通过 HTTPS 反向代理访问；源站容器可仅监听 HTTP `80`。
+- 避免直接使用源站 IP 调试。iOS App 默认拒绝明文 HTTP；Android 9+ 也需明确的网络安全配置。
 
 ### 2.2 接口响应结构
 
@@ -155,7 +148,7 @@ API 与 Collector 的 JSON 响应统一为三段：
 
 1. 清空旧 Docker 服务、镜像和卷。
 2. 使用 SSH 密钥连接服务器。
-3. 从 GitHub 克隆项目到 `/opt/aerolog`。
+3. 从 Git 仓库克隆项目到 `<deployment-root>`。
 4. 创建仅 root 可读的 `.env` 和 `queue.htpasswd`。
 5. 构建四个应用镜像：Web、API、Collector、Consumer。
 6. 启动 Docker Compose 核心栈。
@@ -175,7 +168,7 @@ deploy/production/nginx.conf
 登录服务器后执行：
 
 ```bash
-cd /opt/aerolog/deploy/production
+cd <deployment-root>/deploy/production
 sudo docker compose ps
 sudo docker stats --no-stream
 free -h
@@ -201,7 +194,7 @@ curl -I http://127.0.0.1/queue/
 ## 5. 查看日志
 
 ```bash
-cd /opt/aerolog/deploy/production
+cd <deployment-root>/deploy/production
 
 # 查看全部服务最后 200 行日志
 sudo docker compose logs --tail=200
@@ -229,7 +222,7 @@ sudo docker compose logs -f web
 在确认 GitHub `main` 已包含待发布改动后执行：
 
 ```bash
-cd /opt/aerolog
+cd <deployment-root>
 git pull --ff-only
 
 cd deploy/production
@@ -260,7 +253,7 @@ curl -i -X POST 'http://127.0.0.1/collect/v1/track?token=invalid' \
 仅更新前端时可缩短为：
 
 ```bash
-cd /opt/aerolog/deploy/production
+cd <deployment-root>/deploy/production
 sudo docker compose build web
 sudo docker compose up -d --no-deps --force-recreate web
 ```
@@ -268,11 +261,11 @@ sudo docker compose up -d --no-deps --force-recreate web
 仅更新工具集合时：
 
 ```bash
-cd /opt/aerolog/tools/moive
+cd <deployment-root>/tools/moive
 sudo docker compose build
 sudo docker compose up -d --remove-orphans
 
-cd /opt/aerolog/deploy/production
+cd <deployment-root>/deploy/production
 sudo docker compose exec nginx nginx -t
 sudo docker compose exec nginx nginx -s reload
 ```
@@ -292,38 +285,38 @@ sudo docker compose restart consumer
 持久化数据位于：
 
 ```text
-/var/lib/aerolog/postgres
-/var/lib/aerolog/redis
-/var/lib/aerolog/redpanda
-/var/lib/aerolog/clickhouse
-/var/lib/aerolog/prometheus
-/var/lib/aerolog/grafana
+<data-root>/postgres
+<data-root>/redis
+<data-root>/redpanda
+<data-root>/clickhouse
+<data-root>/prometheus
+<data-root>/grafana
 ```
 
-`/opt/aerolog/deploy/production/data` 仅保留为历史迁移备份，不再作为当前生产挂载源。新的挂载路径写在 `deploy/production/docker-compose.yml` 中，目的是让代码仓库与数据库、队列、监控数据解耦。
+将数据目录与代码仓库解耦；具体挂载路径由私有部署配置决定。
 
-不要对 `/opt/aerolog` 执行递归属主修复后再覆盖生产数据。尤其禁止用下面这种命令作为常规维护动作：
+不要对 `<deployment-root>` 执行递归属主修复后再覆盖生产数据。尤其禁止用下面这种命令作为常规维护动作：
 
 ```bash
-sudo chown -R ubuntu:ubuntu /opt/aerolog
+sudo chown -R <deploy-user>:<deploy-group> <deployment-root>
 ```
 
 如果必须修复代码目录属主，只处理代码和配置文件，并排除生产数据目录：
 
 ```bash
-sudo find /opt/aerolog \
-  -path /opt/aerolog/deploy/production/data -prune \
-  -o -exec chown ubuntu:ubuntu {} +
+sudo find <deployment-root> \
+  -path <data-root> -prune \
+  -o -exec chown <deploy-user>:<deploy-group> {} +
 ```
 
 当前生产数据目录的推荐属主：
 
 | 目录 | 容器用户 | 修复命令 |
 |---|---|---|
-| `/var/lib/aerolog/postgres` | `70:70` | `sudo chown -R 70:70 /var/lib/aerolog/postgres` |
-| `/var/lib/aerolog/redpanda` | `101:101` | `sudo chown -R 101:101 /var/lib/aerolog/redpanda` |
-| `/var/lib/aerolog/grafana` | `472:0` | `sudo chown -R 472:0 /var/lib/aerolog/grafana` |
-| `/var/lib/aerolog/prometheus` | `65534:65534` | `sudo chown -R 65534:65534 /var/lib/aerolog/prometheus` |
+| `<data-root>/postgres` | `70:70` | `sudo chown -R 70:70 <data-root>/postgres` |
+| `<data-root>/redpanda` | `101:101` | `sudo chown -R 101:101 <data-root>/redpanda` |
+| `<data-root>/grafana` | `472:0` | `sudo chown -R 472:0 <data-root>/grafana` |
+| `<data-root>/prometheus` | `65534:65534` | `sudo chown -R 65534:65534 <data-root>/prometheus` |
 
 Redis、ClickHouse 当前可沿用迁移后的目录权限；如出现 `permission denied`，先查看对应容器日志和挂载目录属主，再按镜像内运行用户修复。
 
@@ -331,7 +324,7 @@ Redis、ClickHouse 当前可沿用迁移后的目录权限；如出现 `permissi
 
 ```bash
 sudo mkdir -p /var/backups/aerolog
-sudo sh -c 'cd /opt/aerolog/deploy/production && \
+sudo sh -c 'cd <deployment-root>/deploy/production && \
   set -a && . ./.env && set +a && \
   docker compose exec -T postgres pg_dump -U aerolog aerolog \
   > /var/backups/aerolog/postgres-$(date +%F).sql'
@@ -354,8 +347,8 @@ ClickHouse 与 Redpanda 保存事件数据，数据量增长较快。生产环�
 1. Redpanda 的宿主机数据目录需要可由容器用户写入。首次创建目录后如出现 `Permission denied`，执行：
 
    ```bash
-   sudo chown -R 101:101 /var/lib/aerolog/redpanda
-   sudo rm -f /var/lib/aerolog/redpanda/pid.lock
+   sudo chown -R 101:101 <data-root>/redpanda
+   sudo rm -f <data-root>/redpanda/pid.lock
    sudo docker compose restart redpanda
    ```
 
@@ -366,28 +359,28 @@ ClickHouse 与 Redpanda 保存事件数据，数据量增长较快。生产环�
 4. Redpanda Console 的 `/queue/` 已有 Basic Auth；不要暴露 `9092`、`9644`、`8088` 等消息队列原生管理端口。认证文件 `queue.htpasswd` 需保持为 `root:101`、权限 `640`，使 Nginx 工作进程能够读取密码哈希但普通用户无法读取：
 
    ```bash
-   sudo chown root:101 /opt/aerolog/deploy/production/queue.htpasswd
-   sudo chmod 640 /opt/aerolog/deploy/production/queue.htpasswd
-   sudo docker compose -f /opt/aerolog/deploy/production/docker-compose.yml exec -T nginx nginx -s reload
+   sudo chown root:101 <deployment-root>/deploy/production/queue.htpasswd
+   sudo chmod 640 <deployment-root>/deploy/production/queue.htpasswd
+   sudo docker compose -f <deployment-root>/deploy/production/docker-compose.yml exec -T nginx nginx -s reload
    ```
 
 5. 归因分析中 CTE 的 `dim` 参数顺序已修正并有回归测试。每次发布前建议至少运行：
 
    ```bash
-   cd /opt/aerolog/server/api
+   cd <deployment-root>/server/api
    go test ./...
    ```
 
-6. SDK 默认 `serverUrl = https://collector.aerolog.cc`（SaaS 官方入口）。接入当前服务器部署必须显式覆盖 `serverUrl` 为 `https://liyang.live/collect`，详见§2.1。
+6. SDK 必须显式覆盖 `serverUrl` 为私有部署的 `https://<public-host>/collect`，详见§2.1。
 
-7. `tools/moive` 是独立工具项目，源码位于 `/opt/aerolog/tools/moive`，使用自己的 `docker-compose.yml` 构建并接入 `aerolog_internal` / `aerolog_edge` 网络。外层 Nginx 通过 Docker 内部 DNS `aerolog-tools-movie` 转发 `/tools/movie/`，该名字不是公网域名。`/tools/` 是公开工具索引，工具入口不需要 AeroLog 登录；历史 `/tools/moive/` 仅保留跳转。
+7. `tools/moive` 是独立工具项目，源码位于 `<deployment-root>/tools/moive`，使用自己的 `docker-compose.yml` 构建并接入内部网络。外层 Nginx 通过 Docker 内部 DNS 转发 `/tools/movie/`；`/tools/` 是公开工具索引，工具入口不需要 AeroLog 登录；历史 `/tools/moive/` 仅保留跳转。
 
 ## 10. 紧急恢复顺序
 
 当服务整体异常时，按以下顺序恢复：
 
 ```bash
-cd /opt/aerolog/deploy/production
+cd <deployment-root>/deploy/production
 sudo docker compose up -d --no-build
 sudo docker compose ps
 sudo docker compose logs --tail=100 redpanda clickhouse postgres api collector consumer
@@ -408,26 +401,25 @@ sudo docker compose restart collector consumer
 
 ## 11. 域名与 HTTPS 路线
 
-当前状态：
+部署要求：
 
-- 主机位于**腾讯云北京节点**，源站对外仅开放 Docker Nginx 的 `80`。
-- `liyang.live` 与 `www.liyang.live` 当前由 Cloudflare 代理到源站，公网访问 `https://liyang.live/` 与 `https://www.liyang.live/` 返回 AeroLog 首页。
-- Nginx `server_name` 已包含 `liyang.live www.liyang.live _`。
-- `/aerolg` 和 `/aerolog` 用作 AeroLog 快捷入口；`/tools/` 用作工具集入口；`/tools/movie/` 访问 movie 工具。
-- `aerolog.cc` 属于 ccTLD，**不在工信部备案白名单内**，无法完成备案。
+- 仅由反向代理暴露 `80/443`；数据库、队列和监控服务保持在私有网络。
+- 在 `.env` 中定义 `AEROLOG_PUBLIC_HOST`，并在 DNS 与 TLS 证书中配置同一个域名。
+- Nginx 默认 `server_name _;`，不会将某个部署域名写入仓库。
+- `/aerolog` 用作控制台快捷入口；`/tools/` 用作工具集入口；`/tools/movie/` 访问 movie 工具。
 
 可选路径：
 
 | 方案 | 描述 | 优劣势 |
 |---|---|---|
-| **A. 继续使用 Cloudflare 代理 `liyang.live`** | DNS 维持 Cloudflare 代理，源站只监听 `80`。 | 当前已可用；源站与 Cloudflare 之间仍是 HTTP。 |
-| **B. 在源站配置正式 HTTPS** | 在 Docker Nginx 挂载证书，开放 `443`，Cloudflare 可改 Full/Strict。 | 链路更完整；需要证书续期和 Nginx 配置更新。 |
-| **C. 迁移到香港 / 海外轻量服务器** | 香港机位免备案，域名可直接解析到源站并开启 HTTPS。 | 规避国内备案限制；需做数据迁移。 |
+| **A. CDN 或反向代理终止 TLS** | DNS 指向代理层，源站只监听私网或 `80`。 | 易管理；需正确配置回源安全。 |
+| **B. 源站配置 TLS** | 在 Docker Nginx 挂载证书并开放 `443`。 | 链路完整；需维护证书续期。 |
+| **C. 私网接入** | 通过 VPN、零信任网络或内网入口访问。 | 攻击面小；需要额外网络配置。 |
 
 记录以供后续决策。一旦选定路线，需同步调整：
 
 1. **Nginx**：`server_name`、路径转发、工具入口和 Basic Auth realm。
 2. **Grafana**：`GF_SERVER_DOMAIN` / `GF_SERVER_ROOT_URL`。
-3. **SDK 默认值**：全局搜索 `collector.aerolog.cc` 替换为真实公网域名。
+3. **SDK 接入地址**：在应用配置中显式填写真实公网域名，不要提交到仓库。
 4. **安全组 / 防火墙**：仅开放 `80/443`，关闭不必要的原生端口。
-5. **HTTPS 证书**：推荐 Let's Encrypt × acme.sh，挂载到 Nginx 容器；或接入腾讯云免费证书。
+5. **HTTPS 证书**：使用受信任的证书签发与自动续期方案，并以挂载或密钥管理服务注入 Nginx。

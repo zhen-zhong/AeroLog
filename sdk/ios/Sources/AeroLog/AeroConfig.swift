@@ -2,7 +2,7 @@ import Foundation
 
 public struct AeroConfig {
     /// AeroLog SaaS 官方 Collector 入口；私有化客户请覆盖 `serverUrl`。
-    public static let defaultServerUrl = "https://collector.aerolog.cc"
+    public static let defaultServerUrl = "https://collector.example.com"
 
     public let serverUrl: String
     public let token: String

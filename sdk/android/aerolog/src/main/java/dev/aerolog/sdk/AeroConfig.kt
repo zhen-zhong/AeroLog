@@ -43,6 +43,6 @@ data class AeroConfig(
 ) {
     companion object {
         /** AeroLog SaaS 官方 Collector 入口；私有化客户请覆盖 [serverUrl]。 */
-        const val DEFAULT_SERVER_URL: String = "https://collector.aerolog.cc"
+        const val DEFAULT_SERVER_URL: String = "https://collector.example.com"
     }
 }

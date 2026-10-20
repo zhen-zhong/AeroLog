@@ -48,7 +48,7 @@ npm run preview
 在 AeroLog 生产环境中，本项目目录仍为 `tools/moive`，但公网访问路径统一为：
 
 ```text
-https://liyang.live/tools/movie/
+https://analytics.example.com/tools/movie/
 ```
 
 构建时需要使用 `VITE_BASE_PATH=/tools/movie/`，资源站代理路径为 `/tools/movie/cms-api/api.php/provide/vod/`。历史 `/tools/moive/` 由外层 Nginx 301 跳转到新路径。

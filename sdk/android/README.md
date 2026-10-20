@@ -90,7 +90,7 @@ class App : Application() {
 }
 ```
 
-默认将上报到 AeroLog 官方 SaaS Collector：`https://collector.aerolog.cc`。
+示例默认上报地址：`https://collector.example.com`。生产环境请显式配置自有采集地址。
 
 ### 方式二：私有化部署 / 本地联调
 

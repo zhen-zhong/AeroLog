@@ -25,7 +25,7 @@ export interface AeroEvent {
 }
 
 /** AeroLog SaaS 官方 Collector 入口；私有化客户请覆盖 [AeroLogConfig.serverUrl]。 */
-export const DEFAULT_SERVER_URL = "https://collector.aerolog.cc";
+export const DEFAULT_SERVER_URL = "https://collector.example.com";
 
 export interface AeroLogConfig {
   /** 项目 token (AppKey) */

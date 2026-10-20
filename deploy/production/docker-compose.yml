@@ -227,11 +227,11 @@ services:
     depends_on:
       - prometheus
     environment:
-      GF_SECURITY_ADMIN_USER: 17638732656@163.com
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin@example.com}
       GF_SECURITY_ADMIN_PASSWORD: ${AEROLOG_BOOTSTRAP_ADMIN_PASSWORD}
       GF_USERS_ALLOW_SIGN_UP: "false"
-      GF_SERVER_DOMAIN: 82.156.142.135
-      GF_SERVER_ROOT_URL: http://82.156.142.135/monitor/
+      GF_SERVER_DOMAIN: ${AEROLOG_PUBLIC_HOST:-analytics.example.com}
+      GF_SERVER_ROOT_URL: https://${AEROLOG_PUBLIC_HOST:-analytics.example.com}/monitor/
       GF_SERVER_SERVE_FROM_SUB_PATH: "true"
       GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
       GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"

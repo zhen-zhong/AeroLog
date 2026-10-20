@@ -1,6 +1,6 @@
 # AeroLog 运行时服务说明
 
-本文从**容器视角**梳理 AeroLog 在生产环境（`/opt/aerolog/deploy/production/docker-compose.yml`）启动的全部 12 个容器及其角色、依赖、排查路径。
+本文从**容器视角**梳理 AeroLog 在生产环境（`<deployment-root>/deploy/production/docker-compose.yml`）启动的全部 12 个容器及其角色、依赖、排查路径。
 
 > 与 [`architecture.md`](./architecture.md) 互补：`architecture.md` 描述设计架构与模块边界；本文聚焦"线上跑着的具体容器是什么、出问题去哪看"。
 
@@ -77,7 +77,7 @@
 持久化目录：
 
 ```
-/opt/aerolog/deploy/production/data/{postgres,redis,clickhouse}
+<data-root>/{postgres,redis,clickhouse}
 ```
 
 ### 2.4 消息队列层
@@ -152,7 +152,7 @@ sudo docker stats --no-stream
 通用日志命令：
 
 ```bash
-cd /opt/aerolog/deploy/production
+cd <deployment-root>/deploy/production
 sudo docker compose logs -f <服务名> --tail=100
 ```
 
@@ -188,7 +188,7 @@ curl -I http://127.0.0.1/queue/      # 期望 401（未认证）
 
 ## 8. 与 SDK 的对接关系
 
-SDK 默认上报到 SaaS 官方入口 `https://collector.aerolog.cc`；接入本部署需在 SDK 初始化时显式覆盖 `serverUrl` 为 `http://82.156.142.135/collect`（未上 HTTPS 前）。
+SDK 应在初始化时显式配置私有部署地址，例如 `https://analytics.example.com/collect`。
 
 请求路径：`${serverUrl}/v1/track?token=...` → Nginx `/collect/v1/*` → `aerolog-collector-1`。
 

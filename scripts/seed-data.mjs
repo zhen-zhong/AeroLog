@@ -191,7 +191,7 @@ function buildEvents(users) {
     const logged = rand() > 0.18;
 
     events.push(track(user, device, "$AppStart", signupTime - 90_000, { entry_page: pick(pages) }, false));
-    events.push(track(user, device, "$pageview", signupTime - 60_000, { page_url: `https://demo.aerolog.dev${pick(pages)}`, page_title: "AeroLog Demo" }, false));
+    events.push(track(user, device, "$pageview", signupTime - 60_000, { page_url: `https://demo.example.com${pick(pages)}`, page_title: "AeroLog Demo" }, false));
     events.push(track(user, device, "$SignUp", signupTime, { signup_method: pick(["email", "wechat", "sso"]), "$anonymous_id": user.anonymousId }, true));
     events.push(profile(user, device, signupTime + 1000));
 
@@ -201,7 +201,7 @@ function buildEvents(users) {
       const baseTime = eventTime(day);
       const currentLogged = logged || day <= user.signupDaysAgo;
       events.push(track(user, device, "$pageview", baseTime, {
-        page_url: `https://demo.aerolog.dev${pick(pages)}`,
+        page_url: `https://demo.example.com${pick(pages)}`,
         page_title: pick(["首页", "价格页", "文档", "控制台", "活动页"]),
       }, currentLogged));
       events.push(track(user, device, "search", baseTime + 12_000, {

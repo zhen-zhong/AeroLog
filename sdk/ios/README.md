@@ -27,7 +27,7 @@ struct App: App {
 }
 ```
 
-默认上报到 `https://collector.aerolog.cc`。
+示例默认上报地址：`https://collector.example.com`。生产环境请显式配置自有采集地址。
 
 ### 方式二：私有化部署
 

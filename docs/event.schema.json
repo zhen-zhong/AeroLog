@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://aerolog.dev/schemas/event.schema.json",
+  "$id": "https://example.com/schemas/event.schema.json",
   "title": "AeroLog Event",
   "description": "三端 SDK 上报至 Collector 的统一事件结构",
   "type": "object",

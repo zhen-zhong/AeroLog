@@ -17,7 +17,7 @@ class MyApp : Application() {
   override fun onCreate() {
     super.onCreate()
 
-    // SaaS：默认上报到 https://collector.aerolog.cc
+    // 示例默认地址：https://collector.example.com
     AeroLog.init(
       this,
       AeroConfig(token = "YOUR_PROJECT_TOKEN")
@@ -46,7 +46,7 @@ class MyApp : Application() {
 // 或传统 SPA 的 src/main.ts / src/index.ts
 import { init } from "@aerolog/web";
 
-// SaaS：默认上报到 https://collector.aerolog.cc
+// 示例默认地址：https://collector.example.com
 export const aero = init({
   token: "YOUR_PROJECT_TOKEN",
 });
@@ -74,7 +74,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
 
-    // SaaS：默认上报到 https://collector.aerolog.cc
+    // 示例默认地址：https://collector.example.com
     AeroLog.shared.setup(AeroConfig(token: "YOUR_PROJECT_TOKEN"))
 
     // 私有化部署：覆盖 serverUrl

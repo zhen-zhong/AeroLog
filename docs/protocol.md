@@ -6,7 +6,7 @@
 
 ```
 POST /v1/track?token={projectToken}
-Host: collector.aerolog.cc                # SaaS 默认；私有化部署为你自己的域名
+Host: collector.example.com                # 示例域名；私有化部署改为自己的域名
 Content-Type: application/json
 Content-Encoding: gzip          # 可选，建议开启
 X-AeroLog-SDK: web/1.0.0        # SDK 名称/版本
@@ -52,7 +52,7 @@ X-AeroLog-Ts:   {unix_ms}        # 时间戳，5 分钟外拒绝
 Android 端无需手写 HTTP 请求，业务侧通过 SDK API 上报自定义事件和自定义参数：
 
 ```kotlin
-// SaaS：默认上报到 https://collector.aerolog.cc
+// 示例：默认上报地址为 https://collector.example.com
 AeroLog.init(application, AeroConfig(token = "PROJECT_TOKEN"))
 
 // 私有化部署：覆盖 serverUrl

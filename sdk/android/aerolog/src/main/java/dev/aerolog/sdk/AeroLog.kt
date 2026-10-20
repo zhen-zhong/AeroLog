@@ -46,7 +46,7 @@ import javax.crypto.spec.SecretKeySpec
  *
  * 用法：
  * ```kotlin
- * // SaaS：默认上报到 https://collector.aerolog.cc
+ * // 示例默认地址：https://collector.example.com
  * AeroLog.init(application, AeroConfig(token = "TOKEN"))
  * // 私有化：覆盖 serverUrl
  * AeroLog.init(application, AeroConfig(token = "TOKEN", serverUrl = "https://collector.your-company.com"))
