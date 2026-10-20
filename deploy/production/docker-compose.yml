@@ -1,24 +1,6 @@
 name: aerolog
 
 services:
-  nginx:
-    image: nginx:1.27-alpine
-    restart: unless-stopped
-    depends_on:
-      - web
-      - api
-      - collector
-      - grafana
-    ports:
-      - "80:80"
-    volumes:
-      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
-      - ./queue.htpasswd:/etc/nginx/queue.htpasswd:ro
-    networks:
-      - edge
-      - internal
-    mem_limit: 48m
-
   web:
     build:
       context: ../..
@@ -244,6 +226,5 @@ services:
     mem_limit: 180m
 
 networks:
-  edge:
   internal:
     internal: true
