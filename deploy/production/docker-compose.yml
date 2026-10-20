@@ -155,6 +155,9 @@ services:
       retries: 18
     networks:
       - internal
+      # A dedicated non-internal network is required for Docker to publish the
+      # external Kafka listener. No other AeroLog service joins this network.
+      - kafka-ingress
     mem_limit: 900m
 
   redpanda-console:
@@ -234,3 +237,4 @@ services:
 networks:
   internal:
     internal: true
+  kafka-ingress:
