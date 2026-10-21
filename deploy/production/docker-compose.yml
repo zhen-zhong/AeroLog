@@ -236,7 +236,9 @@ services:
       retries: 18
     networks:
       - internal
-    mem_limit: 768m
+    # Sensors Data realtime ingestion can exceed the 768MB baseline during
+    # merges and analytical reads. Keep enough headroom to avoid OOM restarts.
+    mem_limit: 2g
 
   prometheus:
     image: prom/prometheus:v2.53.0
