@@ -4,6 +4,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Config Consumer 配置
@@ -17,6 +18,9 @@ type Config struct {
 	PostgresDSN        string
 	BatchSize          int
 	BatchMs            int
+	WriteTimeout       time.Duration
+	RetryInitial       time.Duration
+	RetryMax           time.Duration
 	MetricsAddr        string
 	DebugRetentionDays int
 }
@@ -44,8 +48,11 @@ func FromEnv() *Config {
 			Password: getEnv("AEROLOG_CH_PASSWORD", "aerolog"),
 		},
 		PostgresDSN:        getEnv("AEROLOG_PG_DSN", "postgres://aerolog:aerolog@localhost:5432/aerolog?sslmode=disable"),
-		BatchSize:          1000,
-		BatchMs:            1000,
+		BatchSize:          getEnvInt("AEROLOG_CONSUMER_BATCH_SIZE", 200),
+		BatchMs:            getEnvInt("AEROLOG_CONSUMER_BATCH_MS", 5000),
+		WriteTimeout:       getEnvDurationMS("AEROLOG_CONSUMER_WRITE_TIMEOUT_MS", 15000),
+		RetryInitial:       getEnvDurationMS("AEROLOG_CONSUMER_RETRY_INITIAL_MS", 1000),
+		RetryMax:           getEnvDurationMS("AEROLOG_CONSUMER_RETRY_MAX_MS", 30000),
 		MetricsAddr:        getEnv("AEROLOG_METRICS_ADDR", ":9102"),
 		DebugRetentionDays: getEnvInt("AEROLOG_DEBUG_RETENTION_DAYS", 7),
 	}
@@ -80,4 +87,8 @@ func getEnvUint32(key string, def uint32) uint32 {
 		return def
 	}
 	return uint32(v)
+}
+
+func getEnvDurationMS(key string, def int) time.Duration {
+	return time.Duration(getEnvInt(key, def)) * time.Millisecond
 }

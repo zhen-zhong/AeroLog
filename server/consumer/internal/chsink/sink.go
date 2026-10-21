@@ -26,15 +26,11 @@ type Sink struct {
 // New 创建 Sink
 func New(addr, db, user, password string) (*Sink, error) {
 	conn, err := clickhouse.Open(&clickhouse.Options{
-		Addr: []string{addr},
-		Auth: clickhouse.Auth{Database: db, Username: user, Password: password},
-		Settings: clickhouse.Settings{
-			"async_insert":          1,
-			"wait_for_async_insert": 0,
-		},
+		Addr:            []string{addr},
+		Auth:            clickhouse.Auth{Database: db, Username: user, Password: password},
 		DialTimeout:     5 * time.Second,
-		MaxOpenConns:    8,
-		MaxIdleConns:    4,
+		MaxOpenConns:    2,
+		MaxIdleConns:    1,
 		ConnMaxLifetime: 30 * time.Minute,
 	})
 	if err != nil {
@@ -46,12 +42,13 @@ func New(addr, db, user, password string) (*Sink, error) {
 	return &Sink{conn: conn}, nil
 }
 
-// WriteBatch 批量写入 events_buffer 表
+// WriteBatch synchronously writes durable event batches. The worker commits
+// Kafka offsets only after this call succeeds.
 func (s *Sink) WriteBatch(ctx context.Context, evts []*model.EnvelopedEvent) error {
 	if len(evts) == 0 {
 		return nil
 	}
-	batch, err := s.conn.PrepareBatch(ctx, `INSERT INTO events_buffer (
+	batch, err := s.conn.PrepareBatch(ctx, `INSERT INTO events (
 		project_id, event, distinct_id, user_id, anonymous_id,
 		time, lib, lib_version, os, os_version, device_model,
 		app_version, network, screen_w, screen_h,

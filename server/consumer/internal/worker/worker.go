@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"log"
-	"sync"
 	"time"
 
 	"github.com/IBM/sarama"
@@ -40,28 +39,48 @@ var (
 
 // Worker Kafka group consumer
 type Worker struct {
-	brokers   []string
-	topic     string
-	groupID   string
-	batchSize int
-	batchMs   int
-	sink      *chsink.Sink
-	meta      *metadata.Syncer
-	pgPool    *pgxpool.Pool
-	decode    DecodeFunc
+	brokers      []string
+	topic        string
+	groupID      string
+	batchSize    int
+	batchMs      int
+	writeTimeout time.Duration
+	retryInitial time.Duration
+	retryMax     time.Duration
+	sink         *chsink.Sink
+	meta         *metadata.Syncer
+	pgPool       *pgxpool.Pool
+	decode       DecodeFunc
 }
 
 // DecodeFunc converts an input Kafka record into AeroLog's internal envelope.
 type DecodeFunc func([]byte) (*model.EnvelopedEvent, error)
 
 // New 构造 Worker
-func New(brokers []string, topic, group string, batchSize, batchMs int, sink *chsink.Sink, meta *metadata.Syncer, pg *pgxpool.Pool, decode DecodeFunc) *Worker {
+func New(brokers []string, topic, group string, batchSize, batchMs int, writeTimeout, retryInitial, retryMax time.Duration, sink *chsink.Sink, meta *metadata.Syncer, pg *pgxpool.Pool, decode DecodeFunc) *Worker {
 	if decode == nil {
 		decode = model.UnmarshalKafka
 	}
+	if batchSize < 1 {
+		batchSize = 1
+	}
+	if batchMs < 1 {
+		batchMs = 1000
+	}
+	if writeTimeout <= 0 {
+		writeTimeout = 15 * time.Second
+	}
+	if retryInitial <= 0 {
+		retryInitial = time.Second
+	}
+	if retryMax < retryInitial {
+		retryMax = 30 * time.Second
+	}
 	return &Worker{
 		brokers: brokers, topic: topic, groupID: group,
-		batchSize: batchSize, batchMs: batchMs, sink: sink, meta: meta, pgPool: pg, decode: decode,
+		batchSize: batchSize, batchMs: batchMs,
+		writeTimeout: writeTimeout, retryInitial: retryInitial, retryMax: retryMax,
+		sink: sink, meta: meta, pgPool: pg, decode: decode,
 	}
 }
 
@@ -101,30 +120,37 @@ func (h *handler) Cleanup(_ sarama.ConsumerGroupSession) error { return nil }
 func (h *handler) ConsumeClaim(sess sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
 	batch := make([]*model.EnvelopedEvent, 0, h.w.batchSize)
 	var lastMsg *sarama.ConsumerMessage
-	var mu sync.Mutex
 
-	flush := func() {
-		mu.Lock()
-		defer mu.Unlock()
+	flush := func() bool {
 		if len(batch) == 0 {
-			return
+			return true
 		}
-		start := time.Now()
 		n := len(batch)
-		ctx, cancel := context.WithTimeout(sess.Context(), 5*time.Second)
-		defer cancel()
-		result := "ok"
-		if err := h.w.flushBatch(ctx, batch); err != nil {
-			result = "error"
-			log.Printf("flush batch err: %v", err)
-			h.w.toDLQ(ctx, batch, err.Error())
+		for attempt := 0; ; attempt++ {
+			start := time.Now()
+			ctx, cancel := context.WithTimeout(sess.Context(), h.w.writeTimeout)
+			err := h.w.flushBatch(ctx, batch)
+			cancel()
+			if err == nil {
+				mFlushDuration.WithLabelValues("ok").Observe(time.Since(start).Seconds())
+				mFlushBatchSize.WithLabelValues().Observe(float64(n))
+				if lastMsg != nil {
+					sess.MarkMessage(lastMsg, "")
+				}
+				batch = batch[:0]
+				lastMsg = nil
+				return true
+			}
+
+			mFlushDuration.WithLabelValues("error").Observe(time.Since(start).Seconds())
+			log.Printf("flush batch err: %v; retaining %d Kafka messages for retry", err, n)
+			delay := retryDelay(attempt, h.w.retryInitial, h.w.retryMax)
+			select {
+			case <-time.After(delay):
+			case <-sess.Context().Done():
+				return false
+			}
 		}
-		mFlushDuration.WithLabelValues(result).Observe(time.Since(start).Seconds())
-		mFlushBatchSize.WithLabelValues().Observe(float64(n))
-		if lastMsg != nil {
-			sess.MarkMessage(lastMsg, "")
-		}
-		batch = batch[:0]
 	}
 
 	ticker := time.NewTicker(time.Duration(h.w.batchMs) * time.Millisecond)
@@ -145,11 +171,9 @@ func (h *handler) ConsumeClaim(sess sarama.ConsumerGroupSession, claim sarama.Co
 				continue
 			}
 			mConsumed.WithLabelValues("ok").Inc()
-			mu.Lock()
 			batch = append(batch, env)
 			lastMsg = msg
 			full := len(batch) >= h.w.batchSize
-			mu.Unlock()
 			if full {
 				flush()
 			}
@@ -160,6 +184,20 @@ func (h *handler) ConsumeClaim(sess sarama.ConsumerGroupSession, claim sarama.Co
 			return nil
 		}
 	}
+}
+
+func retryDelay(attempt int, initial, max time.Duration) time.Duration {
+	if attempt <= 0 {
+		return initial
+	}
+	delay := initial
+	for i := 0; i < attempt && delay < max; i++ {
+		delay *= 2
+		if delay > max {
+			return max
+		}
+	}
+	return delay
 }
 
 func (w *Worker) flushBatch(ctx context.Context, batch []*model.EnvelopedEvent) error {

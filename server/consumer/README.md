@@ -19,6 +19,11 @@ go run ./cmd
 | `AEROLOG_GROUP_ID` | `aerolog-consumer` |
 | `AEROLOG_INPUT_FORMAT` | `aerolog`；神策使用 `sensors_flatten_json` |
 | `AEROLOG_SENSORS_TARGET_PROJECT_ID` | 神策导入时必填，目标 AeroLog 项目 ID |
+| `AEROLOG_CONSUMER_BATCH_SIZE` | `200`，单次同步写入最大事件数 |
+| `AEROLOG_CONSUMER_BATCH_MS` | `5000`，最大批次等待毫秒数 |
+| `AEROLOG_CONSUMER_WRITE_TIMEOUT_MS` | `15000`，单次 ClickHouse 写入超时毫秒数 |
+| `AEROLOG_CONSUMER_RETRY_INITIAL_MS` | `1000`，失败后首次重试等待毫秒数 |
+| `AEROLOG_CONSUMER_RETRY_MAX_MS` | `30000`，重试等待上限毫秒数 |
 | `AEROLOG_CH_ADDR` | `localhost:9000` |
 | `AEROLOG_CH_DB` | `aerolog` |
 | `AEROLOG_CH_USER` | `aerolog` |
@@ -51,4 +56,4 @@ AEROLOG_SENSORS_TARGET_PROJECT_ID=<aerolog-project-id>
 docker compose --profile sensorsdata up -d --build sensors-consumer
 ```
 
-该消费者使用独立 group，不影响 SDK `events.raw` 消费链路。
+该消费者使用独立 group，不影响 SDK `events.raw` 消费链路。ClickHouse 写入失败时，消费者保留当前 Kafka offset 并指数退避重试；只有写入成功后才提交 offset。
