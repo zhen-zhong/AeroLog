@@ -285,6 +285,8 @@ sudo docker compose restart consumer
 
 Redpanda 保留容器内 `redpanda:9092` 给 AeroLog 自身使用，并单独映射主机 IPv4 `9092` 给神策私有化服务器。外部 listener 的公告地址仅通过服务器私有 `.env` 的 `AEROLOG_KAFKA_EXTERNAL_ADVERTISED_ADDR` 配置，不能提交真实 IP 或域名。
 
+神策与 AeroLog 位于同一私网时，同时将 `.env` 的 `AEROLOG_KAFKA_BIND_ADDR` 设为 AeroLog 的私网 IPv4；不要以 `0.0.0.0` 绑定并通过公网传输。
+
 云安全组和主机防火墙都必须只放行神策服务器的单个 IPv4 地址。安装防火墙规则：
 
 ```bash

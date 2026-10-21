@@ -145,7 +145,7 @@ services:
     ports:
       # Bind IPv4 only. Access is restricted by the cloud security group and
       # deploy/production/scripts/apply-kafka-firewall.sh on the host.
-      - "0.0.0.0:9092:19092"
+      - "${AEROLOG_KAFKA_BIND_ADDR:-0.0.0.0}:9092:19092"
     volumes:
       - /var/lib/aerolog/redpanda:/var/lib/redpanda/data
     healthcheck:
