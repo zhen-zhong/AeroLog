@@ -300,6 +300,24 @@ sudo systemctl status aerolog-kafka-firewall.service --no-pager
 
 从神策服务器验证时使用 `nc -vz -w 5 <aerolog-kafka-public-host> 9092`，再使用 `kcat -b '<aerolog-kafka-public-host>:9092' -L`。不得对其他公网地址开放该端口；本期也不启用离线导出、JDBC 或历史回补。
 
+### 6.2 复用已有 Kafka
+
+若服务器已有独立管理的 Kafka，可不启动本编排的 `redpanda`，并在仅服务器可读的 `.env` 中设置：
+
+```bash
+AEROLOG_KAFKA_BROKERS=<managed-kafka-private-host>:9092
+AEROLOG_KAFKA_TOPIC=aerolog.test.events.raw
+AEROLOG_GROUP_ID=aerolog-test-consumer
+```
+
+随后仅启动核心服务，不能使用无服务名的 `docker compose up`，以免启动同机不需要的队列或监控组件：
+
+```bash
+docker compose up -d --no-build postgres redis clickhouse api web collector consumer
+```
+
+由神策订阅写入的 topic 应与 AeroLog SDK 原始事件 topic 隔离，例如 `aerolog.test.sensors.events.v1`、`aerolog.test.sensors.profiles.v1`、`aerolog.test.sensors.details.v1`。首次只验证 Kafka 可接收消息；将神策事件转换并写入 AeroLog 分析表前，需单独启用对应的导入消费者，避免把两种事件协议混写到 `AEROLOG_KAFKA_TOPIC`。
+
 ## 7. 数据与备份
 
 持久化数据位于：

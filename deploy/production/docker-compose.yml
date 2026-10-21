@@ -51,13 +51,13 @@ services:
     environment:
       AEROLOG_ADDR: ":8081"
       AEROLOG_METRICS_ADDR: ":9101"
-      AEROLOG_KAFKA_BROKERS: redpanda:9092
+      # Default uses the bundled Redpanda. Set AEROLOG_KAFKA_BROKERS in the
+      # private .env to reuse a managed Kafka cluster instead.
+      AEROLOG_KAFKA_BROKERS: ${AEROLOG_KAFKA_BROKERS:-redpanda:9092}
       AEROLOG_PG_DSN: postgres://aerolog:${POSTGRES_PASSWORD}@postgres:5432/aerolog?sslmode=disable
       AEROLOG_REDIS_ADDR: redis:6379
     depends_on:
       postgres:
-        condition: service_healthy
-      redpanda:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -74,7 +74,9 @@ services:
     restart: unless-stopped
     env_file: ${AEROLOG_ENV_FILE:-.env}
     environment:
-      AEROLOG_KAFKA_BROKERS: redpanda:9092
+      # Default uses the bundled Redpanda. Set AEROLOG_KAFKA_BROKERS in the
+      # private .env to reuse a managed Kafka cluster instead.
+      AEROLOG_KAFKA_BROKERS: ${AEROLOG_KAFKA_BROKERS:-redpanda:9092}
       AEROLOG_CH_ADDR: clickhouse:9000
       AEROLOG_CH_DB: aerolog
       AEROLOG_CH_USER: aerolog
@@ -85,8 +87,6 @@ services:
       postgres:
         condition: service_healthy
       clickhouse:
-        condition: service_healthy
-      redpanda:
         condition: service_healthy
     networks:
       - internal
