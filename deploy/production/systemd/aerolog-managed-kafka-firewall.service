@@ -1,0 +1,13 @@
+[Unit]
+Description=Restrict managed Kafka listener for AeroLog
+After=network-online.target kafka.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/default/aerolog-managed-kafka-firewall
+ExecStart=/usr/local/lib/aerolog/apply-managed-kafka-firewall.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
