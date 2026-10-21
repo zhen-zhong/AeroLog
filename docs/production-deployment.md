@@ -316,6 +316,8 @@ AEROLOG_GROUP_ID=aerolog-test-consumer
 docker compose up -d --no-build postgres redis clickhouse api web collector consumer
 ```
 
+编排会只给 Collector 和 Consumer 额外加入出站网络，以访问受管理 Kafka；PostgreSQL、Redis、ClickHouse 仍保持在 Docker 内部网络，且不发布宿主机端口。
+
 由神策订阅写入的 topic 应与 AeroLog SDK 原始事件 topic 隔离，例如 `aerolog.test.sensors.events.v1`、`aerolog.test.sensors.profiles.v1`、`aerolog.test.sensors.details.v1`。首次只验证 Kafka 可接收消息；将神策事件转换并写入 AeroLog 分析表前，需单独启用对应的导入消费者，避免把两种事件协议混写到 `AEROLOG_KAFKA_TOPIC`。
 
 ## 7. 数据与备份

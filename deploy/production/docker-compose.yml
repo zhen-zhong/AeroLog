@@ -63,6 +63,9 @@ services:
         condition: service_healthy
     networks:
       - internal
+      # Gives the service an egress route when AEROLOG_KAFKA_BROKERS points
+      # to a managed Kafka outside Docker's internal-only network.
+      - kafka-ingress
     mem_limit: 144m
 
   consumer:
@@ -90,6 +93,9 @@ services:
         condition: service_healthy
     networks:
       - internal
+      # Gives the service an egress route when AEROLOG_KAFKA_BROKERS points
+      # to a managed Kafka outside Docker's internal-only network.
+      - kafka-ingress
     mem_limit: 176m
 
   postgres:
@@ -155,8 +161,8 @@ services:
       retries: 18
     networks:
       - internal
-      # A dedicated non-internal network is required for Docker to publish the
-      # external Kafka listener. No other AeroLog service joins this network.
+      # A dedicated non-internal network publishes the bundled Kafka listener
+      # and supplies egress for Collector/Consumer when using managed Kafka.
       - kafka-ingress
     mem_limit: 900m
 
