@@ -334,6 +334,7 @@ sudo systemctl enable --now aerolog-managed-kafka-firewall.service
 
 ```bash
 AEROLOG_SENSORS_EVENTS_TOPIC=<sensors-events-topic>
+AEROLOG_SENSORS_PROFILES_TOPIC=<sensors-profiles-topic>
 AEROLOG_SENSORS_TARGET_PROJECT_ID=<aerolog-project-id>
 # Synchronous, bounded ClickHouse writes. Failed writes keep the Kafka offset.
 AEROLOG_CONSUMER_BATCH_SIZE=200
@@ -349,7 +350,7 @@ AEROLOG_CONSUMER_RETRY_MAX_MS=30000
 docker compose --profile sensorsdata up -d --build sensors-consumer
 ```
 
-导入器只消费神策事件 topic，使用独立 Kafka group；神策 `project_id` 不会直接作为 AeroLog `project_id`，以避免跨平台 ID 冲突。ClickHouse 写入失败时会保留 Kafka offset 并指数退避重试，写入成功后才提交 offset。
+事件与用户 profile 分别使用独立 Kafka topic、consumer group 和容器；神策 `project_id` 不会直接作为 AeroLog `project_id`，以避免跨平台 ID 冲突。事件消费者也会创建仅含身份信息的用户快照，因此 profile topic 尚未产生数据时，用户列表仍可展示已观测身份。ClickHouse 写入失败时会保留 Kafka offset 并指数退避重试，写入成功后才提交 offset。
 
 ## 7. 数据与备份
 

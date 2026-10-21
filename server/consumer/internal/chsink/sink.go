@@ -131,10 +131,48 @@ func (s *Sink) WriteProfiles(ctx context.Context, evts []*model.EnvelopedEvent) 
 		state.updatedAt = maxTime(state.updatedAt, eventTime(e))
 		applyProfileEvent(state.properties, e.Event.Type, e.Event.Properties)
 	}
-	if len(order) == 0 {
+	return s.writeProfileStates(ctx, states, order)
+}
+
+// WriteObservedUsers records identities seen in track events without treating
+// event properties as profile properties. This makes user exploration useful
+// even when an upstream profile topic has not emitted any records yet.
+func (s *Sink) WriteObservedUsers(ctx context.Context, evts []*model.EnvelopedEvent) error {
+	if len(evts) == 0 {
 		return nil
 	}
 
+	states := map[profileKey]*profileState{}
+	order := make([]profileKey, 0, len(evts))
+	for _, e := range evts {
+		if e == nil || e.Event.DistinctID == "" {
+			continue
+		}
+		key := profileKey{projectID: e.ProjectID, distinctID: e.Event.DistinctID}
+		state := states[key]
+		if state == nil {
+			props, err := s.loadProfile(ctx, key.projectID, key.distinctID)
+			if err != nil {
+				return err
+			}
+			state = &profileState{properties: props}
+			states[key] = state
+			order = append(order, key)
+		}
+		state.userID = pickNonEmpty(e.Event.UserID, state.userID)
+		state.anonymousID = pickNonEmpty(e.Event.AnonymousID, state.anonymousID)
+		state.updatedAt = maxTime(state.updatedAt, eventTime(e))
+	}
+	return s.writeProfileStates(ctx, states, order)
+}
+
+// Close 关闭连接
+func (s *Sink) Close() error { return s.conn.Close() }
+
+func (s *Sink) writeProfileStates(ctx context.Context, states map[profileKey]*profileState, order []profileKey) error {
+	if len(order) == 0 {
+		return nil
+	}
 	batch, err := s.conn.PrepareBatch(ctx, `INSERT INTO users (
 		project_id, distinct_id, user_id, anonymous_id, properties, updated_at
 	)`)
@@ -150,22 +188,12 @@ func (s *Sink) WriteProfiles(ctx context.Context, evts []*model.EnvelopedEvent) 
 		if err != nil {
 			return err
 		}
-		if err := batch.Append(
-			key.projectID,
-			key.distinctID,
-			state.userID,
-			state.anonymousID,
-			string(raw),
-			state.updatedAt,
-		); err != nil {
+		if err := batch.Append(key.projectID, key.distinctID, state.userID, state.anonymousID, string(raw), state.updatedAt); err != nil {
 			return err
 		}
 	}
 	return batch.Send()
 }
-
-// Close 关闭连接
-func (s *Sink) Close() error { return s.conn.Close() }
 
 func pickStr(p map[string]interface{}, key, fallback string) string {
 	if v, ok := p[key].(string); ok && v != "" {

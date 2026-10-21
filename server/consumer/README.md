@@ -41,12 +41,13 @@ docker exec -it aerolog-clickhouse clickhouse-client \
 
 ## 神策 Kafka 导入
 
-神策 `FLATTEN_JSON` 事件不能与 SDK 原始 topic 混用。生产编排提供独立的 `sensors-consumer`，将 `event`、`distinct_id`、`time`、`identities`、`properties` 映射为 AeroLog 事件，并把神策来源元数据保存在事件属性中。
+神策 `FLATTEN_JSON` 事件不能与 SDK 原始 topic 混用。生产编排提供独立的 `sensors-consumer`，将 `event`、`distinct_id`、`time`、`identities`、`properties` 映射为 AeroLog 事件，并把神策来源元数据保存在事件属性中。`sensors-profile-consumer` 独立消费 profile topic，写入最新用户属性；事件消费者也会记录已观测身份，保证 profile topic 暂无消息时用户列表仍可用。
 
 先在 AeroLog 创建目标项目，并在服务器私有 `.env` 设置：
 
 ```bash
 AEROLOG_SENSORS_EVENTS_TOPIC=<sensors-events-topic>
+AEROLOG_SENSORS_PROFILES_TOPIC=<sensors-profiles-topic>
 AEROLOG_SENSORS_TARGET_PROJECT_ID=<aerolog-project-id>
 ```
 

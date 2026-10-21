@@ -230,6 +230,9 @@ func (w *Worker) flushBatch(ctx context.Context, batch []*model.EnvelopedEvent) 
 	if err := w.sink.WriteBatch(ctx, tracks); err != nil {
 		return err
 	}
+	if err := w.sink.WriteObservedUsers(ctx, tracks); err != nil {
+		return err
+	}
 	if err := w.sink.WriteProfiles(ctx, profiles); err != nil {
 		return err
 	}

@@ -83,6 +83,13 @@ func inputDecoder(cfg *config.Config) (worker.DecodeFunc, error) {
 		return func(data []byte) (*model.EnvelopedEvent, error) {
 			return sensorsdata.DecodeFlatten(data, cfg.SensorsProjectID)
 		}, nil
+	case "sensors_flatten_profile_json":
+		if cfg.SensorsProjectID == 0 {
+			return nil, fmt.Errorf("AEROLOG_SENSORS_TARGET_PROJECT_ID is required for sensors_flatten_profile_json")
+		}
+		return func(data []byte) (*model.EnvelopedEvent, error) {
+			return sensorsdata.DecodeFlattenProfile(data, cfg.SensorsProjectID)
+		}, nil
 	default:
 		return nil, fmt.Errorf("unsupported AEROLOG_INPUT_FORMAT %q", cfg.InputFormat)
 	}

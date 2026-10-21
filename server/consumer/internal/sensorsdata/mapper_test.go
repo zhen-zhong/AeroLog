@@ -43,3 +43,30 @@ func TestDecodeFlattenRejectsInvalidInput(t *testing.T) {
 		t.Fatal("expected missing target project to fail")
 	}
 }
+
+func TestDecodeFlattenProfile(t *testing.T) {
+	raw := []byte(`{
+  "operation_type":"SET",
+  "distinct_id":"user-1",
+  "time":1792558800000,
+  "identities":{"$identity_login_id":"member-1","$identity_anonymous_id":"anon-1"},
+  "properties":{"nickname":"Aero","level":3}
+}`)
+
+	got, err := DecodeFlattenProfile(raw, 7)
+	if err != nil {
+		t.Fatalf("DecodeFlattenProfile() error = %v", err)
+	}
+	if got.ProjectID != 7 || got.Event.Type != "profile_set" || got.Event.DistinctID != "user-1" {
+		t.Fatalf("unexpected mapped profile: %#v", got)
+	}
+	if got.Event.UserID != "member-1" || got.Event.AnonymousID != "anon-1" || got.Event.Properties["nickname"] != "Aero" {
+		t.Fatalf("profile identity or properties mapping failed: %#v", got.Event)
+	}
+}
+
+func TestDecodeFlattenProfileRejectsUnsupportedOperation(t *testing.T) {
+	if _, err := DecodeFlattenProfile([]byte(`{"operation_type":"APPEND","distinct_id":"user-1","time":1792558800000}`), 7); err == nil {
+		t.Fatal("expected unsupported profile operation to fail")
+	}
+}
