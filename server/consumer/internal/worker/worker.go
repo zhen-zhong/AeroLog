@@ -48,13 +48,20 @@ type Worker struct {
 	sink      *chsink.Sink
 	meta      *metadata.Syncer
 	pgPool    *pgxpool.Pool
+	decode    DecodeFunc
 }
 
+// DecodeFunc converts an input Kafka record into AeroLog's internal envelope.
+type DecodeFunc func([]byte) (*model.EnvelopedEvent, error)
+
 // New 构造 Worker
-func New(brokers []string, topic, group string, batchSize, batchMs int, sink *chsink.Sink, meta *metadata.Syncer, pg *pgxpool.Pool) *Worker {
+func New(brokers []string, topic, group string, batchSize, batchMs int, sink *chsink.Sink, meta *metadata.Syncer, pg *pgxpool.Pool, decode DecodeFunc) *Worker {
+	if decode == nil {
+		decode = model.UnmarshalKafka
+	}
 	return &Worker{
 		brokers: brokers, topic: topic, groupID: group,
-		batchSize: batchSize, batchMs: batchMs, sink: sink, meta: meta, pgPool: pg,
+		batchSize: batchSize, batchMs: batchMs, sink: sink, meta: meta, pgPool: pg, decode: decode,
 	}
 }
 
@@ -130,7 +137,7 @@ func (h *handler) ConsumeClaim(sess sarama.ConsumerGroupSession, claim sarama.Co
 				flush()
 				return nil
 			}
-			env, err := model.UnmarshalKafka(msg.Value)
+			env, err := h.w.decode(msg.Value)
 			if err != nil {
 				mConsumed.WithLabelValues("invalid").Inc()
 				log.Printf("invalid msg, drop: %v", err)

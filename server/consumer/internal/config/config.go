@@ -11,6 +11,8 @@ type Config struct {
 	KafkaBrokers       []string
 	KafkaTopic         string
 	GroupID            string
+	InputFormat        string
+	SensorsProjectID   uint32
 	ClickHouse         ClickHouseConf
 	PostgresDSN        string
 	BatchSize          int
@@ -30,9 +32,11 @@ type ClickHouseConf struct {
 // FromEnv 读取环境变量构造配置
 func FromEnv() *Config {
 	return &Config{
-		KafkaBrokers: strings.Split(getEnv("AEROLOG_KAFKA_BROKERS", "localhost:19092"), ","),
-		KafkaTopic:   getEnv("AEROLOG_KAFKA_TOPIC", "events.raw"),
-		GroupID:      getEnv("AEROLOG_GROUP_ID", "aerolog-consumer"),
+		KafkaBrokers:     strings.Split(getEnv("AEROLOG_KAFKA_BROKERS", "localhost:19092"), ","),
+		KafkaTopic:       getEnv("AEROLOG_KAFKA_TOPIC", "events.raw"),
+		GroupID:          getEnv("AEROLOG_GROUP_ID", "aerolog-consumer"),
+		InputFormat:      getEnv("AEROLOG_INPUT_FORMAT", "aerolog"),
+		SensorsProjectID: getEnvUint32("AEROLOG_SENSORS_TARGET_PROJECT_ID", 0),
 		ClickHouse: ClickHouseConf{
 			Addr:     getEnv("AEROLOG_CH_ADDR", "localhost:9000"),
 			Database: getEnv("AEROLOG_CH_DB", "aerolog"),
@@ -64,4 +68,16 @@ func getEnvInt(key string, def int) int {
 		return def
 	}
 	return v
+}
+
+func getEnvUint32(key string, def uint32) uint32 {
+	raw := getEnv(key, "")
+	if raw == "" {
+		return def
+	}
+	v, err := strconv.ParseUint(raw, 10, 32)
+	if err != nil {
+		return def
+	}
+	return uint32(v)
 }

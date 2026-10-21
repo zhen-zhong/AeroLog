@@ -98,6 +98,40 @@ services:
       - kafka-ingress
     mem_limit: 176m
 
+  # Optional Sensors Data Kafka importer. It is deliberately profile-gated so
+  # a deployment cannot consume external data before a local target project is
+  # explicitly configured.
+  sensors-consumer:
+    build:
+      context: ../..
+      dockerfile: deploy/production/Dockerfile.go
+      args:
+        SERVICE: consumer
+    restart: unless-stopped
+    profiles: ["sensorsdata"]
+    env_file: ${AEROLOG_ENV_FILE:-.env}
+    environment:
+      AEROLOG_KAFKA_BROKERS: ${AEROLOG_KAFKA_BROKERS:-redpanda:9092}
+      AEROLOG_KAFKA_TOPIC: ${AEROLOG_SENSORS_EVENTS_TOPIC:-sensors.events.v1}
+      AEROLOG_GROUP_ID: ${AEROLOG_SENSORS_GROUP_ID:-aerolog-sensors-consumer}
+      AEROLOG_INPUT_FORMAT: sensors_flatten_json
+      AEROLOG_SENSORS_TARGET_PROJECT_ID: ${AEROLOG_SENSORS_TARGET_PROJECT_ID:-0}
+      AEROLOG_CH_ADDR: clickhouse:9000
+      AEROLOG_CH_DB: aerolog
+      AEROLOG_CH_USER: aerolog
+      AEROLOG_CH_PASSWORD: ${CLICKHOUSE_PASSWORD}
+      AEROLOG_PG_DSN: postgres://aerolog:${POSTGRES_PASSWORD}@postgres:5432/aerolog?sslmode=disable
+      AEROLOG_METRICS_ADDR: ":9104"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    networks:
+      - internal
+      - kafka-ingress
+    mem_limit: 176m
+
   postgres:
     image: postgres:15-alpine
     restart: unless-stopped

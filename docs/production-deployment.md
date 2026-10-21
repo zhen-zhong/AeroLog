@@ -330,6 +330,21 @@ sudo systemctl enable --now aerolog-managed-kafka-firewall.service
 
 由神策订阅写入的 topic 应与 AeroLog SDK 原始事件 topic 隔离，例如 `aerolog.test.sensors.events.v1`、`aerolog.test.sensors.profiles.v1`、`aerolog.test.sensors.details.v1`。首次只验证 Kafka 可接收消息；将神策事件转换并写入 AeroLog 分析表前，需单独启用对应的导入消费者，避免把两种事件协议混写到 `AEROLOG_KAFKA_TOPIC`。
 
+神策事件导入使用 profile 隔离的 `sensors-consumer`。先在 AeroLog 控制台创建用于承载神策数据的目标项目，再在服务器私有 `.env` 设置其本地项目 ID：
+
+```bash
+AEROLOG_SENSORS_EVENTS_TOPIC=<sensors-events-topic>
+AEROLOG_SENSORS_TARGET_PROJECT_ID=<aerolog-project-id>
+```
+
+启动导入器：
+
+```bash
+docker compose --profile sensorsdata up -d --build sensors-consumer
+```
+
+导入器只消费神策事件 topic，使用独立 Kafka group；神策 `project_id` 不会直接作为 AeroLog `project_id`，以避免跨平台 ID 冲突。
+
 ## 7. 数据与备份
 
 持久化数据位于：

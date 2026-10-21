@@ -3,14 +3,17 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 
 	"github.com/aerolog/server/consumer/internal/chsink"
 	"github.com/aerolog/server/consumer/internal/config"
 	"github.com/aerolog/server/consumer/internal/metadata"
+	"github.com/aerolog/server/consumer/internal/sensorsdata"
 	"github.com/aerolog/server/consumer/internal/worker"
 	"github.com/aerolog/server/pkg/metrics"
+	"github.com/aerolog/server/pkg/model"
 	"github.com/aerolog/server/pkg/pgschema"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -41,6 +44,12 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 		pool.Close()
 		return nil, err
 	}
+	decode, err := inputDecoder(cfg)
+	if err != nil {
+		_ = sink.Close()
+		pool.Close()
+		return nil, err
+	}
 
 	return &App{
 		cfg:    cfg,
@@ -55,8 +64,25 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 			sink,
 			metadata.New(pool),
 			pool,
+			decode,
 		),
 	}, nil
+}
+
+func inputDecoder(cfg *config.Config) (worker.DecodeFunc, error) {
+	switch cfg.InputFormat {
+	case "", "aerolog":
+		return model.UnmarshalKafka, nil
+	case "sensors_flatten_json":
+		if cfg.SensorsProjectID == 0 {
+			return nil, fmt.Errorf("AEROLOG_SENSORS_TARGET_PROJECT_ID is required for sensors_flatten_json")
+		}
+		return func(data []byte) (*model.EnvelopedEvent, error) {
+			return sensorsdata.DecodeFlatten(data, cfg.SensorsProjectID)
+		}, nil
+	default:
+		return nil, fmt.Errorf("unsupported AEROLOG_INPUT_FORMAT %q", cfg.InputFormat)
+	}
 }
 
 // Run starts the consumer and blocks until ctx is canceled or the consumer fails.
