@@ -26,7 +26,6 @@ import {
 } from "lucide-react";
 import { Sheet, SheetClose, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { TopHeader } from "@/components/layout/top-header";
 import { api } from "@/lib/api";
@@ -355,7 +354,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
         <div className="flex h-full flex-col">
           <div
             className={cn(
-              "flex h-14 items-center border-b",
+              "flex h-14 shrink-0 items-center border-b",
               collapsed ? "justify-center px-2" : "gap-2 px-5",
             )}
           >
@@ -369,17 +368,14 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
               </div>
             )}
           </div>
-          <div className={cn("flex-1 py-4", collapsed ? "px-2" : "px-3")}>
+          <div
+            className={cn(
+              "min-h-0 flex-1 overflow-y-auto py-4",
+              collapsed ? "px-2" : "px-3",
+            )}
+          >
             <NavList collapsed={collapsed} />
           </div>
-          {!collapsed && (
-            <div className="border-t p-4">
-              <Badge variant="info">MVP 数据治理</Badge>
-              <p className="mt-2 text-xs leading-5 text-muted-foreground">
-                事件、属性、画像和身份映射已经进入同一条消费链路。
-              </p>
-            </div>
-          )}
         </div>
       </aside>
 
