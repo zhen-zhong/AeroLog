@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strconv"
 	"time"
 
 	"github.com/IBM/sarama"
@@ -35,6 +36,12 @@ var (
 	mDLQ = metrics.Counter(
 		"aerolog_consumer_dlq_total",
 		"进入 DLQ 的消息总数",
+	)
+	mKafkaLag = metrics.Gauge(
+		"aerolog_consumer_kafka_lag",
+		"当前分区尚未消费的 Kafka 消息估算数",
+		"topic",
+		"partition",
 	)
 )
 
@@ -165,6 +172,7 @@ func (h *handler) ConsumeClaim(sess sarama.ConsumerGroupSession, claim sarama.Co
 				flush()
 				return nil
 			}
+			mKafkaLag.WithLabelValues(claim.Topic(), strconv.Itoa(int(claim.Partition()))).Set(kafkaLag(claim.HighWaterMarkOffset(), msg.Offset))
 			env, err := h.w.decode(msg.Value)
 			if err != nil {
 				// Do not commit an invalid record until its original payload has
@@ -206,6 +214,13 @@ func retryDelay(attempt int, initial, max time.Duration) time.Duration {
 		}
 	}
 	return delay
+}
+
+func kafkaLag(highWaterMark, currentOffset int64) float64 {
+	if highWaterMark <= currentOffset+1 {
+		return 0
+	}
+	return float64(highWaterMark - currentOffset - 1)
 }
 
 func (w *Worker) flushBatch(ctx context.Context, batch []*model.EnvelopedEvent) error {

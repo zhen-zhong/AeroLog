@@ -26,3 +26,12 @@ groups:
         annotations:
           summary: "Sensors Data consumer cannot write ClickHouse"
           description: "{{ $labels.job }} has continued ClickHouse write failures for five minutes. Kafka offsets remain uncommitted."
+
+      - alert: AeroLogSensorsKafkaLagHigh
+        expr: max by (job) (aerolog_consumer_kafka_lag{job=~"aerolog-sensors-(consumer|profile-consumer)"}) > 1000
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Sensors Data Kafka lag remains high"
+          description: "{{ $labels.job }} has more than 1,000 pending Kafka records for ten minutes."

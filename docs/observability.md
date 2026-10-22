@@ -66,6 +66,7 @@ cd server/api       && go run ./cmd &
 - 订阅消费者不可达超过 2 分钟。
 - 任意消息进入 `event_dlq`。
 - 连续 5 分钟无法写入 ClickHouse；此时 Kafka offset 不会提交，恢复后会重试。
+- Kafka 分区积压持续 10 分钟且超过 1,000 条。
 
 Prometheus 会展示告警状态。若要发送通知，仍需单独配置 Alertmanager 的企业 Webhook、邮件或值班系统接收端；不得把接收地址或凭据提交到仓库。
 

@@ -40,3 +40,20 @@ func TestEncodeDLQPayloadPreservesMalformedSourceMessage(t *testing.T) {
 		t.Fatalf("raw_message = %q, want %q", got["raw_message"], source)
 	}
 }
+
+func TestKafkaLag(t *testing.T) {
+	cases := []struct {
+		highWaterMark int64
+		offset        int64
+		want          float64
+	}{
+		{highWaterMark: 10, offset: 8, want: 1},
+		{highWaterMark: 10, offset: 9, want: 0},
+		{highWaterMark: 0, offset: 0, want: 0},
+	}
+	for _, tc := range cases {
+		if got := kafkaLag(tc.highWaterMark, tc.offset); got != tc.want {
+			t.Fatalf("kafkaLag(%d, %d) = %v, want %v", tc.highWaterMark, tc.offset, got, tc.want)
+		}
+	}
+}
