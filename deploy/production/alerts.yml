@@ -1,0 +1,28 @@
+groups:
+  - name: aerolog-sensorsdata
+    rules:
+      - alert: AeroLogSensorsConsumerDown
+        expr: up{job=~"aerolog-sensors-(consumer|profile-consumer)"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Sensors Data consumer is down"
+          description: "{{ $labels.job }} has not been reachable for more than two minutes."
+
+      - alert: AeroLogSensorsDLQMessage
+        expr: increase(aerolog_consumer_dlq_total{job=~"aerolog-sensors-(consumer|profile-consumer)"}[5m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "Sensors Data message entered DLQ"
+          description: "{{ $labels.job }} stored an unparseable source message in Postgres event_dlq."
+
+      - alert: AeroLogSensorsClickHouseWriteFailure
+        expr: increase(aerolog_consumer_flush_duration_seconds_count{job=~"aerolog-sensors-(consumer|profile-consumer)",result="error"}[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Sensors Data consumer cannot write ClickHouse"
+          description: "{{ $labels.job }} has continued ClickHouse write failures for five minutes. Kafka offsets remain uncommitted."

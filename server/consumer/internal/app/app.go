@@ -59,6 +59,7 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 			cfg.KafkaBrokers,
 			cfg.KafkaTopic,
 			cfg.GroupID,
+			cfg.SensorsProjectID,
 			cfg.BatchSize,
 			cfg.BatchMs,
 			cfg.WriteTimeout,

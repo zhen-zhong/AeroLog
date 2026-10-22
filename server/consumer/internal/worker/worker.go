@@ -4,6 +4,7 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"time"
 
@@ -42,6 +43,7 @@ type Worker struct {
 	brokers      []string
 	topic        string
 	groupID      string
+	dlqProjectID uint32
 	batchSize    int
 	batchMs      int
 	writeTimeout time.Duration
@@ -57,7 +59,7 @@ type Worker struct {
 type DecodeFunc func([]byte) (*model.EnvelopedEvent, error)
 
 // New 构造 Worker
-func New(brokers []string, topic, group string, batchSize, batchMs int, writeTimeout, retryInitial, retryMax time.Duration, sink *chsink.Sink, meta *metadata.Syncer, pg *pgxpool.Pool, decode DecodeFunc) *Worker {
+func New(brokers []string, topic, group string, dlqProjectID uint32, batchSize, batchMs int, writeTimeout, retryInitial, retryMax time.Duration, sink *chsink.Sink, meta *metadata.Syncer, pg *pgxpool.Pool, decode DecodeFunc) *Worker {
 	if decode == nil {
 		decode = model.UnmarshalKafka
 	}
@@ -77,7 +79,7 @@ func New(brokers []string, topic, group string, batchSize, batchMs int, writeTim
 		retryMax = 30 * time.Second
 	}
 	return &Worker{
-		brokers: brokers, topic: topic, groupID: group,
+		brokers: brokers, topic: topic, groupID: group, dlqProjectID: dlqProjectID,
 		batchSize: batchSize, batchMs: batchMs,
 		writeTimeout: writeTimeout, retryInitial: retryInitial, retryMax: retryMax,
 		sink: sink, meta: meta, pgPool: pg, decode: decode,
@@ -165,8 +167,14 @@ func (h *handler) ConsumeClaim(sess sarama.ConsumerGroupSession, claim sarama.Co
 			}
 			env, err := h.w.decode(msg.Value)
 			if err != nil {
+				// Do not commit an invalid record until its original payload has
+				// reached the DLQ. Otherwise a source schema change can silently
+				// discard Sensors Data records.
+				if dlqErr := h.w.toDLQ(sess.Context(), h.w.dlqProjectID, msg.Value, fmt.Sprintf("decode input: %v", err)); dlqErr != nil {
+					return fmt.Errorf("save invalid message to DLQ: %w", dlqErr)
+				}
 				mConsumed.WithLabelValues("invalid").Inc()
-				log.Printf("invalid msg, drop: %v", err)
+				log.Printf("invalid msg stored in DLQ: %v", err)
 				sess.MarkMessage(msg, "")
 				continue
 			}
@@ -239,20 +247,26 @@ func (w *Worker) flushBatch(ctx context.Context, batch []*model.EnvelopedEvent) 
 	return nil
 }
 
-// toDLQ 落到 Postgres event_dlq 表
-func (w *Worker) toDLQ(ctx context.Context, batch []*model.EnvelopedEvent, reason string) {
+// toDLQ stores an original Kafka payload in Postgres before its offset is committed.
+// The wrapper keeps malformed JSON representable in the JSONB payload column.
+func (w *Worker) toDLQ(ctx context.Context, projectID uint32, payload []byte, reason string) error {
 	if w.pgPool == nil {
-		return
+		return fmt.Errorf("DLQ is unavailable: Postgres pool is nil")
 	}
-	for _, e := range batch {
-		raw, _ := json.Marshal(e)
-		_, err := w.pgPool.Exec(ctx,
-			`INSERT INTO event_dlq(project_id, payload, reason) VALUES($1, $2, $3)`,
-			e.ProjectID, raw, reason)
-		if err != nil {
-			log.Printf("dlq insert err: %v", err)
-			continue
-		}
-		mDLQ.WithLabelValues().Inc()
+	raw, err := encodeDLQPayload(payload)
+	if err != nil {
+		return fmt.Errorf("encode DLQ payload: %w", err)
 	}
+	_, err = w.pgPool.Exec(ctx,
+		`INSERT INTO event_dlq(project_id, payload, reason) VALUES($1, $2, $3)`,
+		projectID, raw, reason)
+	if err != nil {
+		return err
+	}
+	mDLQ.WithLabelValues().Inc()
+	return nil
+}
+
+func encodeDLQPayload(payload []byte) ([]byte, error) {
+	return json.Marshal(map[string]string{"raw_message": string(payload)})
 }
