@@ -129,6 +129,8 @@ func (h *handler) Cleanup(_ sarama.ConsumerGroupSession) error { return nil }
 func (h *handler) ConsumeClaim(sess sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
 	batch := make([]*model.EnvelopedEvent, 0, h.w.batchSize)
 	var lastMsg *sarama.ConsumerMessage
+	lagGauge := mKafkaLag.WithLabelValues(claim.Topic(), strconv.Itoa(int(claim.Partition())))
+	lagGauge.Set(0)
 
 	flush := func() bool {
 		if len(batch) == 0 {
@@ -172,7 +174,7 @@ func (h *handler) ConsumeClaim(sess sarama.ConsumerGroupSession, claim sarama.Co
 				flush()
 				return nil
 			}
-			mKafkaLag.WithLabelValues(claim.Topic(), strconv.Itoa(int(claim.Partition()))).Set(kafkaLag(claim.HighWaterMarkOffset(), msg.Offset))
+			lagGauge.Set(kafkaLag(claim.HighWaterMarkOffset(), msg.Offset))
 			env, err := h.w.decode(msg.Value)
 			if err != nil {
 				// Do not commit an invalid record until its original payload has
