@@ -406,6 +406,16 @@ export default function QueryBuilderPage() {
               <div className="text-sm font-medium">表格维度</div>
               <div className="flex min-w-0 flex-wrap gap-2">
                 <DimensionButton
+                  active={dimensions.some((item) => item.type === "time" && item.key === "day")}
+                  label="按天"
+                  onClick={() => toggleDimension({ type: "time", key: "day" })}
+                />
+                <DimensionButton
+                  active={dimensions.some((item) => item.type === "time" && item.key === "hour")}
+                  label="按小时"
+                  onClick={() => toggleDimension({ type: "time", key: "hour" })}
+                />
+                <DimensionButton
                   active={dimensions.some((item) => item.type === "event")}
                   label="事件名"
                   onClick={() => toggleDimension({ type: "event", key: "event" })}
@@ -517,7 +527,7 @@ export default function QueryBuilderPage() {
                       <TableRow>
                         {resultDimensions.map((dim) => (
                           <TableHead key={`${dim.type}:${dim.key}`} className="w-56 whitespace-nowrap">
-                            {dim.type === "event" ? "事件" : dim.key}
+                            {dim.type === "event" ? "事件" : dim.type === "time" ? (dim.key === "hour" ? "小时" : "日期") : dim.key}
                           </TableHead>
                         ))}
                         <TableHead className="w-24 whitespace-nowrap text-right">次数</TableHead>

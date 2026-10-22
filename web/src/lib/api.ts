@@ -258,7 +258,7 @@ export interface UserEvent {
     properties: Record<string, unknown>;
 }
 export interface QueryDimension {
-    type: "event" | "property";
+    type: "event" | "property" | "time";
     key: string;
 }
 export interface QueryFilter {
@@ -269,7 +269,7 @@ export interface QueryFilter {
 }
 export interface QueryTableRow {
     dimensions: {
-        type: "event" | "property";
+        type: "event" | "property" | "time";
         key: string;
         raw: string;
         label: string;

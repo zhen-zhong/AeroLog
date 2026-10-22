@@ -812,7 +812,7 @@ type QueryTableBody struct {
 }
 
 // /v1/projects/:id/analytics/query_table
-// body: {events, from, to, dimensions:[{type:"event"|"property", key}], filters:[{event, property, op, value}], limit}
+// body: {events, from, to, dimensions:[{type:"event"|"property"|"time", key}], filters:[{event, property, op, value}], limit}
 func (h *AnalyticsHandler) queryTable(c *gin.Context) {
 	rows, dims, err := h.runQueryTable(c, 500)
 	if err != nil {
@@ -868,11 +868,21 @@ func (h *AnalyticsHandler) executeQueryTable(ctx context.Context, pid uint32, bo
 	selects := make([]string, 0, len(body.Dimensions))
 	groupKeys := make([]string, 0, len(body.Dimensions))
 	metas := make([]QueryDimMeta, 0, len(body.Dimensions))
+	timeAlias := ""
 	for i, dim := range body.Dimensions {
 		alias := "d" + strconv.Itoa(i)
 		if dim.Type == "event" {
 			selects = append(selects, "event AS "+alias)
 			metas = append(metas, QueryDimMeta{Type: "event", Key: "event"})
+		} else if dim.Type == "time" && (dim.Key == "day" || dim.Key == "hour") {
+			format := "%F"
+			if dim.Key == "hour" {
+				format = "%F %H:00"
+			}
+			selects = append(selects, "formatDateTime(toStartOf"+map[bool]string{true: "Hour", false: "Day"}[dim.Key == "hour"]+"(time), ?, 'Asia/Shanghai') AS "+alias)
+			selectArgs = append(selectArgs, format)
+			metas = append(metas, QueryDimMeta{Type: "time", Key: dim.Key})
+			timeAlias = alias
 		} else if dim.Type == "property" && dim.Key != "" {
 			selects = append(selects, "JSONExtractRaw(properties, ?) AS "+alias)
 			selectArgs = append(selectArgs, dim.Key)
@@ -925,12 +935,16 @@ func (h *AnalyticsHandler) executeQueryTable(ctx context.Context, pid uint32, bo
 		}
 	}
 
+	orderBy := "c DESC"
+	if timeAlias != "" {
+		orderBy = timeAlias + " ASC, c DESC"
+	}
 	q := `
 		SELECT ` + joinStrs(selects, ", ") + `, count() AS c, uniqExact(distinct_id) AS u, groupUniqArray(5)(distinct_id) AS sample_users
 		FROM events
 		WHERE ` + where + `
 		GROUP BY ` + joinStrs(groupKeys, ", ") + `
-		ORDER BY c DESC
+		ORDER BY ` + orderBy + `
 		LIMIT ?
 	`
 	args := append(selectArgs, whereArgs...)
@@ -986,6 +1000,12 @@ func parseDimensionValue(dimType, raw string) (any, string) {
 	if dimType == "event" {
 		if raw == "" {
 			return raw, "(空事件)"
+		}
+		return raw, raw
+	}
+	if dimType == "time" {
+		if raw == "" {
+			return raw, "(空时间)"
 		}
 		return raw, raw
 	}

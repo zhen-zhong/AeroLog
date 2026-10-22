@@ -79,3 +79,17 @@ func TestLimitAttributionBreakdownKeepsTopGroupsWithoutMerging(t *testing.T) {
 		t.Fatalf("expected the first two groups to remain, got %#v", got)
 	}
 }
+
+func TestParseDimensionValueKeepsTimeBucketAsText(t *testing.T) {
+	value, label := parseDimensionValue("time", "2026-10-22 14:00")
+	if value != "2026-10-22 14:00" || label != "2026-10-22 14:00" {
+		t.Fatalf("time bucket parsed unexpectedly: value=%#v label=%q", value, label)
+	}
+}
+
+func TestParseDimensionValueUsesEmptyTimeLabelForEmptyTimeBucket(t *testing.T) {
+	_, label := parseDimensionValue("time", "")
+	if label != "(空时间)" {
+		t.Fatalf("empty time label = %q, want (空时间)", label)
+	}
+}
