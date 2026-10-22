@@ -279,6 +279,16 @@ export interface QueryTableRow {
     users: number;
     sample_users: string[];
 }
+export interface CohortMetricValue {
+    offset: number;
+    count: number;
+    users: number;
+}
+export interface CohortTableRow {
+    cohort: string;
+    users: number;
+    values: CohortMetricValue[];
+}
 export interface ConversionGoal {
     id: number;
     project_id: number;
@@ -829,6 +839,22 @@ export const api = {
                 method: "POST",
                 body: JSON.stringify(body),
             },
+        ),
+    cohortTable: (
+        id: number | string,
+        body: {
+            cohort_event: string;
+            cohort_property?: string;
+            cohort_value?: unknown;
+            metric_event: string;
+            from?: number;
+            to?: number;
+            offsets?: number[];
+        },
+    ) =>
+        req<ApiOne<{ offsets: number[]; rows: CohortTableRow[] }>>(
+            `/projects/${id}/analytics/cohort_table`,
+            { method: "POST", body: JSON.stringify(body) },
         ),
     queryTableExport: (
         id: number | string,

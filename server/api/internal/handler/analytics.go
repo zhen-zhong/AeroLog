@@ -40,6 +40,7 @@ func (h *AnalyticsHandler) Register(r *gin.RouterGroup) {
 	r.GET("/projects/:id/analytics/property_values", h.propertyValues)
 	r.POST("/projects/:id/analytics/query_table", h.queryTable)
 	r.POST("/projects/:id/analytics/query_table/export", h.queryTableExport)
+	r.POST("/projects/:id/analytics/cohort_table", h.cohortTable)
 	r.GET("/projects/:id/conversion_goals", h.listConversionGoals)
 	r.POST("/projects/:id/conversion_goals", h.createConversionGoal)
 	r.DELETE("/projects/:id/conversion_goals/:goal_id", h.deleteConversionGoal)
@@ -1026,6 +1027,135 @@ func rawJSONValue(value any) string {
 		return `""`
 	}
 	return string(b)
+}
+
+// CohortTableBody defines a user cohort by its first matching event, then measures
+// another event for each cohort day. It is used for metrics such as new-user ad
+// impressions on Day0 and Day1.
+type CohortTableBody struct {
+	CohortEvent    string `json:"cohort_event"`
+	CohortProperty string `json:"cohort_property"`
+	CohortValue    any    `json:"cohort_value"`
+	MetricEvent    string `json:"metric_event"`
+	From           int64  `json:"from"`
+	To             int64  `json:"to"`
+	Offsets        []int  `json:"offsets"`
+}
+
+type CohortMetricValue struct {
+	Offset int    `json:"offset"`
+	Count  uint64 `json:"count"`
+	Users  uint64 `json:"users"`
+}
+
+type CohortTableRow struct {
+	Cohort string              `json:"cohort"`
+	Users  uint64              `json:"users"`
+	Values []CohortMetricValue `json:"values"`
+}
+
+// /v1/projects/:id/analytics/cohort_table
+// body: {cohort_event, cohort_property?, cohort_value?, metric_event, from, to, offsets:[0,1]}
+func (h *AnalyticsHandler) cohortTable(c *gin.Context) {
+	pid, _ := strconv.ParseUint(c.Param("id"), 10, 32)
+	var body CohortTableBody
+	if err := c.BindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
+		return
+	}
+	if body.CohortEvent == "" || body.MetricEvent == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"err": "cohort_event and metric_event required"})
+		return
+	}
+	if body.To == 0 {
+		body.To = time.Now().UnixMilli()
+	}
+	if body.From == 0 {
+		body.From = body.To - 7*24*3600*1000
+	}
+	offsets, ok := normalizeCohortOffsets(body.Offsets)
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"err": "offsets must be between 0 and 30"})
+		return
+	}
+	rows, err := h.computeCohortTable(c.Request.Context(), uint32(pid), &body, offsets)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"offsets": offsets, "rows": rows}})
+}
+
+func normalizeCohortOffsets(offsets []int) ([]int, bool) {
+	if len(offsets) == 0 {
+		return []int{0, 1}, true
+	}
+	seen := map[int]bool{}
+	out := make([]int, 0, len(offsets))
+	for _, offset := range offsets {
+		if offset < 0 || offset > 30 {
+			return nil, false
+		}
+		if !seen[offset] {
+			seen[offset] = true
+			out = append(out, offset)
+		}
+	}
+	sort.Ints(out)
+	return out, true
+}
+
+func (h *AnalyticsHandler) computeCohortTable(ctx context.Context, pid uint32, body *CohortTableBody, offsets []int) ([]CohortTableRow, error) {
+	maxOffset := offsets[len(offsets)-1]
+	selects := []string{"formatDateTime(c.d0, '%F') AS cohort", "uniqExact(c.distinct_id) AS cohort_users"}
+	for _, offset := range offsets {
+		dayDiff := "dateDiff('day', c.d0, toDate(m.time, 'Asia/Shanghai')) = " + strconv.Itoa(offset)
+		selects = append(selects, "countIf("+dayDiff+") AS count_"+strconv.Itoa(offset))
+		selects = append(selects, "uniqExactIf(m.distinct_id, "+dayDiff+") AS users_"+strconv.Itoa(offset))
+	}
+	cohortWhere := "project_id = ? AND event = ? AND time BETWEEN fromUnixTimestamp64Milli(?) AND fromUnixTimestamp64Milli(?)"
+	cohortArgs := []any{pid, body.CohortEvent, body.From, body.To}
+	if body.CohortProperty != "" {
+		cohortWhere += " AND JSONExtractRaw(properties, ?) = ?"
+		cohortArgs = append(cohortArgs, body.CohortProperty, rawJSONValue(body.CohortValue))
+	}
+	metricTo := body.To + int64(maxOffset)*24*3600*1000
+	q := `
+	WITH cohort AS (
+		SELECT distinct_id, min(toDate(time, 'Asia/Shanghai')) AS d0
+		FROM events
+		WHERE ` + cohortWhere + `
+		GROUP BY distinct_id
+	), metric_events AS (
+		SELECT distinct_id, time
+		FROM events
+		WHERE project_id = ? AND event = ? AND time BETWEEN fromUnixTimestamp64Milli(?) AND fromUnixTimestamp64Milli(?)
+	)
+	SELECT ` + joinStrs(selects, ", ") + `
+	FROM cohort AS c
+	LEFT JOIN metric_events AS m ON c.distinct_id = m.distinct_id
+	GROUP BY c.d0
+	ORDER BY c.d0
+	`
+	args := append(cohortArgs, pid, body.MetricEvent, body.From, metricTo)
+	result, err := h.CH.Query(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer result.Close()
+	out := []CohortTableRow{}
+	for result.Next() {
+		row := CohortTableRow{Values: make([]CohortMetricValue, len(offsets))}
+		dest := []any{&row.Cohort, &row.Users}
+		for index, offset := range offsets {
+			row.Values[index].Offset = offset
+			dest = append(dest, &row.Values[index].Count, &row.Values[index].Users)
+		}
+		if err := result.Scan(dest...); err == nil {
+			out = append(out, row)
+		}
+	}
+	return out, result.Err()
 }
 
 func parseScalarString(raw string) (any, bool) {
