@@ -9,6 +9,8 @@ import {
   Boxes,
   Bug,
   CircleDot,
+  ChevronDown,
+  ChevronRight,
   Compass,
   FolderKanban,
   GitBranch,
@@ -31,35 +33,55 @@ import { api } from "@/lib/api";
 import { useAuthStore } from "@/stores/auth-store";
 import { useUIStore } from "@/stores/ui-store";
 
+const primaryNav = [
+  { href: "/console", label: "概览", icon: LayoutDashboard },
+];
+
 const navGroups = [
   {
-    label: "报表",
+    label: "分析",
+    icon: BarChart3,
     items: [
-      { href: "/console", label: "概览", icon: LayoutDashboard },
       { href: "/console/realtime", label: "实时", icon: CircleDot },
       { href: "/console/event", label: "事件", icon: BarChart3 },
-      { href: "/console/query", label: "查询", icon: Boxes },
-      { href: "/console/reports", label: "自定义报表", icon: BarChart3 },
-      { href: "/console/debugger", label: "调试器", icon: Bug },
       { href: "/console/conversions", label: "转化", icon: Waypoints },
       { href: "/console/funnel", label: "漏斗", icon: GitBranch },
       { href: "/console/retention", label: "留存", icon: Route },
+      { href: "/console/paths", label: "行为路径", icon: Route },
+      { href: "/console/sessions", label: "Session", icon: CircleDot },
       { href: "/console/attribution", label: "归因", icon: Compass },
-      { href: "/console/users", label: "用户", icon: Users },
     ],
   },
   {
-    label: "配置",
+    label: "自助分析",
+    icon: Boxes,
     items: [
+      { href: "/console/reports", label: "自定义报表", icon: BarChart3 },
+      { href: "/console/query", label: "自助查询", icon: Boxes },
+    ],
+  },
+  {
+    label: "用户与数据",
+    icon: Users,
+    items: [
+      { href: "/console/users", label: "用户", icon: Users },
       { href: "/console/governance", label: "数据治理", icon: ShieldCheck },
+      { href: "/console/debugger", label: "调试器", icon: Bug },
+    ],
+  },
+  {
+    label: "管理",
+    icon: FolderKanban,
+    items: [
       { href: "/admin/projects", label: "项目管理", icon: FolderKanban },
       { href: "/admin/members", label: "成员管理", icon: UserCog, requires: "company_admin" as const },
     ],
   },
 ];
 
-const navItems = navGroups.flatMap((group) => group.items);
+const navItems = [...primaryNav, ...navGroups.flatMap((group) => group.items)];
 const routeHistoryKey = "aerolog-route-history";
+const navGroupsStorageKey = "aerolog-nav-open-groups";
 
 function isPublicRoute(pathname: string) {
   return (
@@ -93,49 +115,70 @@ function NavList({
   const isPlatformAdmin = user?.role === "admin";
   const isCompanyAdmin = user?.role === "company_admin";
   const canManageMembers = isPlatformAdmin || isCompanyAdmin;
+  const activeGroups = navGroups
+    .filter((group) => group.items.some((item) => item.href === activePath))
+    .map((group) => group.label);
+  const [openGroups, setOpenGroups] = useState<string[]>(activeGroups);
+
+  useEffect(() => {
+    let saved: string[] = [];
+    try {
+      const raw = window.localStorage.getItem(navGroupsStorageKey);
+      if (raw) saved = JSON.parse(raw) as string[];
+    } catch {
+      saved = [];
+    }
+    setOpenGroups((current) => Array.from(new Set([...current, ...saved, ...activeGroups])));
+  }, [activePath]);
+
+  function canView(item: (typeof navItems)[number]) {
+    return !("requires" in item && item.requires === "company_admin") || canManageMembers;
+  }
+
+  function toggleGroup(label: string) {
+    setOpenGroups((current) => {
+      const next = current.includes(label) ? current.filter((item) => item !== label) : [...current, label];
+      window.localStorage.setItem(navGroupsStorageKey, JSON.stringify(next));
+      return next;
+    });
+  }
+
+  function renderLink(item: (typeof navItems)[number], nested = false) {
+    const Icon = item.icon;
+    const active = activePath === item.href;
+    const link = (
+      <Link
+        key={item.href}
+        href={item.href}
+        title={collapsed ? item.label : undefined}
+        className={cn(
+          "flex h-9 items-center rounded-md text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground",
+          collapsed ? "mx-auto w-9 justify-center" : nested ? "gap-2 pl-9 pr-3" : "gap-2 px-3",
+          active && "bg-accent text-accent-foreground",
+        )}
+      >
+        <Icon className="h-4 w-4 shrink-0" />
+        {!collapsed && <span>{item.label}</span>}
+      </Link>
+    );
+    if (!closeOnNavigate) return link;
+    return <SheetClose key={item.href} asChild>{link}</SheetClose>;
+  }
+
+  if (collapsed) {
+    return <nav className="flex flex-col gap-3">{[...primaryNav, ...navGroups.flatMap((group) => group.items)].filter(canView).map((item) => renderLink(item))}</nav>;
+  }
+
   return (
-    <nav className={cn("flex flex-col", collapsed ? "gap-3" : "gap-5")}>
-      {navGroups.map((group) => (
-        <div key={group.label}>
-          {!collapsed && (
-            <div className="mb-2 px-3 text-xs font-medium text-muted-foreground">{group.label}</div>
-          )}
-          <div className="flex flex-col gap-1">
-            {group.items
-              .filter((item) => {
-                if ("requires" in item && item.requires === "company_admin") {
-                  return canManageMembers;
-                }
-                return true;
-              })
-              .map((item) => {
-              const Icon = item.icon;
-              const active = activePath === item.href;
-              const link = (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  title={collapsed ? item.label : undefined}
-                  className={cn(
-                    "flex h-9 items-center rounded-md text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground",
-                    collapsed ? "mx-auto w-9 justify-center" : "gap-2 px-3",
-                    active && "bg-accent text-accent-foreground",
-                  )}
-                >
-                  <Icon className="h-4 w-4 shrink-0" />
-                  {!collapsed && <span>{item.label}</span>}
-                </Link>
-              );
-              if (!closeOnNavigate) return link;
-              return (
-                <SheetClose key={item.href} asChild>
-                  {link}
-                </SheetClose>
-              );
-            })}
-          </div>
-        </div>
-      ))}
+    <nav className="flex flex-col gap-2">
+      {primaryNav.map((item) => renderLink(item))}
+      {navGroups.map((group) => {
+        const visibleItems = group.items.filter(canView);
+        if (!visibleItems.length) return null;
+        const GroupIcon = group.icon;
+        const open = openGroups.includes(group.label);
+        return <div key={group.label} className="pt-1"><button type="button" onClick={() => toggleGroup(group.label)} className="flex h-9 w-full items-center gap-2 rounded-md px-3 text-left text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"><GroupIcon className="h-4 w-4 shrink-0" /><span className="flex-1">{group.label}</span>{open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}</button>{open ? <div className="mt-1 flex flex-col gap-1">{visibleItems.map((item) => renderLink(item, true))}</div> : null}</div>;
+      })}
     </nav>
   );
 }

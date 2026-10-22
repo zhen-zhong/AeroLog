@@ -289,6 +289,15 @@ export interface CohortTableRow {
     users: number;
     values: CohortMetricValue[];
 }
+export interface PathNode { name: string; count: number; }
+export interface PathEdge { source: string; target: string; count: number; }
+export interface SessionDay {
+    day: string;
+    sessions: number;
+    users: number;
+    average_events: number;
+    average_duration_seconds: number;
+}
 export interface ConversionGoal {
     id: number;
     project_id: number;
@@ -856,6 +865,14 @@ export const api = {
             `/projects/${id}/analytics/cohort_table`,
             { method: "POST", body: JSON.stringify(body) },
         ),
+    paths: (
+        id: number | string,
+        body: { events?: string[]; from?: number; to?: number; session_gap_seconds?: number; start_event?: string; max_steps?: number; max_nodes?: number },
+    ) => req<ApiOne<{ sessions: number; nodes: PathNode[]; edges: PathEdge[]; truncated: boolean }>>(`/projects/${id}/analytics/paths`, { method: "POST", body: JSON.stringify(body) }),
+    sessions: (
+        id: number | string,
+        body: { events?: string[]; from?: number; to?: number; session_gap_seconds?: number },
+    ) => req<ApiOne<{ sessions: number; users: number; average_events: number; average_duration_seconds: number; days: SessionDay[]; truncated: boolean }>>(`/projects/${id}/analytics/sessions`, { method: "POST", body: JSON.stringify(body) }),
     queryTableExport: (
         id: number | string,
         body: {

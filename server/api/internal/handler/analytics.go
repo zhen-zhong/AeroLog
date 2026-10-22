@@ -41,6 +41,8 @@ func (h *AnalyticsHandler) Register(r *gin.RouterGroup) {
 	r.POST("/projects/:id/analytics/query_table", h.queryTable)
 	r.POST("/projects/:id/analytics/query_table/export", h.queryTableExport)
 	r.POST("/projects/:id/analytics/cohort_table", h.cohortTable)
+	r.POST("/projects/:id/analytics/paths", h.paths)
+	r.POST("/projects/:id/analytics/sessions", h.sessionAnalysis)
 	r.GET("/projects/:id/conversion_goals", h.listConversionGoals)
 	r.POST("/projects/:id/conversion_goals", h.createConversionGoal)
 	r.DELETE("/projects/:id/conversion_goals/:goal_id", h.deleteConversionGoal)
