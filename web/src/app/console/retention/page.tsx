@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import dayjs, { Dayjs } from "dayjs";
 import {
@@ -25,6 +26,10 @@ const NONE = "__none__";
 
 export default function RetentionPage() {
   const projectId = useProjectStore((s) => s.projectId);
+  const searchParams = useSearchParams();
+  const presetInitEvent = searchParams.get("initial_event");
+  const presetReturnEvent = searchParams.get("return_event");
+  const presetDays = Number(searchParams.get("days"));
   const [initEvent, setInitEvent] = useState<string | undefined>();
   const [retEvent, setRetEvent] = useState<string | undefined>();
   const [days, setDays] = useState<number>(7);
@@ -40,6 +45,12 @@ export default function RetentionPage() {
     setRetEvent(undefined);
     setBreakdownProperty("");
   }, [projectId]);
+
+  useEffect(() => {
+    if (presetInitEvent) setInitEvent(presetInitEvent);
+    if (presetReturnEvent) setRetEvent(presetReturnEvent);
+    if (Number.isInteger(presetDays) && presetDays >= 2 && presetDays <= 30) setDays(presetDays);
+  }, [presetDays, presetInitEvent, presetReturnEvent, projectId]);
 
   const { data: top, isLoading: topLoading } = useQuery({
     queryKey: ["retention_top", projectId],

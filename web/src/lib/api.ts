@@ -277,6 +277,7 @@ export interface QueryTableRow {
     }[];
     count: number;
     users: number;
+    sums: Record<string, number>;
     sample_users: string[];
 }
 export interface CohortMetricValue {
@@ -838,6 +839,7 @@ export const api = {
             from?: number;
             to?: number;
             limit?: number;
+            sum_properties?: string[];
             dimensions: QueryDimension[];
             filters?: QueryFilter[];
         },

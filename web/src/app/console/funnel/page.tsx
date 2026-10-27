@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import dynamic from "next/dynamic";
 import dayjs, { Dayjs } from "dayjs";
@@ -26,6 +27,8 @@ const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
 
 export default function FunnelPage() {
   const projectId = useProjectStore((s) => s.projectId);
+  const searchParams = useSearchParams();
+  const presetEvents = searchParams.get("events");
   const [events, setEvents] = useState<string[]>([]);
   const [windowSeconds, setWindowSeconds] = useState<number>(24 * 3600);
   const [breakdownProperty, setBreakdownProperty] = useState("");
@@ -47,6 +50,12 @@ export default function FunnelPage() {
     setBreakdownProperty("");
     setError("");
   }, [projectId]);
+
+  useEffect(() => {
+    if (!presetEvents) return;
+    const events = Array.from(new Set(presetEvents.split(",").map((item) => item.trim()).filter(Boolean))).slice(0, 10);
+    if (events.length >= 2) setEvents(events);
+  }, [presetEvents, projectId]);
 
   const { data: top, isLoading: topLoading } = useQuery({
     queryKey: ["funnel_top", projectId],

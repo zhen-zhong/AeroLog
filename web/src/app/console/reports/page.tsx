@@ -4,7 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import dayjs, { Dayjs } from "dayjs";
-import { Bookmark, Play, Plus, Star, Trash2 } from "lucide-react";
+import Link from "next/link";
+import { ArrowRight, Bookmark, Play, Plus, Star, Trash2 } from "lucide-react";
 import { AnalyticsHeader, ChartPanel, DateTimeRange, EmptyAnalysis } from "@/features/analytics/analytics-ui";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -40,6 +41,7 @@ type ReportConfig = {
   chart: ChartKind;
   showCount: boolean;
   showUsers: boolean;
+  sumProperties: string[];
   formulas: FormulaColumn[];
   cohort: CohortConfig;
   shortcut: boolean;
@@ -56,10 +58,54 @@ const defaultConfig = (): ReportConfig => ({
   chart: "table",
   showCount: true,
   showUsers: true,
+  sumProperties: [],
   formulas: [{ id: "per_user", label: "人均事件次数", expression: "count / users" }],
   cohort: { cohortEvent: "$AppStart", cohortProperty: "$is_first_day", cohortValue: "true", metricEvent: "ad_show", offsets: [0, 1] },
   shortcut: false,
 });
+
+type CoreTemplate = {
+  name: string;
+  description: string;
+  config?: ReportConfig;
+  href?: string;
+};
+
+function coreTemplates(): CoreTemplate[] {
+  const base = defaultConfig();
+  return [
+    {
+      name: "新增用户",
+      description: "首日启动用户，按新增日期趋势展示。",
+      config: { ...base, mode: "cohort", chart: "line", showCount: false, showUsers: false, formulas: [], cohort: { ...base.cohort, metricEvent: "$AppStart", offsets: [0] } },
+    },
+    {
+      name: "广告展示次数",
+      description: "按天统计 ad_show 事件次数与去重用户。",
+      config: { ...base, events: ["ad_show"], chart: "line", formulas: [] },
+    },
+    {
+      name: "人均广告展示",
+      description: "ad_show 次数 ÷ 当日去重用户数。",
+      config: { ...base, events: ["ad_show"], chart: "line", formulas: [{ id: "ad_per_user", label: "人均广告展示", expression: "count / users" }] },
+    },
+    {
+      name: "广告收入（金币）",
+      description: "汇总 coin_earned.coin_amount，作为当前确认的广告收入口径。",
+      config: { ...base, events: ["coin_earned"], chart: "bar", showCount: false, showUsers: false, sumProperties: ["coin_amount"], formulas: [] },
+    },
+    {
+      name: "留存",
+      description: "新用户启动后 Day0～Day7 回访。",
+      href: "/console/retention?initial_event=%24AppStart&return_event=%24AppStart&days=7",
+    },
+    {
+      name: "转化漏斗",
+      description: "启动 → 广告展示 → 广告完成 → 金币到账。",
+      href: "/console/funnel?events=%24AppStart%2Cad_show%2Cad_complete%2Ccoin_earned",
+    },
+  ];
+}
 
 function metricFormula(expression: string, variables: Record<string, number>): number | null {
   const tokens = expression.match(/[A-Za-z_][A-Za-z0-9_]*|\d+(?:\.\d+)?|[()+\-*/]/g);
@@ -125,6 +171,10 @@ function cohortFormulaValues(row: CohortTableRow): Record<string, number> {
   return values;
 }
 
+function standardFormulaValues(row: QueryTableRow): Record<string, number> {
+  return { count: row.count, users: row.users, ...row.sums };
+}
+
 export default function CustomReportsPage() {
   const projectId = useProjectStore((s) => s.projectId);
   const qc = useQueryClient();
@@ -154,6 +204,7 @@ export default function CustomReportsPage() {
       from: range[0].valueOf(),
       to: range[1].valueOf(),
       limit: 500,
+      sum_properties: config.sumProperties,
       dimensions: [toDimension(config)],
       filters: [],
     }),
@@ -194,7 +245,7 @@ export default function CustomReportsPage() {
   const shortcuts = reportTemplates.filter((item) => (item.config as Partial<ReportConfig>).shortcut);
   const formulaColumns = config.formulas.filter((formula) => formula.expression.trim().length > 0);
   const isCohort = config.mode === "cohort";
-  const firstFormulaValues = isCohort && cohortRows.length ? cohortFormulaValues(cohortRows[0]) : rows.length ? { count: rows[0].count, users: rows[0].users } : {};
+  const firstFormulaValues = isCohort && cohortRows.length ? cohortFormulaValues(cohortRows[0]) : rows.length ? standardFormulaValues(rows[0]) : {};
   const chartOption = useMemo(() => ({
     tooltip: { trigger: "axis" },
     legend: { bottom: 0 },
@@ -211,7 +262,8 @@ export default function CustomReportsPage() {
         : [
             ...(config.showCount ? [{ name: "事件次数", type: config.chart, data: rows.map((row) => row.count) }] : []),
             ...(config.showUsers ? [{ name: "去重用户", type: config.chart, data: rows.map((row) => row.users) }] : []),
-            ...formulaColumns.map((formula) => ({ name: formula.label || "公式", type: config.chart, data: rows.map((row) => metricFormula(formula.expression, { count: row.count, users: row.users }) ?? 0) })),
+            ...config.sumProperties.map((property) => ({ name: `${property} 总和`, type: config.chart, data: rows.map((row) => row.sums[property] || 0) })),
+            ...formulaColumns.map((formula) => ({ name: formula.label || "公式", type: config.chart, data: rows.map((row) => metricFormula(formula.expression, standardFormulaValues(row)) ?? 0) })),
           ]),
     ],
   }), [rows, cohortRows, config, isCohort]);
@@ -224,6 +276,9 @@ export default function CustomReportsPage() {
   }
   function patchFormula(id: string, value: Partial<FormulaColumn>) {
     patch({ formulas: config.formulas.map((formula) => formula.id === id ? { ...formula, ...value } : formula) });
+  }
+  function addSumProperty(property: string) {
+    if (property && !config.sumProperties.includes(property)) patch({ sumProperties: [...config.sumProperties, property] });
   }
   function patchCohort(value: Partial<CohortConfig>) {
     patch({ cohort: { ...config.cohort, ...value } });
@@ -248,10 +303,17 @@ export default function CustomReportsPage() {
     setRange([dayjs(safe.from), dayjs(safe.to)]);
     setName(template.name);
   }
+  function applyCoreTemplate(template: CoreTemplate) {
+    if (!template.config) return;
+    setConfig(template.config);
+    setRange([dayjs(template.config.from), dayjs(template.config.to)]);
+    setName(template.name);
+  }
 
   return (
     <div>
       <AnalyticsHeader title="自定义报表" description="组合维度、指标和受控公式，生成可保存的表格、折线图或柱状图。" />
+      <Card className="mb-5"><CardContent className="pt-5 sm:pt-5"><div className="mb-3"><div className="text-sm font-medium">核心指标模板</div><p className="mt-1 text-xs text-muted-foreground">已按当前埋点定义预置；点击即可套用或进入对应分析。</p></div><div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{coreTemplates().map((template) => template.href ? <Link key={template.name} href={template.href} className="group rounded-md border bg-background p-3 transition-colors hover:border-primary"><div className="flex items-center justify-between gap-2 text-sm font-medium">{template.name}<ArrowRight className="h-4 w-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" /></div><p className="mt-1 text-xs leading-5 text-muted-foreground">{template.description}</p></Link> : <button key={template.name} type="button" onClick={() => applyCoreTemplate(template)} className="rounded-md border bg-background p-3 text-left transition-colors hover:border-primary"><div className="text-sm font-medium">{template.name}</div><p className="mt-1 text-xs leading-5 text-muted-foreground">{template.description}</p></button>)}</div></CardContent></Card>
       {shortcuts.length ? <div className="mb-5 flex flex-wrap gap-2">{shortcuts.map((item) => <Button key={item.id} variant="outline" size="sm" onClick={() => apply(item)}><Star className="h-3.5 w-3.5" />{item.name}</Button>)}</div> : null}
       <div className="grid gap-5 xl:grid-cols-[360px_minmax(0,1fr)]">
         <div className="grid content-start gap-5">
@@ -263,7 +325,7 @@ export default function CustomReportsPage() {
               <div className="grid gap-2"><span className="text-sm font-medium">表头维度</span><Select value={config.dimension} onValueChange={(value) => patch({ dimension: value as DimensionKind })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="day">按天</SelectItem><SelectItem value="hour">按小时</SelectItem><SelectItem value="event">事件名</SelectItem><SelectItem value="property">事件参数</SelectItem></SelectContent></Select>{config.dimension === "property" ? <Select value={config.property} onValueChange={(value) => patch({ property: value })}><SelectTrigger><SelectValue placeholder="选择参数" /></SelectTrigger><SelectContent>{(properties.data?.data || []).map((item) => <SelectItem key={item.id} value={item.name}>{item.name}</SelectItem>)}</SelectContent></Select> : null}</div>
             </>}
           </CardContent></Card>
-          <Card><CardContent className="grid gap-3 pt-5 sm:pt-5"><div className="text-sm font-medium">指标列</div>{!isCohort ? <><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={config.showCount} onChange={(event) => patch({ showCount: event.target.checked })} />事件次数</label><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={config.showUsers} onChange={(event) => patch({ showUsers: event.target.checked })} />去重用户</label></> : <p className="text-sm text-muted-foreground">固定展示新增用户、各 Day 的事件次数与触发人数。</p>}{config.formulas.map((formula) => <div key={formula.id} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-2"><Input value={formula.label} onChange={(event) => patchFormula(formula.id, { label: event.target.value })} placeholder="列名称，例如 人均展示" /><Input value={formula.expression} onChange={(event) => patchFormula(formula.id, { expression: event.target.value })} placeholder={isCohort ? "例如 d0_count / cohort_users" : "例如 count / users"} /><Button size="icon" variant="ghost" disabled={config.formulas.length === 1} onClick={() => patch({ formulas: config.formulas.filter((item) => item.id !== formula.id) })} aria-label="删除公式列"><Trash2 className="h-4 w-4" /></Button></div>)}<Button variant="outline" size="sm" className="w-fit" onClick={() => patch({ formulas: [...config.formulas, { id: `formula_${Date.now()}`, label: "新公式", expression: "" }] })}><Plus className="h-4 w-4" />新增公式列</Button><p className="text-xs text-muted-foreground">{isCohort ? <>可用 <code>cohort_users</code>、<code>d0_count</code>、<code>d0_users</code>、<code>d1_count</code>；DayN 对应 <code>dN_count</code>、<code>dN_users</code>。</> : <>支持 <code>count</code>、<code>users</code>、数字、<code>+ - * / ()</code>。</>}</p>{formulaColumns.some((formula) => Object.keys(firstFormulaValues).length > 0 && metricFormula(formula.expression, firstFormulaValues) === null) ? <Badge variant="danger">存在无效公式</Badge> : null}</CardContent></Card>
+          <Card><CardContent className="grid gap-3 pt-5 sm:pt-5"><div className="text-sm font-medium">指标列</div>{!isCohort ? <><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={config.showCount} onChange={(event) => patch({ showCount: event.target.checked })} />事件次数</label><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={config.showUsers} onChange={(event) => patch({ showUsers: event.target.checked })} />去重用户</label><div className="grid gap-2"><span className="text-sm font-medium">数值参数求和</span><Select onValueChange={addSumProperty}><SelectTrigger><SelectValue placeholder="选择数值参数" /></SelectTrigger><SelectContent>{(properties.data?.data || []).filter((item) => !config.sumProperties.includes(item.name)).map((item) => <SelectItem key={item.id} value={item.name}>{item.display_name || item.name}</SelectItem>)}</SelectContent></Select>{config.sumProperties.length ? <div className="flex flex-wrap gap-2">{config.sumProperties.map((property) => <Button key={property} size="sm" variant="secondary" onClick={() => patch({ sumProperties: config.sumProperties.filter((item) => item !== property) })}>{property}<Trash2 className="h-3.5 w-3.5" /></Button>)}</div> : null}</div></> : <p className="text-sm text-muted-foreground">固定展示新增用户、各 Day 的事件次数与触发人数。</p>}{config.formulas.map((formula) => <div key={formula.id} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-2"><Input value={formula.label} onChange={(event) => patchFormula(formula.id, { label: event.target.value })} placeholder="列名称，例如 人均展示" /><Input value={formula.expression} onChange={(event) => patchFormula(formula.id, { expression: event.target.value })} placeholder={isCohort ? "例如 d0_count / cohort_users" : "例如 count / users"} /><Button size="icon" variant="ghost" disabled={config.formulas.length === 1} onClick={() => patch({ formulas: config.formulas.filter((item) => item.id !== formula.id) })} aria-label="删除公式列"><Trash2 className="h-4 w-4" /></Button></div>)}<Button variant="outline" size="sm" className="w-fit" onClick={() => patch({ formulas: [...config.formulas, { id: `formula_${Date.now()}`, label: "新公式", expression: "" }] })}><Plus className="h-4 w-4" />新增公式列</Button><p className="text-xs text-muted-foreground">{isCohort ? <>可用 <code>cohort_users</code>、<code>d0_count</code>、<code>d0_users</code>、<code>d1_count</code>；DayN 对应 <code>dN_count</code>、<code>dN_users</code>。</> : <>支持 <code>count</code>、<code>users</code>、已选数值参数、数字、<code>+ - * / ()</code>。</>}</p>{formulaColumns.some((formula) => Object.keys(firstFormulaValues).length > 0 && metricFormula(formula.expression, firstFormulaValues) === null) ? <Badge variant="danger">存在无效公式</Badge> : null}</CardContent></Card>
           <Card><CardContent className="grid gap-3 pt-5 sm:pt-5"><div className="text-sm font-medium">展示与保存</div><Select value={config.chart} onValueChange={(value) => patch({ chart: value as ChartKind })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="table">表格</SelectItem><SelectItem value="line">折线图</SelectItem><SelectItem value="bar">柱状图</SelectItem></SelectContent></Select><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={config.shortcut} onChange={(event) => patch({ shortcut: event.target.checked })} />设为快捷报表</label><Input value={name} onChange={(event) => setName(event.target.value)} placeholder="报表名称" /><div className="flex gap-2"><Button disabled={!projectId || query.isPending || cohortQuery.isPending || (!isCohort && config.dimension === "property" && !config.property) || (isCohort && (!config.cohort.cohortEvent || !config.cohort.metricEvent))} onClick={runReport}><Play className="h-4 w-4" />运行</Button><Button variant="outline" disabled={!projectId || !name.trim() || save.isPending} onClick={() => save.mutate()}><Bookmark className="h-4 w-4" />保存</Button></div>{(isCohort ? cohortQuery.error : query.error) ? <Badge variant="danger">{String(isCohort ? cohortQuery.error : query.error)}</Badge> : null}</CardContent></Card>
         </div>
         <div className="grid content-start gap-5">
@@ -288,7 +350,7 @@ function CohortControls({ config, events, onChange }: { config: CohortConfig; ev
 
 function ReportTable({ rows, config }: { rows: QueryTableRow[]; config: ReportConfig }) {
   const formulas = config.formulas.filter((formula) => formula.expression.trim());
-  return <div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>{dimensionLabel(config.dimension, config.property)}</TableHead>{config.showCount ? <TableHead className="text-right">事件次数</TableHead> : null}{config.showUsers ? <TableHead className="text-right">去重用户</TableHead> : null}{formulas.map((formula) => <TableHead key={formula.id} className="text-right">{formula.label || "公式"}</TableHead>)}</TableRow></TableHeader><TableBody>{rows.map((row, index) => <TableRow key={index}><TableCell>{row.dimensions[0]?.label || "-"}</TableCell>{config.showCount ? <TableCell className="text-right font-mono">{row.count.toLocaleString()}</TableCell> : null}{config.showUsers ? <TableCell className="text-right font-mono">{row.users.toLocaleString()}</TableCell> : null}{formulas.map((formula) => <TableCell key={formula.id} className="text-right font-mono">{(metricFormula(formula.expression, { count: row.count, users: row.users }) ?? 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}</TableCell>)}</TableRow>)}</TableBody></Table></div>;
+  return <div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>{dimensionLabel(config.dimension, config.property)}</TableHead>{config.showCount ? <TableHead className="text-right">事件次数</TableHead> : null}{config.showUsers ? <TableHead className="text-right">去重用户</TableHead> : null}{config.sumProperties.map((property) => <TableHead key={property} className="text-right">{property} 总和</TableHead>)}{formulas.map((formula) => <TableHead key={formula.id} className="text-right">{formula.label || "公式"}</TableHead>)}</TableRow></TableHeader><TableBody>{rows.map((row, index) => <TableRow key={index}><TableCell>{row.dimensions[0]?.label || "-"}</TableCell>{config.showCount ? <TableCell className="text-right font-mono">{row.count.toLocaleString()}</TableCell> : null}{config.showUsers ? <TableCell className="text-right font-mono">{row.users.toLocaleString()}</TableCell> : null}{config.sumProperties.map((property) => <TableCell key={property} className="text-right font-mono">{(row.sums[property] || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}</TableCell>)}{formulas.map((formula) => <TableCell key={formula.id} className="text-right font-mono">{(metricFormula(formula.expression, standardFormulaValues(row)) ?? 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}</TableCell>)}</TableRow>)}</TableBody></Table></div>;
 }
 
 function CohortReportTable({ rows, config }: { rows: CohortTableRow[]; config: ReportConfig }) {

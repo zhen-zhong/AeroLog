@@ -790,19 +790,23 @@ type QueryDimValue struct {
 
 // QueryRow 自助查询的一行聚合结果。
 type QueryRow struct {
-	Dimensions  []QueryDimValue `json:"dimensions"`
-	Count       uint64          `json:"count"`
-	Users       uint64          `json:"users"`
-	SampleUsers []string        `json:"sample_users"`
+	Dimensions  []QueryDimValue    `json:"dimensions"`
+	Count       uint64             `json:"count"`
+	Users       uint64             `json:"users"`
+	Sums        map[string]float64 `json:"sums"`
+	SampleUsers []string           `json:"sample_users"`
 }
 
 // QueryTableBody 是 queryTable / queryTableExport 公用的请求体。
 type QueryTableBody struct {
-	Events     []string `json:"events"`
-	From       int64    `json:"from"`
-	To         int64    `json:"to"`
-	Limit      int      `json:"limit"`
-	Dimensions []struct {
+	Events []string `json:"events"`
+	From   int64    `json:"from"`
+	To     int64    `json:"to"`
+	Limit  int      `json:"limit"`
+	// SumProperties requests a numeric sum for each named event property.
+	// Values that cannot be parsed as numbers contribute zero.
+	SumProperties []string `json:"sum_properties"`
+	Dimensions    []struct {
 		Type string `json:"type"`
 		Key  string `json:"key"`
 	} `json:"dimensions"`
@@ -860,6 +864,22 @@ func (h *AnalyticsHandler) executeQueryTable(ctx context.Context, pid uint32, bo
 	if len(body.Filters) > 8 {
 		return nil, nil, &queryTableError{Status: http.StatusBadRequest, Msg: "filters length must be <= 8"}
 	}
+	if len(body.SumProperties) > 5 {
+		return nil, nil, &queryTableError{Status: http.StatusBadRequest, Msg: "sum_properties length must be <= 5"}
+	}
+	sumProperties := make([]string, 0, len(body.SumProperties))
+	seenSums := map[string]struct{}{}
+	for _, property := range body.SumProperties {
+		property = strings.TrimSpace(property)
+		if property == "" || len(property) > 128 {
+			return nil, nil, &queryTableError{Status: http.StatusBadRequest, Msg: "invalid sum property"}
+		}
+		if _, exists := seenSums[property]; exists {
+			continue
+		}
+		seenSums[property] = struct{}{}
+		sumProperties = append(sumProperties, property)
+	}
 	if len(body.Dimensions) == 0 {
 		body.Dimensions = append(body.Dimensions, struct {
 			Type string `json:"type"`
@@ -894,6 +914,10 @@ func (h *AnalyticsHandler) executeQueryTable(ctx context.Context, pid uint32, bo
 			return nil, nil, &queryTableError{Status: http.StatusBadRequest, Msg: "invalid dimension"}
 		}
 		groupKeys = append(groupKeys, alias)
+	}
+	for i, property := range sumProperties {
+		selects = append(selects, "sum(toFloat64OrZero(JSONExtractRaw(properties, ?))) AS s"+strconv.Itoa(i))
+		selectArgs = append(selectArgs, property)
 	}
 
 	where := `project_id = ? AND time BETWEEN fromUnixTimestamp64Milli(?) AND fromUnixTimestamp64Milli(?)`
@@ -961,14 +985,19 @@ func (h *AnalyticsHandler) executeQueryTable(ctx context.Context, pid uint32, bo
 	out := []QueryRow{}
 	for rows.Next() {
 		rawDims := make([]string, len(metas))
-		dest := make([]any, 0, len(metas)+2)
+		dest := make([]any, 0, len(metas)+len(sumProperties)+3)
 		for i := range rawDims {
 			dest = append(dest, &rawDims[i])
 		}
 		var count uint64
 		var users uint64
+		sumValues := make([]float64, len(sumProperties))
 		sampleUsers := []string{}
-		dest = append(dest, &count, &users, &sampleUsers)
+		dest = append(dest, &count, &users)
+		for i := range sumValues {
+			dest = append(dest, &sumValues[i])
+		}
+		dest = append(dest, &sampleUsers)
 		if err := rows.Scan(dest...); err != nil {
 			continue
 		}
@@ -978,7 +1007,11 @@ func (h *AnalyticsHandler) executeQueryTable(ctx context.Context, pid uint32, bo
 			value, label := parseDimensionValue(meta.Type, raw)
 			dims = append(dims, QueryDimValue{Type: meta.Type, Key: meta.Key, Raw: raw, Label: label, Value: value})
 		}
-		out = append(out, QueryRow{Dimensions: dims, Count: count, Users: users, SampleUsers: sampleUsers})
+		sums := make(map[string]float64, len(sumProperties))
+		for i, property := range sumProperties {
+			sums[property] = sumValues[i]
+		}
+		out = append(out, QueryRow{Dimensions: dims, Count: count, Users: users, Sums: sums, SampleUsers: sampleUsers})
 	}
 	return out, metas, nil
 }
