@@ -993,10 +993,10 @@ func (h *AnalyticsHandler) executeQueryTable(ctx context.Context, pid uint32, bo
 		var users uint64
 		sumValues := make([]float64, len(sumProperties))
 		sampleUsers := []string{}
-		dest = append(dest, &count, &users)
 		for i := range sumValues {
 			dest = append(dest, &sumValues[i])
 		}
+		dest = append(dest, &count, &users)
 		dest = append(dest, &sampleUsers)
 		if err := rows.Scan(dest...); err != nil {
 			return nil, nil, fmt.Errorf("scan query table row: %w", err)
