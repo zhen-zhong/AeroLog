@@ -999,7 +999,7 @@ func (h *AnalyticsHandler) executeQueryTable(ctx context.Context, pid uint32, bo
 		}
 		dest = append(dest, &sampleUsers)
 		if err := rows.Scan(dest...); err != nil {
-			continue
+			return nil, nil, fmt.Errorf("scan query table row: %w", err)
 		}
 		dims := make([]QueryDimValue, 0, len(metas))
 		for i, meta := range metas {
