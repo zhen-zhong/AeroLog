@@ -95,6 +95,11 @@ function coreTemplates(): CoreTemplate[] {
       config: { ...base, events: ["coin_earned"], chart: "bar", showCount: false, showUsers: false, sumProperties: ["coin_amount"], formulas: [] },
     },
     {
+      name: "广告分析",
+      description: "广告展示、完成率、失败率与广告位分组表现。",
+      href: "/console/ads",
+    },
+    {
       name: "留存",
       description: "新用户启动后 Day0～Day7 回访。",
       href: "/console/retention?initial_event=%24AppStart&return_event=%24AppStart&days=7",

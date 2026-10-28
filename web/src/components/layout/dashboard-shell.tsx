@@ -49,6 +49,7 @@ const navGroups = [
       { href: "/console/paths", label: "行为路径", icon: Route },
       { href: "/console/sessions", label: "Session", icon: CircleDot },
       { href: "/console/attribution", label: "归因", icon: Compass },
+      { href: "/console/ads", label: "广告分析", icon: BarChart3 },
     ],
   },
   {

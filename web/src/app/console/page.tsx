@@ -14,7 +14,7 @@ import {
   ReportControls,
   ToolbarPanel,
 } from "@/features/analytics/analytics-ui";
-import { api } from "@/lib/api";
+import { api, QueryTableRow } from "@/lib/api";
 import { useProjectStore } from "@/stores/project-store";
 
 const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
@@ -54,6 +54,35 @@ export default function ConsolePage() {
     enabled: !!projectId && !!event,
   });
 
+  const { data: core, isLoading: coreLoading } = useQuery({
+    queryKey: ["overview_core_metrics", projectId, tsRange],
+    queryFn: async () => {
+      const query = (eventName: string, options?: { firstDay?: boolean; sumProperty?: string }) =>
+        api.queryTable(projectId!, {
+          events: [eventName],
+          ...tsRange,
+          dimensions: [{ type: "event", key: "event" }],
+          filters: options?.firstDay ? [{ property: "$is_first_day", op: "eq", value: true }] : [],
+          sum_properties: options?.sumProperty ? [options.sumProperty] : [],
+        });
+      const [newUsers, adShows, adCompletes, coins] = await Promise.all([
+        query("$AppStart", { firstDay: true }),
+        query("ad_show"),
+        query("ad_complete"),
+        query("coin_earned", { sumProperty: "coin_amount" }),
+      ]);
+      const total = (rows: QueryTableRow[], key: "count" | "users") => rows.reduce((sum, row) => sum + row[key], 0);
+      return {
+        newUsers: total(newUsers.data.rows, "users"),
+        adShows: total(adShows.data.rows, "count"),
+        adUsers: total(adShows.data.rows, "users"),
+        adCompletes: total(adCompletes.data.rows, "count"),
+        coins: coins.data.rows.reduce((sum, row) => sum + (row.sums.coin_amount || 0), 0),
+      };
+    },
+    enabled: !!projectId,
+  });
+
   const chartOption = useMemo(() => {
     const points = trend?.data || [];
     return {
@@ -87,12 +116,14 @@ export default function ConsolePage() {
   const topRows = top?.data || [];
   const totalEvents = topRows.reduce((sum, item) => sum + item.count, 0);
   const totalUsers = topRows.reduce((sum, item) => sum + item.users, 0);
+  const adPerUser = core?.adUsers ? Number((core.adShows / core.adUsers).toFixed(2)) : 0;
+  const adCompletionRate = core?.adShows ? Number(((core.adCompletes / core.adShows) * 100).toFixed(2)) : 0;
 
   return (
     <div>
       <AnalyticsHeader
         title="概览"
-        description="聚合最近 7 天的核心事件、活跃用户和趋势走势，用同一套事件流验证采集、消费、分析链路是否闭环。"
+        description="核心经营指标与事件趋势。所有指标均基于当前项目已入库事件。"
       />
 
       <ReportControls
@@ -102,10 +133,12 @@ export default function ConsolePage() {
         filters={["全部事件", "全部用户"]}
       />
 
-      <div className="mb-5 grid gap-3 sm:grid-cols-3">
-        <MetricTile label="Top 事件量" value={totalEvents} hint="当前时间范围命中 Top 列表" loading={topLoading} />
-        <MetricTile label="覆盖用户" value={totalUsers} hint="按事件去重用户聚合" loading={topLoading} />
-        <MetricTile label="事件种类" value={topRows.length} hint="当前项目已上报事件" loading={topLoading} />
+      <div className="mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        <MetricTile label="新增用户" value={core?.newUsers || 0} hint="$AppStart 且首次启动" loading={coreLoading} />
+        <MetricTile label="广告展示" value={core?.adShows || 0} hint="ad_show" loading={coreLoading} />
+        <MetricTile label="人均广告展示" value={adPerUser} hint="展示次数 / 展示用户" loading={coreLoading} />
+        <MetricTile label="广告完成率" value={adCompletionRate} hint="ad_complete / ad_show（%）" loading={coreLoading} />
+        <MetricTile label="金币收入" value={core?.coins || 0} hint="coin_earned.coin_amount" loading={coreLoading} />
       </div>
 
       {!projectId ? (
@@ -140,20 +173,18 @@ export default function ConsolePage() {
         <div className="grid gap-3 text-sm sm:grid-cols-3">
           <div className="flex items-center gap-3">
             <Zap className="h-4 w-4 text-primary" />
-            <span className="text-muted-foreground">采集入口</span>
-            <span className="font-medium">Collector</span>
+            <span className="text-muted-foreground">Top 事件量</span>
+            <span className="font-medium tabular-nums">{totalEvents.toLocaleString()}</span>
           </div>
           <div className="flex items-center gap-3">
             <BarChart3 className="h-4 w-4 text-primary" />
-            <span className="text-muted-foreground">分析存储</span>
-            <span className="font-medium">ClickHouse</span>
+            <span className="text-muted-foreground">Top 事件覆盖用户</span>
+            <span className="font-medium tabular-nums">{totalUsers.toLocaleString()}</span>
           </div>
           <div className="flex items-center gap-3">
             <UsersRound className="h-4 w-4 text-primary" />
-            <span className="text-muted-foreground">画像治理</span>
-            <span className="inline-flex items-center gap-1 font-medium">
-              Ready <ArrowUpRight className="h-3.5 w-3.5" />
-            </span>
+            <span className="text-muted-foreground">事件种类</span>
+            <span className="inline-flex items-center gap-1 font-medium tabular-nums">{topRows.length}<ArrowUpRight className="h-3.5 w-3.5" /></span>
           </div>
         </div>
       </ToolbarPanel>
