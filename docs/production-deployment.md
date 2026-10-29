@@ -330,12 +330,15 @@ sudo systemctl enable --now aerolog-managed-kafka-firewall.service
 
 由神策订阅写入的 topic 应与 AeroLog SDK 原始事件 topic 隔离，例如 `aerolog.test.sensors.events.v1`、`aerolog.test.sensors.profiles.v1`、`aerolog.test.sensors.details.v1`。首次只验证 Kafka 可接收消息；将神策事件转换并写入 AeroLog 分析表前，需单独启用对应的导入消费者，避免把两种事件协议混写到 `AEROLOG_KAFKA_TOPIC`。
 
-神策事件导入使用 profile 隔离的 `sensors-consumer`。先在 AeroLog 控制台创建用于承载神策数据的目标项目，再在服务器私有 `.env` 设置其本地项目 ID：
+神策事件导入使用 profile 隔离的 `sensors-consumer`。多个 AeroLog 项目复用一个神策订阅应用和两条 Topic；消费者读取消息中的神策 `project_id`，按控制台保存的映射写入对应 AeroLog 项目。服务器私有 `.env` 配置共享订阅应用与加密密钥：
 
 ```bash
 AEROLOG_SENSORS_EVENTS_TOPIC=<sensors-events-topic>
 AEROLOG_SENSORS_PROFILES_TOPIC=<sensors-profiles-topic>
-AEROLOG_SENSORS_TARGET_PROJECT_ID=<aerolog-project-id>
+AEROLOG_SENSORS_APPLICATION_NAME=<shared-sensors-application-name>
+AEROLOG_INTEGRATION_ENCRYPTION_KEY=<random-server-only-secret>
+# 完成所有现有项目映射后必须为 0；仅迁移旧单项目订阅时临时使用。
+AEROLOG_SENSORS_TARGET_PROJECT_ID=0
 # Synchronous, bounded ClickHouse writes. Failed writes keep the Kafka offset.
 AEROLOG_CONSUMER_BATCH_SIZE=200
 AEROLOG_CONSUMER_BATCH_MS=5000
@@ -349,6 +352,8 @@ AEROLOG_CONSUMER_RETRY_MAX_MS=30000
 ```bash
 docker compose --profile sensorsdata up -d --build sensors-consumer
 ```
+
+启动后，在 `管理 → 项目管理 → 神策接入` 为每个项目输入神策服务地址、项目英文名和 API Key。服务端查询既有共享订阅应用、创建“所有事件 + 所有普通属性”订阅，并保存 `神策 project_id → AeroLog project_id` 路由。API Key 使用 `AEROLOG_INTEGRATION_ENCRYPTION_KEY` AES-GCM 加密保存，接口仅返回掩码。若项目已在共享应用上有订阅，选择“复用已有神策订阅”并填写神策项目 ID，避免重复订阅。
 
 事件与用户 profile 分别使用独立 Kafka topic、consumer group 和容器；神策 `project_id` 不会直接作为 AeroLog `project_id`，以避免跨平台 ID 冲突。事件消费者也会创建仅含身份信息的用户快照，因此 profile topic 尚未产生数据时，用户列表仍可展示已观测身份。ClickHouse 写入失败时会保留 Kafka offset 并指数退避重试，写入成功后才提交 offset。
 

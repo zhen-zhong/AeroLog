@@ -3,27 +3,48 @@
 package sensorsdata
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/aerolog/server/pkg/model"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // DecodeFlatten converts one event from a Sensors Data event Kafka topic.
 // targetProjectID is deliberately supplied by deployment configuration: a
 // Sensors Data project ID is not an AeroLog project ID.
 func DecodeFlatten(data []byte, targetProjectID uint32) (*model.EnvelopedEvent, error) {
-	if targetProjectID == 0 {
-		return nil, errors.New("sensors target project id is required")
-	}
-
 	var record map[string]interface{}
 	if err := json.Unmarshal(data, &record); err != nil {
 		return nil, fmt.Errorf("decode sensors flatten json: %w", err)
+	}
+	return decodeFlattenRecord(record, targetProjectID)
+}
+
+// DecodeFlattenRouted maps a Sensors Data record using its source project_id.
+// The source ID belongs to Sensors Data; router resolves it to AeroLog project ID.
+func DecodeFlattenRouted(data []byte, router *ProjectRouter) (*model.EnvelopedEvent, error) {
+	var record map[string]interface{}
+	if err := json.Unmarshal(data, &record); err != nil {
+		return nil, fmt.Errorf("decode sensors flatten json: %w", err)
+	}
+	targetProjectID, err := router.Resolve(sourceProjectID(record))
+	if err != nil {
+		return nil, err
+	}
+	return decodeFlattenRecord(record, targetProjectID)
+}
+
+func decodeFlattenRecord(record map[string]interface{}, targetProjectID uint32) (*model.EnvelopedEvent, error) {
+	if targetProjectID == 0 {
+		return nil, errors.New("sensors target project id is required")
 	}
 
 	eventName := stringValue(record["event"])
@@ -86,13 +107,29 @@ func DecodeFlatten(data []byte, targetProjectID uint32) (*model.EnvelopedEvent, 
 // DecodeFlattenProfile converts a Sensors Data profile record from a
 // FLATTEN_JSON profile topic into an AeroLog profile event.
 func DecodeFlattenProfile(data []byte, targetProjectID uint32) (*model.EnvelopedEvent, error) {
-	if targetProjectID == 0 {
-		return nil, errors.New("sensors target project id is required")
-	}
-
 	var record map[string]interface{}
 	if err := json.Unmarshal(data, &record); err != nil {
 		return nil, fmt.Errorf("decode sensors flatten profile json: %w", err)
+	}
+	return decodeFlattenProfileRecord(record, targetProjectID)
+}
+
+// DecodeFlattenProfileRouted maps profile records with same source-project route.
+func DecodeFlattenProfileRouted(data []byte, router *ProjectRouter) (*model.EnvelopedEvent, error) {
+	var record map[string]interface{}
+	if err := json.Unmarshal(data, &record); err != nil {
+		return nil, fmt.Errorf("decode sensors flatten profile json: %w", err)
+	}
+	targetProjectID, err := router.Resolve(sourceProjectID(record))
+	if err != nil {
+		return nil, err
+	}
+	return decodeFlattenProfileRecord(record, targetProjectID)
+}
+
+func decodeFlattenProfileRecord(record map[string]interface{}, targetProjectID uint32) (*model.EnvelopedEvent, error) {
+	if targetProjectID == 0 {
+		return nil, errors.New("sensors target project id is required")
 	}
 
 	props := objectValue(record["properties"])
@@ -217,4 +254,54 @@ func millis(value interface{}) (int64, bool) {
 	default:
 		return 0, false
 	}
+}
+
+func sourceProjectID(record map[string]interface{}) string {
+	return stringValue(record["project_id"])
+}
+
+type cacheEntry struct {
+	projectID uint32
+	expiresAt time.Time
+}
+
+// ProjectRouter keeps a short positive cache and resolves new source projects
+// immediately. Existing static deployments can retain a fallback during migration.
+type ProjectRouter struct {
+	pg       *pgxpool.Pool
+	fallback uint32
+	mu       sync.RWMutex
+	cache    map[string]cacheEntry
+}
+
+func NewProjectRouter(pg *pgxpool.Pool, fallback uint32) *ProjectRouter {
+	return &ProjectRouter{pg: pg, fallback: fallback, cache: map[string]cacheEntry{}}
+}
+
+func (r *ProjectRouter) Resolve(sourceID string) (uint32, error) {
+	sourceID = strings.TrimSpace(sourceID)
+	if sourceID == "" {
+		return 0, errors.New("sensors record has no project_id")
+	}
+	now := time.Now()
+	r.mu.RLock()
+	entry, ok := r.cache[sourceID]
+	r.mu.RUnlock()
+	if ok && now.Before(entry.expiresAt) {
+		return entry.projectID, nil
+	}
+	if r.pg != nil {
+		var projectID uint32
+		err := r.pg.QueryRow(context.Background(), `SELECT project_id FROM sensors_integrations WHERE source_project_id=$1 AND status=1`, sourceID).Scan(&projectID)
+		if err == nil && projectID > 0 {
+			r.mu.Lock()
+			r.cache[sourceID] = cacheEntry{projectID: projectID, expiresAt: now.Add(time.Minute)}
+			r.mu.Unlock()
+			return projectID, nil
+		}
+	}
+	if r.fallback > 0 {
+		return r.fallback, nil
+	}
+	return 0, fmt.Errorf("no AeroLog project mapping for Sensors Data project_id %q", sourceID)
 }

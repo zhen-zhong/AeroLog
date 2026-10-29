@@ -70,3 +70,21 @@ func TestDecodeFlattenProfileRejectsUnsupportedOperation(t *testing.T) {
 		t.Fatal("expected unsupported profile operation to fail")
 	}
 }
+
+func TestDecodeFlattenRoutedUsesSourceProject(t *testing.T) {
+	router := NewProjectRouter(nil, 9)
+	got, err := DecodeFlattenRouted([]byte(`{"project_id":29,"event":"ad_show","distinct_id":"device-1","time":1792558800000,"properties":{}}`), router)
+	if err != nil {
+		t.Fatalf("DecodeFlattenRouted() error = %v", err)
+	}
+	if got.ProjectID != 9 {
+		t.Fatalf("got project %d, want fallback 9", got.ProjectID)
+	}
+}
+
+func TestDecodeFlattenRoutedRejectsMissingMapping(t *testing.T) {
+	_, err := DecodeFlattenRouted([]byte(`{"project_id":29,"event":"ad_show","distinct_id":"device-1","time":1792558800000,"properties":{}}`), NewProjectRouter(nil, 0))
+	if err == nil {
+		t.Fatal("expected missing route to fail")
+	}
+}

@@ -2,7 +2,7 @@
 
 import { FormEvent, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Copy, Plus, ShieldCheck, ShieldOff } from "lucide-react";
+import { Copy, Link2, Plus, ShieldCheck, ShieldOff } from "lucide-react";
 import { api, Project, ProjectStatus } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
 import { PageHeader } from "@/components/layout/page-header";
@@ -65,6 +65,7 @@ export function ProjectsPage() {
   const [status, setStatus] = useState<ProjectStatus>(1);
   const [description, setDescription] = useState("");
   const [error, setError] = useState("");
+  const [sensorsProject, setSensorsProject] = useState<Project | null>(null);
   const user = useAuthStore((s) => s.user);
   const isPlatformAdmin = user?.role === "admin";
   const canManageProjects = isPlatformAdmin || user?.role === "company_admin";
@@ -186,6 +187,7 @@ export function ProjectsPage() {
                   <TableHead className="min-w-64">描述</TableHead>
                   <TableHead className="min-w-40">签名校验</TableHead>
                   <TableHead className="min-w-24">状态</TableHead>
+                  <TableHead className="min-w-32">数据接入</TableHead>
                   <TableHead className="min-w-48">创建时间</TableHead>
                 </TableRow>
               </TableHeader>
@@ -193,7 +195,7 @@ export function ProjectsPage() {
                 {isLoading ? (
                   Array.from({ length: 4 }).map((_, index) => (
                     <TableRow key={index}>
-                      <TableCell colSpan={10}>
+                      <TableCell colSpan={11}>
                         <Skeleton className="h-8 w-full" />
                       </TableCell>
                     </TableRow>
@@ -207,11 +209,12 @@ export function ProjectsPage() {
                       statusPending={statusMut.isPending}
                       onToggleSignature={toggleSignature}
                       onStatusChange={changeStatus}
+                      onSensorsConnect={setSensorsProject}
                     />
                   ))
                 ) : (
                   <TableRow>
-                    <TableCell colSpan={10} className="h-28 text-center text-sm text-muted-foreground">
+                    <TableCell colSpan={11} className="h-28 text-center text-sm text-muted-foreground">
                       暂无项目
                     </TableCell>
                   </TableRow>
@@ -317,6 +320,10 @@ export function ProjectsPage() {
           </form>
         </SheetContent>
       </Sheet>
+      <SensorsIntegrationSheet
+        project={sensorsProject}
+        onOpenChange={(next) => { if (!next) setSensorsProject(null); }}
+      />
     </AnimatedContent>
   );
 }
@@ -327,12 +334,14 @@ function ProjectRow({
   statusPending,
   onToggleSignature,
   onStatusChange,
+  onSensorsConnect,
 }: {
   project: Project;
   pending: boolean;
   statusPending: boolean;
   onToggleSignature: (project: Project) => void;
   onStatusChange: (project: Project, status: ProjectStatus) => void;
+  onSensorsConnect: (project: Project) => void;
 }) {
   return (
     <TableRow>
@@ -357,8 +366,97 @@ function ProjectRow({
           onChange={(nextStatus) => onStatusChange(project, nextStatus)}
         />
       </TableCell>
+      <TableCell>
+        <Button type="button" variant="outline" size="sm" className="h-8 gap-1.5" onClick={() => onSensorsConnect(project)} disabled={project.role !== "owner"}>
+          <Link2 className="h-3.5 w-3.5" />
+          神策接入
+        </Button>
+      </TableCell>
       <TableCell className="text-muted-foreground">{formatDateTime(project.created_at)}</TableCell>
     </TableRow>
+  );
+}
+
+function SensorsIntegrationSheet({ project, onOpenChange }: { project: Project | null; onOpenChange: (open: boolean) => void }) {
+  const qc = useQueryClient();
+  const [endpoint, setEndpoint] = useState("");
+  const [sourceProject, setSourceProject] = useState("");
+  const [apiKey, setAPIKey] = useState("");
+  const [sourceProjectID, setSourceProjectID] = useState("");
+  const [reuse, setReuse] = useState(false);
+  const [error, setError] = useState("");
+  const integration = useQuery({
+    queryKey: ["sensors-integration", project?.id],
+    queryFn: () => api.getSensorsIntegration(project!.id),
+    enabled: !!project,
+    retry: false,
+  });
+  const connect = useMutation({
+    mutationFn: () => api.connectSensorsIntegration(project!.id, {
+      endpoint: endpoint.trim(), project: sourceProject.trim(), api_key: apiKey.trim(),
+      ...(sourceProjectID.trim() ? { source_project_id: sourceProjectID.trim() } : {}),
+      reuse_subscription: reuse,
+    }),
+    onSuccess: () => {
+      setAPIKey(""); setError("");
+      qc.invalidateQueries({ queryKey: ["sensors-integration", project?.id] });
+    },
+    onError: (e: Error) => setError(e.message),
+  });
+  const saved = integration.data?.data;
+
+  function submit(e: FormEvent) {
+    e.preventDefault();
+    if (!endpoint.trim() || !sourceProject.trim() || !apiKey.trim()) { setError("请填写神策地址、项目英文名和 API Key"); return; }
+    if (reuse && !sourceProjectID.trim()) { setError("复用已有订阅时必须填写神策项目 ID"); return; }
+    connect.mutate();
+  }
+
+  return (
+    <Sheet open={!!project} onOpenChange={onOpenChange}>
+      <SheetContent side="right" className="overflow-y-auto sm:max-w-xl">
+        <SheetHeader>
+          <SheetTitle>神策实时接入</SheetTitle>
+          <SheetDescription>{project ? `为「${project.name}」创建独立数据路由。共享 Kafka 接收应用不会重复创建。` : ""}</SheetDescription>
+        </SheetHeader>
+        {saved && (
+          <div className="mt-5 rounded-lg border bg-muted/30 p-3 text-sm">
+            <p className="font-medium">已连接：{saved.source_project}（ID {saved.source_project_id}）</p>
+            <p className="mt-1 break-all text-muted-foreground">API Key：{saved.api_key_hint || "已保存"}；订阅：{saved.subscription_id || "已有订阅"}</p>
+          </div>
+        )}
+        <form onSubmit={submit} className="mt-6 space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="sensors-endpoint">神策服务地址</Label>
+            <Input id="sensors-endpoint" value={endpoint} onChange={(e) => setEndpoint(e.target.value)} placeholder="http://your-sensors-host:8107" autoComplete="url" />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="sensors-project">神策项目英文名</Label>
+            <Input id="sensors-project" value={sourceProject} onChange={(e) => setSourceProject(e.target.value)} placeholder="如：RbowDrama" autoComplete="off" />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="sensors-key">API Key</Label>
+            <Input id="sensors-key" type="password" value={apiKey} onChange={(e) => setAPIKey(e.target.value)} placeholder="神策 API Key" autoComplete="new-password" />
+            <p className="text-xs text-muted-foreground">仅加密保存；项目列表和接口不会返回明文。</p>
+          </div>
+          <label className="flex cursor-pointer items-center gap-2 text-sm">
+            <input type="checkbox" checked={reuse} onChange={(e) => setReuse(e.target.checked)} />
+            复用已有神策订阅，不再新建订阅
+          </label>
+          {reuse && (
+            <div className="space-y-2">
+              <Label htmlFor="sensors-source-id">神策项目 ID</Label>
+              <Input id="sensors-source-id" value={sourceProjectID} onChange={(e) => setSourceProjectID(e.target.value)} placeholder="如：29" inputMode="numeric" />
+            </div>
+          )}
+          {error && <p className="text-sm text-destructive">{error}</p>}
+          <div className="flex justify-end gap-2 pt-2">
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>关闭</Button>
+            <Button type="submit" disabled={connect.isPending}>{connect.isPending ? "连接中..." : reuse ? "保存并启用路由" : "创建订阅并启用路由"}</Button>
+          </div>
+        </form>
+      </SheetContent>
+    </Sheet>
   );
 }
 

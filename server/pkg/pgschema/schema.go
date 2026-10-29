@@ -185,6 +185,28 @@ ALTER TABLE property_definitions ADD COLUMN IF NOT EXISTS hidden BOOLEAN NOT NUL
 ALTER TABLE event_definitions ADD COLUMN IF NOT EXISTS schema_required_props JSONB NOT NULL DEFAULT '[]'::jsonb;
 ALTER TABLE event_definitions ADD COLUMN IF NOT EXISTS schema_locked BOOLEAN NOT NULL DEFAULT false;
 
+-- 神策实时订阅连接。api_key 仅保存应用层 AES-GCM 密文，永不返回给 API 客户端。
+CREATE TABLE IF NOT EXISTS sensors_integrations (
+    project_id         BIGINT       PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+    source_project_id  VARCHAR(128) NOT NULL UNIQUE,
+    source_project     VARCHAR(255) NOT NULL,
+    endpoint           VARCHAR(512) NOT NULL,
+    application_id     VARCHAR(512) NOT NULL DEFAULT '',
+    subscriber         VARCHAR(255) NOT NULL DEFAULT '',
+    subscription_id    BIGINT,
+    api_key_ciphertext TEXT         NOT NULL,
+    api_key_hint       VARCHAR(32)  NOT NULL DEFAULT '',
+    status             SMALLINT     NOT NULL DEFAULT 1,
+    last_error         TEXT         NOT NULL DEFAULT '',
+    last_verified_at   TIMESTAMPTZ,
+    created_by         BIGINT       REFERENCES users(id),
+    created_at         TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    updated_at         TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    CONSTRAINT sensors_integrations_status_check CHECK (status IN (0, 1))
+);
+CREATE INDEX IF NOT EXISTS idx_sensors_integrations_source
+    ON sensors_integrations(source_project_id) WHERE status=1;
+
 DO $$
 DECLARE
     cname text;

@@ -84,6 +84,21 @@ export interface Project {
     role?: "owner" | "editor" | "viewer";
     created_at: string;
 }
+export interface SensorsIntegration {
+    project_id: number;
+    source_project_id: string;
+    source_project: string;
+    endpoint: string;
+    application_id: string;
+    subscriber: string;
+    subscription_id?: number;
+    api_key_hint: string;
+    status: 0 | 1;
+    last_error: string;
+    last_verified_at?: string;
+    created_at: string;
+    updated_at: string;
+}
 export type ProjectStatus = 0 | 1 | 2 | 3;
 export interface AuthUser {
     id: number;
@@ -507,6 +522,15 @@ export const api = {
             body: JSON.stringify(body),
         }),
     getProject: (id: number | string) => req<ApiOne<Project>>(`/projects/${id}`),
+    getSensorsIntegration: (id: number | string) =>
+        req<ApiOne<SensorsIntegration>>(`/projects/${id}/integrations/sensorsdata`),
+    connectSensorsIntegration: (
+        id: number | string,
+        body: { endpoint: string; project: string; api_key: string; source_project_id?: string; reuse_subscription?: boolean },
+    ) => req<ApiOne<SensorsIntegration>>(`/projects/${id}/integrations/sensorsdata`, {
+        method: "PUT",
+        body: JSON.stringify(body),
+    }),
     updateProjectSecurity: (
         id: number | string,
         body: { require_signature: boolean },

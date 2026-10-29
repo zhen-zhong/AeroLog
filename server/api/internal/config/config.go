@@ -14,6 +14,8 @@ type Config struct {
 	JWTSecret          string
 	AllowOrigins       []string
 	DebugRetentionDays int
+	IntegrationKey     string
+	SensorsApplication string
 }
 
 type ClickHouseConf struct {
@@ -37,6 +39,8 @@ func FromEnv() *Config {
 		JWTSecret:          getEnv("AEROLOG_JWT_SECRET", "change-me"),
 		AllowOrigins:       strings.Split(getEnv("AEROLOG_CORS", "*"), ","),
 		DebugRetentionDays: getEnvInt("AEROLOG_DEBUG_RETENTION_DAYS", 7),
+		IntegrationKey:     getEnv("AEROLOG_INTEGRATION_ENCRYPTION_KEY", ""),
+		SensorsApplication: getEnv("AEROLOG_SENSORS_APPLICATION_NAME", ""),
 	}
 }
 

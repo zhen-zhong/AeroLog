@@ -44,7 +44,7 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 		pool.Close()
 		return nil, err
 	}
-	decode, err := inputDecoder(cfg)
+	decode, err := inputDecoder(cfg, pool)
 	if err != nil {
 		_ = sink.Close()
 		pool.Close()
@@ -73,23 +73,19 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 	}, nil
 }
 
-func inputDecoder(cfg *config.Config) (worker.DecodeFunc, error) {
+func inputDecoder(cfg *config.Config, pool *pgxpool.Pool) (worker.DecodeFunc, error) {
 	switch cfg.InputFormat {
 	case "", "aerolog":
 		return model.UnmarshalKafka, nil
 	case "sensors_flatten_json":
-		if cfg.SensorsProjectID == 0 {
-			return nil, fmt.Errorf("AEROLOG_SENSORS_TARGET_PROJECT_ID is required for sensors_flatten_json")
-		}
+		router := sensorsdata.NewProjectRouter(pool, cfg.SensorsProjectID)
 		return func(data []byte) (*model.EnvelopedEvent, error) {
-			return sensorsdata.DecodeFlatten(data, cfg.SensorsProjectID)
+			return sensorsdata.DecodeFlattenRouted(data, router)
 		}, nil
 	case "sensors_flatten_profile_json":
-		if cfg.SensorsProjectID == 0 {
-			return nil, fmt.Errorf("AEROLOG_SENSORS_TARGET_PROJECT_ID is required for sensors_flatten_profile_json")
-		}
+		router := sensorsdata.NewProjectRouter(pool, cfg.SensorsProjectID)
 		return func(data []byte) (*model.EnvelopedEvent, error) {
-			return sensorsdata.DecodeFlattenProfile(data, cfg.SensorsProjectID)
+			return sensorsdata.DecodeFlattenProfileRouted(data, router)
 		}, nil
 	default:
 		return nil, fmt.Errorf("unsupported AEROLOG_INPUT_FORMAT %q", cfg.InputFormat)
