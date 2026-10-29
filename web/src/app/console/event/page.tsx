@@ -15,6 +15,7 @@ import {
 } from "@/features/analytics/analytics-ui";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api, QueryTableRow } from "@/lib/api";
@@ -55,8 +56,9 @@ function metricValue(row: QueryTableRow, metric: EventMetric) {
 export default function EventAnalysisPage() {
   const projectId = useProjectStore((s) => s.projectId);
   const [metrics, setMetrics] = useState<EventMetric[]>([]);
-  const [propertyEvent, setPropertyEvent] = useState("");
-  const [selectedProperty, setSelectedProperty] = useState("");
+  const [activeProperty, setActiveProperty] = useState<{ event: string; property: string } | undefined>();
+  const [propertySearch, setPropertySearch] = useState("");
+  const [propertyType, setPropertyType] = useState("all");
   const [interval, setInterval] = useState<"hour" | "day">("day");
   const [chartKind, setChartKind] = useState<ChartKind>("line");
   const [range, setRange] = useState<[Dayjs, Dayjs]>([
@@ -66,8 +68,9 @@ export default function EventAnalysisPage() {
 
   useEffect(() => {
     setMetrics([]);
-    setPropertyEvent("");
-    setSelectedProperty("");
+    setActiveProperty(undefined);
+    setPropertySearch("");
+    setPropertyType("all");
   }, [projectId]);
 
   const tsRange = useMemo(() => ({ from: range[0].valueOf(), to: range[1].valueOf() }), [range]);
@@ -102,13 +105,12 @@ export default function EventAnalysisPage() {
 
   useEffect(() => {
     if (!metrics.length && allEvents.length) setMetrics([createMetric(allEvents[0].name)]);
-    if (!propertyEvent && allEvents.length) setPropertyEvent(allEvents[0].name);
-  }, [allEvents, metrics.length, propertyEvent]);
+  }, [allEvents, metrics.length]);
 
   const propertyValues = useQuery({
-    queryKey: ["event_property_values", projectId, propertyEvent, selectedProperty, tsRange],
-    queryFn: () => api.propertyValues(projectId!, { property: selectedProperty, event: propertyEvent, ...tsRange, limit: 12 }),
-    enabled: !!projectId && !!propertyEvent && !!selectedProperty,
+    queryKey: ["event_property_values", projectId, activeProperty, tsRange],
+    queryFn: () => api.propertyValues(projectId!, { property: activeProperty!.property, event: activeProperty!.event, ...tsRange, limit: 12 }),
+    enabled: !!projectId && !!activeProperty?.event && !!activeProperty?.property,
   });
 
   const activeMetrics = useMemo(
@@ -189,6 +191,18 @@ export default function EventAnalysisPage() {
     setMetrics((current) => current.length > 1 ? current.filter((metric) => metric.id !== id) : current);
   };
   const selectedEvents = new Set(activeMetrics.map((metric) => metric.event));
+  const parameterEvents = useMemo(
+    () => Array.from(new Set(metrics.map((metric) => metric.event).filter(Boolean))),
+    [metrics],
+  );
+  const propertyTypes = useMemo(() => Array.from(new Set(propertyRows.map((property) => property.data_type))).sort(), [propertyRows]);
+  const filteredProperties = useMemo(() => {
+    const needle = propertySearch.trim().toLowerCase();
+    return propertyRows.filter((property) => {
+      const name = `${property.name} ${property.display_name}`.toLowerCase();
+      return (!needle || name.includes(needle)) && (propertyType === "all" || property.data_type === propertyType);
+    });
+  }, [propertyRows, propertySearch, propertyType]);
 
   return (
     <div>
@@ -268,17 +282,16 @@ export default function EventAnalysisPage() {
         <ChartPanel title="全部事件" description="事件字典中的全部事件；当前范围未触发的事件显示为 0">
           <div className="max-h-[560px] overflow-y-auto"><Table className="min-w-[720px]"><TableHeader><TableRow><TableHead>事件</TableHead><TableHead className="text-right">次数</TableHead><TableHead className="text-right">用户</TableHead><TableHead className="text-right">操作</TableHead></TableRow></TableHeader><TableBody>{allEvents.map((item) => { const stat = statsByEvent.get(item.name); return <TableRow key={item.id}><TableCell className="max-w-96"><div className="break-words font-medium">{item.display_name || item.name}</div>{item.display_name ? <div className="mt-0.5 break-all text-xs text-muted-foreground">{item.name}</div> : null}</TableCell><TableCell className="text-right font-mono">{(stat?.count || 0).toLocaleString()}</TableCell><TableCell className="text-right font-mono">{(stat?.users || 0).toLocaleString()}</TableCell><TableCell className="text-right"><Button type="button" variant="ghost" size="sm" disabled={metrics.length >= 8} onClick={() => addMetric(item.name)}><Plus className="h-4 w-4" />添加</Button></TableCell></TableRow>; })}</TableBody></Table></div>
         </ChartPanel>
-        <ChartPanel title="事件参数" description="完整参数字典；选择参数查看指定事件的 Top 值" contentClassName="pt-3 sm:pt-3">
+        <ChartPanel title="事件参数" description="自动跟随上方已选事件；可按参数名和类型筛选，点击参数查看该事件的值分布" contentClassName="pt-3 sm:pt-3">
           <div className="grid gap-3">
-            <Select value={propertyEvent} onValueChange={(event) => { setPropertyEvent(event); setSelectedProperty(""); }}>
-              <SelectTrigger><SelectValue placeholder="选择查看参数的事件" /></SelectTrigger>
-              <SelectContent>{allEvents.map((item) => <SelectItem key={item.id} value={item.name}>{item.display_name || item.name}</SelectItem>)}</SelectContent>
-            </Select>
-            <div className="max-h-80 overflow-y-auto rounded-md border bg-background">
-              {propertyRows.map((property) => <button key={property.id} type="button" onClick={() => setSelectedProperty(property.name)} className={`flex w-full items-center justify-between gap-3 border-b px-3 py-2 text-left text-sm last:border-b-0 hover:bg-accent/60 ${selectedProperty === property.name ? "bg-accent" : ""}`}><span className="min-w-0 break-all font-medium">{property.display_name || property.name}</span><Badge variant={/number|int|float|double|decimal/i.test(property.data_type) ? "info" : "secondary"}>{property.data_type}</Badge></button>)}
-              {!properties.isLoading && !propertyRows.length ? <EmptyAnalysis className="min-h-40 border-0" title="暂无事件参数" description="上报事件参数后会自动发现。" /> : null}
+            <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_140px]">
+              <Input value={propertySearch} onChange={(event) => setPropertySearch(event.target.value)} placeholder="筛选参数名" />
+              <Select value={propertyType} onValueChange={setPropertyType}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent><SelectItem value="all">全部类型</SelectItem>{propertyTypes.map((type) => <SelectItem key={type} value={type}>{type}</SelectItem>)}</SelectContent>
+              </Select>
             </div>
-            {selectedProperty ? <div className="rounded-md border bg-background p-3"><div className="mb-2 text-sm font-medium">{selectedProperty} · Top values</div>{propertyValues.isFetching ? <div className="text-sm text-muted-foreground">加载中…</div> : propertyValues.data?.data.length ? <div className="grid gap-2">{propertyValues.data.data.map((item) => <div key={item.raw} className="grid gap-1"><div className="flex items-center justify-between gap-3 text-xs"><span className="min-w-0 break-all font-medium">{item.label}</span><span className="shrink-0 font-mono text-muted-foreground">{item.count.toLocaleString()} 次</span></div><div className="h-1.5 overflow-hidden rounded-full bg-secondary"><div className="h-full rounded-full bg-primary" style={{ width: `${Math.max(4, item.share * 100)}%` }} /></div></div>)}</div> : <div className="text-sm text-muted-foreground">当前事件没有该参数值。</div>}</div> : null}
+            {!parameterEvents.length ? <EmptyAnalysis className="min-h-40" title="暂无已选事件" description="先在「事件与指标」中选择事件。" /> : <div className="grid gap-3">{parameterEvents.map((event) => <div key={event} className="rounded-md border bg-background"><div className="border-b px-3 py-2"><div className="break-all text-sm font-medium">{event}</div><div className="mt-0.5 text-xs text-muted-foreground">{filteredProperties.length} 个匹配参数</div></div><div className="max-h-64 overflow-y-auto">{filteredProperties.map((property) => { const active = activeProperty?.event === event && activeProperty.property === property.name; return <div key={property.id} className="border-b last:border-b-0"><button type="button" onClick={() => setActiveProperty(active ? undefined : { event, property: property.name })} className={`flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm hover:bg-accent/60 ${active ? "bg-accent" : ""}`}><span className="min-w-0 break-all font-medium">{property.display_name || property.name}</span><Badge variant={/number|int|float|double|decimal/i.test(property.data_type) ? "info" : "secondary"}>{property.data_type}</Badge></button>{active ? <div className="border-t bg-card px-3 py-3"><div className="mb-2 text-xs font-medium text-muted-foreground">{property.name} · Top values</div>{propertyValues.isFetching ? <div className="text-sm text-muted-foreground">加载中…</div> : propertyValues.data?.data.length ? <div className="grid gap-2">{propertyValues.data.data.map((item) => <div key={item.raw} className="grid gap-1"><div className="flex items-center justify-between gap-3 text-xs"><span className="min-w-0 break-all font-medium">{item.label}</span><span className="shrink-0 font-mono text-muted-foreground">{item.count.toLocaleString()} 次</span></div><div className="h-1.5 overflow-hidden rounded-full bg-secondary"><div className="h-full rounded-full bg-primary" style={{ width: `${Math.max(4, item.share * 100)}%` }} /></div></div>)}</div> : <div className="text-sm text-muted-foreground">当前事件没有该参数值。</div>}</div> : null}</div>; })}{!properties.isLoading && !filteredProperties.length ? <div className="px-3 py-5 text-center text-sm text-muted-foreground">没有匹配参数。</div> : null}</div></div>)}</div>}
           </div>
         </ChartPanel>
       </div>
