@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Copy, Link2, Plus, ShieldCheck, ShieldOff } from "lucide-react";
 import { api, Project, ProjectStatus } from "@/lib/api";
@@ -498,9 +498,27 @@ function SensorsIntegrationSheet({ project, onOpenChange }: { project: Project |
   });
   const saved = integration.data?.data;
 
+  useEffect(() => {
+    if (!project) return;
+    setError("");
+    setAPIKey("");
+    if (!saved) {
+      setEndpoint("http://47.84.178.190:8107");
+      setSourceProject("");
+      setSourceProjectID("");
+      setReuse(false);
+      return;
+    }
+    setEndpoint(saved.endpoint);
+    setSourceProject(saved.source_project);
+    setSourceProjectID(saved.source_project_id);
+    setReuse(!saved.subscription_id);
+  }, [project?.id, saved?.updated_at]);
+
   function submit(e: FormEvent) {
     e.preventDefault();
-    if (!endpoint.trim() || !sourceProject.trim() || !apiKey.trim()) { setError("请填写神策地址、项目英文名和 API Key"); return; }
+    if (!endpoint.trim() || !sourceProject.trim()) { setError("请填写神策地址和项目英文名"); return; }
+    if (!saved && !apiKey.trim()) { setError("请填写神策 API Key"); return; }
     if (reuse && !sourceProjectID.trim()) { setError("复用已有订阅时必须填写神策项目 ID"); return; }
     connect.mutate();
   }
@@ -529,8 +547,10 @@ function SensorsIntegrationSheet({ project, onOpenChange }: { project: Project |
           </div>
           <div className="space-y-2">
             <Label htmlFor="sensors-key">API Key</Label>
-            <Input id="sensors-key" type="password" value={apiKey} onChange={(e) => setAPIKey(e.target.value)} placeholder="神策 API Key" autoComplete="new-password" />
-            <p className="text-xs text-muted-foreground">仅加密保存；项目列表和接口不会返回明文。</p>
+            <Input id="sensors-key" type="password" value={apiKey} onChange={(e) => setAPIKey(e.target.value)} placeholder={saved ? "留空保持已保存的 API Key" : "神策 API Key"} autoComplete="new-password" />
+            <p className="text-xs text-muted-foreground">
+              {saved ? `已保存：${saved.api_key_hint || "API Key"}；留空不修改。` : "仅加密保存；项目列表和接口不会返回明文。"}
+            </p>
           </div>
           <label className="flex cursor-pointer items-center gap-2 text-sm">
             <input type="checkbox" checked={reuse} onChange={(e) => setReuse(e.target.checked)} />
@@ -545,7 +565,7 @@ function SensorsIntegrationSheet({ project, onOpenChange }: { project: Project |
           {error && <p className="text-sm text-destructive">{error}</p>}
           <div className="flex justify-end gap-2 pt-2">
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>关闭</Button>
-            <Button type="submit" disabled={connect.isPending}>{connect.isPending ? "连接中..." : reuse ? "保存并启用路由" : "创建订阅并启用路由"}</Button>
+            <Button type="submit" disabled={connect.isPending}>{connect.isPending ? "保存中..." : saved ? "保存配置" : reuse ? "保存并启用路由" : "创建订阅并启用路由"}</Button>
           </div>
         </form>
       </SheetContent>

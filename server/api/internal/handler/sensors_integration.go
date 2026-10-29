@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -72,9 +73,17 @@ func (h *SensorsIntegrationHandler) get(c *gin.Context) {
 type sensorsConnectRequest struct {
 	Endpoint          string `json:"endpoint" binding:"required"`
 	Project           string `json:"project" binding:"required"`
-	APIKey            string `json:"api_key" binding:"required"`
+	APIKey            string `json:"api_key"`
 	SourceProjectID   string `json:"source_project_id"`
 	ReuseSubscription bool   `json:"reuse_subscription"`
+}
+
+type storedSensorsIntegration struct {
+	SourceProjectID  string
+	SourceProject    string
+	Endpoint         string
+	SubscriptionID   *int64
+	APIKeyCiphertext string
 }
 
 func (h *SensorsIntegrationHandler) connect(c *gin.Context) {
@@ -88,7 +97,7 @@ func (h *SensorsIntegrationHandler) connect(c *gin.Context) {
 	}
 	var req sensorsConnectRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"err": "请完整填写神策地址、项目英文名和 API Key"})
+		c.JSON(http.StatusBadRequest, gin.H{"err": "请完整填写神策地址和项目英文名"})
 		return
 	}
 	endpoint, err := normalizeSensorsEndpoint(req.Endpoint)
@@ -98,8 +107,31 @@ func (h *SensorsIntegrationHandler) connect(c *gin.Context) {
 	}
 	project := strings.TrimSpace(req.Project)
 	apiKey := strings.TrimSpace(req.APIKey)
-	if project == "" || apiKey == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"err": "请完整填写神策项目英文名和 API Key"})
+	if project == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"err": "请填写神策项目英文名"})
+		return
+	}
+	var stored storedSensorsIntegration
+	storedErr := h.PG.QueryRow(c, `
+		SELECT source_project_id, source_project, endpoint, subscription_id, api_key_ciphertext
+		FROM sensors_integrations WHERE project_id=$1
+	`, c.Param("id")).Scan(
+		&stored.SourceProjectID, &stored.SourceProject, &stored.Endpoint, &stored.SubscriptionID, &stored.APIKeyCiphertext,
+	)
+	if storedErr != nil && !errors.Is(storedErr, pgx.ErrNoRows) {
+		c.JSON(http.StatusInternalServerError, gin.H{"err": "读取已有神策接入配置失败"})
+		return
+	}
+	hasStored := storedErr == nil
+	if apiKey == "" && hasStored {
+		apiKey, err = decryptIntegrationSecret(h.EncryptionKey, stored.APIKeyCiphertext)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"err": "无法读取已保存的 API Key，请重新填写"})
+			return
+		}
+	}
+	if apiKey == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"err": "请填写神策 API Key"})
 		return
 	}
 
@@ -118,6 +150,10 @@ func (h *SensorsIntegrationHandler) connect(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"err": "复用已有订阅时必须填写神策项目 ID"})
 			return
 		}
+	} else if hasStored && project == stored.SourceProject {
+		// Editing address or API Key must not create a duplicate subscription for the same source project.
+		sourceProjectID = stored.SourceProjectID
+		subscriptionID = stored.SubscriptionID
 	} else {
 		var sourceID string
 		var id int64
@@ -204,6 +240,27 @@ func encryptIntegrationSecret(key, value string) (string, error) {
 		return "", err
 	}
 	return base64.RawURLEncoding.EncodeToString(append(nonce, gcm.Seal(nil, nonce, []byte(value), nil)...)), nil
+}
+
+func decryptIntegrationSecret(key, ciphertext string) (string, error) {
+	sum := sha256.Sum256([]byte(key))
+	block, err := aes.NewCipher(sum[:])
+	if err != nil {
+		return "", err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", err
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(ciphertext)
+	if err != nil || len(raw) < gcm.NonceSize() {
+		return "", errors.New("API Key 密文无效")
+	}
+	plain, err := gcm.Open(nil, raw[:gcm.NonceSize()], raw[gcm.NonceSize():], nil)
+	if err != nil {
+		return "", err
+	}
+	return string(plain), nil
 }
 
 func maskAPIKey(value string) string {
