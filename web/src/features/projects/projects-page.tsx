@@ -379,7 +379,7 @@ function ProjectRow({
 
 function SensorsIntegrationSheet({ project, onOpenChange }: { project: Project | null; onOpenChange: (open: boolean) => void }) {
   const qc = useQueryClient();
-  const [endpoint, setEndpoint] = useState("");
+  const [endpoint, setEndpoint] = useState("http://47.84.178.190:8107");
   const [sourceProject, setSourceProject] = useState("");
   const [apiKey, setAPIKey] = useState("");
   const [sourceProjectID, setSourceProjectID] = useState("");
