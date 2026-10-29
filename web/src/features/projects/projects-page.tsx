@@ -47,6 +47,25 @@ const projectStatuses: { value: ProjectStatus; label: string; badge: "success" |
   { value: 3, label: "下线", badge: "danger" },
 ];
 
+type ProjectSource = "sensorsdata" | "other";
+
+type CreateProjectForm = {
+  name: string;
+  company_id?: number;
+  app_type: Project["app_type"];
+  package_name?: string;
+  description?: string;
+  status?: ProjectStatus;
+  source: ProjectSource;
+  sensors?: {
+    endpoint: string;
+    project: string;
+    api_key: string;
+    source_project_id?: string;
+    reuse_subscription: boolean;
+  };
+};
+
 function appTypeLabel(type: Project["app_type"]) {
   return appTypes.find((item) => item.value === type)?.label || "Web";
 }
@@ -58,12 +77,17 @@ function projectStatusMeta(status: number) {
 export function ProjectsPage() {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
+  const [source, setSource] = useState<ProjectSource>("sensorsdata");
   const [name, setName] = useState("");
   const [appType, setAppType] = useState<Project["app_type"]>("web");
   const [packageName, setPackageName] = useState("");
   const [companyId, setCompanyId] = useState<number | undefined>();
   const [status, setStatus] = useState<ProjectStatus>(1);
   const [description, setDescription] = useState("");
+  const [sensorsEndpoint, setSensorsEndpoint] = useState("http://47.84.178.190:8107");
+  const [sensorsAPIKey, setSensorsAPIKey] = useState("");
+  const [reuseSensorsSubscription, setReuseSensorsSubscription] = useState(false);
+  const [sensorsProjectID, setSensorsProjectID] = useState("");
   const [error, setError] = useState("");
   const [sensorsProject, setSensorsProject] = useState<Project | null>(null);
   const user = useAuthStore((s) => s.user);
@@ -85,26 +109,38 @@ export function ProjectsPage() {
   const needsPackageName = appType === "android" || appType === "ios";
 
   const createMut = useMutation({
-    mutationFn: (body: {
-      name: string;
-      company_id?: number;
-      app_type: Project["app_type"];
-      package_name?: string;
-      description?: string;
-      status?: ProjectStatus;
-    }) => api.createProject(body),
+    mutationFn: async (body: CreateProjectForm) => {
+      const project = await api.createProject(body);
+      if (!body.sensors) return project;
+
+      try {
+        await api.connectSensorsIntegration(project.data.id, body.sensors);
+      } catch (e) {
+        const reason = e instanceof Error ? e.message : "未知错误";
+        throw new Error(`项目已创建，但神策接入失败：${reason}。可在项目列表点击“神策接入”后重试。`);
+      }
+      return project;
+    },
     onSuccess: () => {
       setOpen(false);
+      setSource("sensorsdata");
       setName("");
       setAppType("web");
       setPackageName("");
       setCompanyId(undefined);
       setStatus(1);
       setDescription("");
+      setSensorsEndpoint("http://47.84.178.190:8107");
+      setSensorsAPIKey("");
+      setReuseSensorsSubscription(false);
+      setSensorsProjectID("");
       setError("");
       qc.invalidateQueries({ queryKey: ["projects"] });
     },
-    onError: (e: Error) => setError(e.message),
+    onError: (e: Error) => {
+      setError(e.message);
+      qc.invalidateQueries({ queryKey: ["projects"] });
+    },
   });
 
   const securityMut = useMutation({
@@ -138,24 +174,42 @@ export function ProjectsPage() {
   function submit(e: FormEvent) {
     e.preventDefault();
     if (!name.trim()) {
-      setError("项目名不能为空");
+      setError(source === "sensorsdata" ? "请填写神策项目英文名" : "项目名不能为空");
       return;
     }
     if (isPlatformAdmin && !companyId) {
       setError("请选择项目所属公司");
       return;
     }
-    if (needsPackageName && !packageName.trim()) {
+    if (source === "other" && needsPackageName && !packageName.trim()) {
       setError("App 项目必须填写包名");
+      return;
+    }
+    if (source === "sensorsdata" && (!sensorsEndpoint.trim() || !sensorsAPIKey.trim())) {
+      setError("请填写神策服务地址和 API Key");
+      return;
+    }
+    if (source === "sensorsdata" && reuseSensorsSubscription && !sensorsProjectID.trim()) {
+      setError("复用已有订阅时必须填写神策项目 ID");
       return;
     }
     createMut.mutate({
       name: name.trim(),
       company_id: companyId,
-      app_type: appType,
-      package_name: needsPackageName ? packageName.trim() : undefined,
+      app_type: source === "sensorsdata" ? "other" : appType,
+      package_name: source === "other" && needsPackageName ? packageName.trim() : undefined,
       description: description.trim() || undefined,
       status,
+      source,
+      ...(source === "sensorsdata" ? {
+        sensors: {
+          endpoint: sensorsEndpoint.trim(),
+          project: name.trim(),
+          api_key: sensorsAPIKey.trim(),
+          ...(sensorsProjectID.trim() ? { source_project_id: sensorsProjectID.trim() } : {}),
+          reuse_subscription: reuseSensorsSubscription,
+        },
+      } : {}),
     });
   }
 
@@ -229,17 +283,30 @@ export function ProjectsPage() {
         <SheetContent side="right" className="overflow-y-auto">
           <SheetHeader>
             <SheetTitle>新建项目</SheetTitle>
-            <SheetDescription>项目对应一个具体 App 或 Web，创建后自动生成 SDK 上报 token。</SheetDescription>
+            <SheetDescription>先选择数据来源；神策项目会在创建后立即配置实时数据接入。</SheetDescription>
           </SheetHeader>
           <form onSubmit={submit} className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="project-name">项目名</Label>
+              <Label>数据来源</Label>
+              <Select value={source} onValueChange={(value) => setSource(value as ProjectSource)}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="sensorsdata">神策</SelectItem>
+                  <SelectItem value="other">其他（SDK / 手动上报）</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="project-name">{source === "sensorsdata" ? "神策项目英文名" : "项目名"}</Label>
               <Input
                 id="project-name"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="如：mall-app"
+                placeholder={source === "sensorsdata" ? "如：RbowDrama" : "如：mall-app"}
               />
+              {source === "sensorsdata" && <p className="text-xs text-muted-foreground">此名称同时作为 AeroLog 项目名。</p>}
             </div>
             {isPlatformAdmin && (
               <div className="space-y-2">
@@ -258,31 +325,57 @@ export function ProjectsPage() {
                 </Select>
               </div>
             )}
-            <div className="space-y-2">
-              <Label>应用类型</Label>
-              <Select value={appType} onValueChange={(v) => setAppType(v as Project["app_type"])}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {appTypes.map((item) => (
-                    <SelectItem key={item.value} value={item.value}>
-                      {item.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            {needsPackageName && (
-              <div className="space-y-2">
-                <Label htmlFor="project-package">包名</Label>
-                <Input
-                  id="project-package"
-                  value={packageName}
-                  onChange={(e) => setPackageName(e.target.value)}
-                  placeholder={appType === "ios" ? "com.company.app" : "com.company.app"}
-                />
-              </div>
+            {source === "sensorsdata" ? (
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="new-sensors-endpoint">神策服务地址</Label>
+                  <Input id="new-sensors-endpoint" value={sensorsEndpoint} onChange={(e) => setSensorsEndpoint(e.target.value)} autoComplete="url" />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="new-sensors-key">API Key</Label>
+                  <Input id="new-sensors-key" type="password" value={sensorsAPIKey} onChange={(e) => setSensorsAPIKey(e.target.value)} placeholder="神策 API Key" autoComplete="new-password" />
+                  <p className="text-xs text-muted-foreground">仅加密保存；项目列表和接口不会返回明文。</p>
+                </div>
+                <label className="flex cursor-pointer items-center gap-2 text-sm">
+                  <input type="checkbox" checked={reuseSensorsSubscription} onChange={(e) => setReuseSensorsSubscription(e.target.checked)} />
+                  复用已有神策订阅，不再新建订阅
+                </label>
+                {reuseSensorsSubscription && (
+                  <div className="space-y-2">
+                    <Label htmlFor="new-sensors-source-id">神策项目 ID</Label>
+                    <Input id="new-sensors-source-id" value={sensorsProjectID} onChange={(e) => setSensorsProjectID(e.target.value)} placeholder="如：29" inputMode="numeric" />
+                  </div>
+                )}
+              </>
+            ) : (
+              <>
+                <div className="space-y-2">
+                  <Label>应用类型</Label>
+                  <Select value={appType} onValueChange={(v) => setAppType(v as Project["app_type"])}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {appTypes.map((item) => (
+                        <SelectItem key={item.value} value={item.value}>
+                          {item.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {needsPackageName && (
+                  <div className="space-y-2">
+                    <Label htmlFor="project-package">包名</Label>
+                    <Input
+                      id="project-package"
+                      value={packageName}
+                      onChange={(e) => setPackageName(e.target.value)}
+                      placeholder="com.company.app"
+                    />
+                  </div>
+                )}
+              </>
             )}
             <div className="space-y-2">
               <Label>项目状态</Label>
@@ -314,7 +407,7 @@ export function ProjectsPage() {
                 取消
               </Button>
               <Button type="submit" disabled={createMut.isPending}>
-                {createMut.isPending ? "创建中..." : "创建"}
+                {createMut.isPending ? "创建中..." : source === "sensorsdata" ? "创建并接入" : "创建"}
               </Button>
             </div>
           </form>
