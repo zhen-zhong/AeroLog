@@ -38,6 +38,9 @@ services:
         condition: service_healthy
     networks:
       - internal
+      # Sensors Data OpenAPI verification needs outbound access while API-to-DB
+      # traffic remains on the internal-only network.
+      - api-egress
     mem_limit: 192m
 
   collector:
@@ -326,3 +329,5 @@ networks:
   internal:
     internal: true
   kafka-ingress:
+  # Dedicated outbound path for API integrations such as Sensors Data OpenAPI.
+  api-egress:
