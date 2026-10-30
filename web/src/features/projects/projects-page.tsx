@@ -253,14 +253,13 @@ export function ProjectsPage() {
                   <TableHead className="min-w-40">公司</TableHead>
                   <TableHead className="min-w-40">项目名</TableHead>
                   <TableHead className="min-w-28">应用类型</TableHead>
-                  <TableHead className="min-w-28">数据源</TableHead>
+                  <TableHead className="min-w-36">数据源配置</TableHead>
                   <TableHead className="min-w-56">包名</TableHead>
                   <TableHead className="min-w-72">Token</TableHead>
                   <TableHead className="min-w-64">描述</TableHead>
                   <TableHead className="min-w-40">签名校验</TableHead>
                   <TableHead className="min-w-24">状态</TableHead>
                   <TableHead className="min-w-36">分析时区</TableHead>
-                  <TableHead className="min-w-32">数据接入</TableHead>
                   <TableHead className="min-w-48">创建时间</TableHead>
                 </TableRow>
               </TableHeader>
@@ -268,7 +267,7 @@ export function ProjectsPage() {
                 {isLoading ? (
                   Array.from({ length: 4 }).map((_, index) => (
                     <TableRow key={index}>
-                      <TableCell colSpan={13}>
+                      <TableCell colSpan={12}>
                         <Skeleton className="h-8 w-full" />
                       </TableCell>
                     </TableRow>
@@ -289,7 +288,7 @@ export function ProjectsPage() {
                   ))
                 ) : (
                   <TableRow>
-                    <TableCell colSpan={13} className="h-28 text-center text-sm text-muted-foreground">
+                    <TableCell colSpan={12} className="h-28 text-center text-sm text-muted-foreground">
                       暂无项目
                     </TableCell>
                   </TableRow>
@@ -481,9 +480,15 @@ function ProjectRow({
         <Badge variant="outline">{appTypeLabel(project.app_type)}</Badge>
       </TableCell>
       <TableCell>
-        <Badge variant={project.data_source === "sensorsdata" ? "success" : "secondary"}>
-          {project.data_source === "sensorsdata" ? "神策" : "AeroLog"}
-        </Badge>
+        <div className="flex flex-col items-start gap-2">
+          <Badge variant={project.data_source === "sensorsdata" ? "success" : "secondary"}>
+            {project.data_source === "sensorsdata" ? "神策" : "AeroLog"}
+          </Badge>
+          <Button type="button" variant="outline" size="sm" className="h-8 gap-1.5" onClick={() => onSensorsConnect(project)} disabled={project.role !== "owner"}>
+            <Link2 className="h-3.5 w-3.5" />
+            配置神策
+          </Button>
+        </div>
       </TableCell>
       <TableCell className="max-w-56 truncate text-muted-foreground">{project.package_name || "-"}</TableCell>
       <TableCell>
@@ -506,12 +511,6 @@ function ProjectRow({
           disabled={timezonePending || project.role !== "owner"}
           onChange={(nextTimezone) => onTimezoneChange(project, nextTimezone)}
         />
-      </TableCell>
-      <TableCell>
-        <Button type="button" variant="outline" size="sm" className="h-8 gap-1.5" onClick={() => onSensorsConnect(project)} disabled={project.role !== "owner"}>
-          <Link2 className="h-3.5 w-3.5" />
-          神策接入
-        </Button>
       </TableCell>
       <TableCell className="text-muted-foreground">{formatDateTime(project.created_at)}</TableCell>
     </TableRow>
@@ -613,8 +612,8 @@ function SensorsIntegrationSheet({ project, onOpenChange }: { project: Project |
     <Sheet open={!!project} onOpenChange={onOpenChange}>
       <SheetContent side="right" className="overflow-y-auto sm:max-w-xl">
         <SheetHeader>
-          <SheetTitle>神策实时接入</SheetTitle>
-          <SheetDescription>{project ? `为「${project.name}」创建独立数据路由。共享 Kafka 接收应用不会重复创建。` : ""}</SheetDescription>
+          <SheetTitle>数据源配置 · 神策</SheetTitle>
+          <SheetDescription>{project ? `为「${project.name}」配置神策实时数据路由。共享 Kafka 接收应用不会重复创建。` : ""}</SheetDescription>
         </SheetHeader>
         {saved && (
           <>
