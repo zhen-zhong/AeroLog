@@ -31,6 +31,7 @@ type behaviorQueryBody struct {
 	From              int64    `json:"from"`
 	To                int64    `json:"to"`
 	SessionGapSeconds int64    `json:"session_gap_seconds"`
+	SegmentID         int64    `json:"segment_id"`
 }
 
 func (h *AnalyticsHandler) loadBehaviorEvents(ctx context.Context, pid uint32, body *behaviorQueryBody) ([]behaviorEvent, bool, error) {
@@ -57,6 +58,14 @@ func (h *AnalyticsHandler) loadBehaviorEvents(ctx context.Context, pid uint32, b
 		if len(holders) > 0 {
 			where += " AND event IN (" + joinStrs(holders, ", ") + ")"
 		}
+	}
+	memberQuery, memberArgs, err := h.analyticsSegmentMembers(ctx, int64(pid), body.SegmentID)
+	if err != nil {
+		return nil, false, &queryTableError{Status: http.StatusBadRequest, Msg: err.Error()}
+	}
+	if memberQuery != "" {
+		where += " AND distinct_id IN (" + memberQuery + ")"
+		args = append(args, memberArgs...)
 	}
 	args = append(args, uint32(maxBehaviorEvents+1))
 	rows, err := h.CH.Query(ctx, `SELECT distinct_id, event, time FROM events WHERE `+where+` ORDER BY distinct_id, time LIMIT ?`, args...)
@@ -120,7 +129,7 @@ type pathEdge struct {
 }
 
 // /v1/projects/:id/analytics/paths
-// body: {events?, from, to, session_gap_seconds?, start_event?, max_steps?, max_nodes?}
+// body: {events?, from, to, session_gap_seconds?, segment_id?, start_event?, max_steps?, max_nodes?}
 func (h *AnalyticsHandler) paths(c *gin.Context) {
 	pid, _ := strconv.ParseUint(c.Param("id"), 10, 32)
 	var body struct {
@@ -233,7 +242,7 @@ type sessionDay struct {
 }
 
 // /v1/projects/:id/analytics/sessions
-// body: {events?, from, to, session_gap_seconds?}
+// body: {events?, from, to, session_gap_seconds?, segment_id?}
 func (h *AnalyticsHandler) sessionAnalysis(c *gin.Context) {
 	pid, _ := strconv.ParseUint(c.Param("id"), 10, 32)
 	var body behaviorQueryBody
