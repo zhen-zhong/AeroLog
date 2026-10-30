@@ -450,17 +450,26 @@ type conversionBreakdownRow struct {
 }
 
 func (h *AnalyticsHandler) computeFunnel(ctx context.Context, pid uint32, events []string, from, to, windowSeconds int64) ([]funnelStep, error) {
+	return h.computeFunnelForMembers(ctx, pid, events, from, to, windowSeconds, "", nil)
+}
+
+func (h *AnalyticsHandler) computeFunnelForMembers(ctx context.Context, pid uint32, events []string, from, to, windowSeconds int64, memberQuery string, memberArgs []any) ([]funnelStep, error) {
 	conds := make([]string, 0, len(events))
-	args := make([]any, 0, len(events)+3)
+	args := make([]any, 0, len(events)+3+len(memberArgs))
 	for _, ev := range events {
 		conds = append(conds, "event = ?")
 		args = append(args, ev)
 	}
 	args = append(args, pid, from, to)
+	memberClause := ""
+	if memberQuery != "" {
+		memberClause = ` AND distinct_id IN (` + memberQuery + `)`
+		args = append(args, memberArgs...)
+	}
 
 	inner := `SELECT distinct_id, windowFunnel(` + strconv.FormatInt(windowSeconds, 10) + `)(toDateTime(time), ` + joinStrs(conds, ", ") + `) AS level
 	          FROM events
-	          WHERE project_id = ? AND time BETWEEN fromUnixTimestamp64Milli(?) AND fromUnixTimestamp64Milli(?)
+	          WHERE project_id = ? AND time BETWEEN fromUnixTimestamp64Milli(?) AND fromUnixTimestamp64Milli(?)` + memberClause + `
 	          GROUP BY distinct_id`
 	q := `SELECT level, count() FROM (` + inner + `) GROUP BY level ORDER BY level`
 	rows, err := h.CH.Query(ctx, q, args...)
@@ -480,8 +489,17 @@ func (h *AnalyticsHandler) computeFunnel(ctx context.Context, pid uint32, events
 }
 
 func (h *AnalyticsHandler) computeFunnelBreakdown(ctx context.Context, pid uint32, events []string, from, to, windowSeconds int64, property string) ([]conversionBreakdownRow, error) {
+	return h.computeFunnelBreakdownForMembers(ctx, pid, events, from, to, windowSeconds, property, "", nil)
+}
+
+func (h *AnalyticsHandler) computeFunnelBreakdownForMembers(ctx context.Context, pid uint32, events []string, from, to, windowSeconds int64, property, memberQuery string, memberArgs []any) ([]conversionBreakdownRow, error) {
 	conds := make([]string, 0, len(events))
 	args := []any{property, pid, events[0], from, to}
+	memberClause := ""
+	if memberQuery != "" {
+		memberClause = ` AND distinct_id IN (` + memberQuery + `)`
+		args = append(args, memberArgs...)
+	}
 	for _, ev := range events {
 		conds = append(conds, "e.event = ?")
 		args = append(args, ev)
@@ -491,7 +509,7 @@ func (h *AnalyticsHandler) computeFunnelBreakdown(ctx context.Context, pid uint3
 		WITH first_dims AS (
 			SELECT distinct_id, argMin(JSONExtractRaw(properties, ?), time) AS dim
 			FROM events
-			WHERE project_id = ? AND event = ? AND time BETWEEN fromUnixTimestamp64Milli(?) AND fromUnixTimestamp64Milli(?)
+			WHERE project_id = ? AND event = ? AND time BETWEEN fromUnixTimestamp64Milli(?) AND fromUnixTimestamp64Milli(?)` + memberClause + `
 			GROUP BY distinct_id
 		)
 		SELECT dim, level, count()
@@ -1238,6 +1256,7 @@ func (h *AnalyticsHandler) funnel(c *gin.Context) {
 		To                int64    `json:"to"`
 		WindowSeconds     int64    `json:"window_seconds"`
 		BreakdownProperty string   `json:"breakdown_property"`
+		SegmentID         int64    `json:"segment_id"`
 	}
 	if err := c.BindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
@@ -1257,7 +1276,13 @@ func (h *AnalyticsHandler) funnel(c *gin.Context) {
 		body.WindowSeconds = 24 * 3600
 	}
 
-	steps, err := h.computeFunnel(c.Request.Context(), uint32(pid), body.Events, body.From, body.To, body.WindowSeconds)
+	ctx := c.Request.Context()
+	memberQuery, memberArgs, err := h.analyticsSegmentMembers(ctx, int64(pid), body.SegmentID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
+		return
+	}
+	steps, err := h.computeFunnelForMembers(ctx, uint32(pid), body.Events, body.From, body.To, body.WindowSeconds, memberQuery, memberArgs)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
 		return
@@ -1265,7 +1290,7 @@ func (h *AnalyticsHandler) funnel(c *gin.Context) {
 	breakdown := []conversionBreakdownRow{}
 	breakdownTruncated := false
 	if body.BreakdownProperty != "" {
-		breakdown, err = h.computeFunnelBreakdown(c.Request.Context(), uint32(pid), body.Events, body.From, body.To, body.WindowSeconds, body.BreakdownProperty)
+		breakdown, err = h.computeFunnelBreakdownForMembers(ctx, uint32(pid), body.Events, body.From, body.To, body.WindowSeconds, body.BreakdownProperty, memberQuery, memberArgs)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
 			return
@@ -1300,15 +1325,21 @@ func (h *AnalyticsHandler) retention(c *gin.Context) {
 	}
 	breakdownProp := c.Query("breakdown_property")
 	ctx := c.Request.Context()
+	segmentID := atoi64(c.Query("segment_id"))
+	memberQuery, memberArgs, err := h.analyticsSegmentMembers(ctx, int64(pid), segmentID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
+		return
+	}
 	timezone := clickHouseTimezone(h.projectTimezone(ctx, uint32(pid)))
-	overall, err := h.computeRetention(ctx, uint32(pid), timezone, initEv, retEv, from, to, days)
+	overall, err := h.computeRetentionForMembers(ctx, uint32(pid), timezone, initEv, retEv, from, to, days, memberQuery, memberArgs)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
 		return
 	}
 	breakdown := []retentionBreakdownRow{}
 	if breakdownProp != "" {
-		breakdown, err = h.computeRetentionBreakdown(ctx, uint32(pid), timezone, initEv, retEv, from, to, days, breakdownProp)
+		breakdown, err = h.computeRetentionBreakdownForMembers(ctx, uint32(pid), timezone, initEv, retEv, from, to, days, breakdownProp, memberQuery, memberArgs)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
 			return
@@ -1333,15 +1364,23 @@ type retentionBreakdownRow struct {
 }
 
 func (h *AnalyticsHandler) computeRetention(ctx context.Context, pid uint32, timezone, initEv, retEv string, from, to int64, days int) ([]retentionRow, error) {
+	return h.computeRetentionForMembers(ctx, pid, timezone, initEv, retEv, from, to, days, "", nil)
+}
+
+func (h *AnalyticsHandler) computeRetentionForMembers(ctx context.Context, pid uint32, timezone, initEv, retEv string, from, to int64, days int, memberQuery string, memberArgs []any) ([]retentionRow, error) {
 	valueExprs := make([]string, 0, days)
 	for i := 0; i < days; i++ {
 		valueExprs = append(valueExprs, "uniqExactIf(c.distinct_id, dateDiff('day', c.d0, r.d) = "+strconv.Itoa(i)+")")
+	}
+	memberClause := ""
+	if memberQuery != "" {
+		memberClause = ` AND distinct_id IN (` + memberQuery + `)`
 	}
 	q := `
 	WITH cohort AS (
 		SELECT distinct_id, min(toDate(time, ` + timezone + `)) AS d0
 		FROM events
-		WHERE project_id = ? AND event = ? AND time BETWEEN fromUnixTimestamp64Milli(?) AND fromUnixTimestamp64Milli(?)
+		WHERE project_id = ? AND event = ? AND time BETWEEN fromUnixTimestamp64Milli(?) AND fromUnixTimestamp64Milli(?)` + memberClause + `
 		GROUP BY distinct_id
 	),
 	ret AS (
@@ -1358,7 +1397,10 @@ func (h *AnalyticsHandler) computeRetention(ctx context.Context, pid uint32, tim
 	GROUP BY c.d0
 	ORDER BY c.d0
 	`
-	rows, err := h.CH.Query(ctx, q, pid, initEv, from, to, pid, retEv, from, to)
+	args := []any{pid, initEv, from, to}
+	args = append(args, memberArgs...)
+	args = append(args, pid, retEv, from, to)
+	rows, err := h.CH.Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1374,18 +1416,26 @@ func (h *AnalyticsHandler) computeRetention(ctx context.Context, pid uint32, tim
 }
 
 func (h *AnalyticsHandler) computeRetentionBreakdown(ctx context.Context, pid uint32, timezone, initEv, retEv string, from, to int64, days int, property string) ([]retentionBreakdownRow, error) {
+	return h.computeRetentionBreakdownForMembers(ctx, pid, timezone, initEv, retEv, from, to, days, property, "", nil)
+}
+
+func (h *AnalyticsHandler) computeRetentionBreakdownForMembers(ctx context.Context, pid uint32, timezone, initEv, retEv string, from, to int64, days int, property, memberQuery string, memberArgs []any) ([]retentionBreakdownRow, error) {
 	valueExprs := make([]string, 0, days)
 	for i := 0; i < days; i++ {
 		valueExprs = append(valueExprs, "uniqExactIf(c.distinct_id, dateDiff('day', c.d0, r.d) = "+strconv.Itoa(i)+")")
 	}
 	// cohort 上取初始事件首次出现时的属性值作为 dim
+	memberClause := ""
+	if memberQuery != "" {
+		memberClause = ` AND distinct_id IN (` + memberQuery + `)`
+	}
 	q := `
 	WITH cohort AS (
 		SELECT distinct_id,
 		       min(toDate(time, ` + timezone + `)) AS d0,
 		       argMin(JSONExtractRaw(properties, ?), time) AS dim
 		FROM events
-		WHERE project_id = ? AND event = ? AND time BETWEEN fromUnixTimestamp64Milli(?) AND fromUnixTimestamp64Milli(?)
+		WHERE project_id = ? AND event = ? AND time BETWEEN fromUnixTimestamp64Milli(?) AND fromUnixTimestamp64Milli(?)` + memberClause + `
 		GROUP BY distinct_id
 	),
 	ret AS (
@@ -1404,7 +1454,10 @@ func (h *AnalyticsHandler) computeRetentionBreakdown(ctx context.Context, pid ui
 	GROUP BY c.dim, c.d0
 	ORDER BY c.dim, c.d0
 	`
-	rows, err := h.CH.Query(ctx, q, property, pid, initEv, from, to, pid, retEv, from, to)
+	args := []any{property, pid, initEv, from, to}
+	args = append(args, memberArgs...)
+	args = append(args, pid, retEv, from, to)
+	rows, err := h.CH.Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}

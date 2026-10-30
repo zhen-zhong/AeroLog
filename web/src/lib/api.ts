@@ -1033,6 +1033,7 @@ export const api = {
             to?: number;
             window_seconds?: number;
             breakdown_property?: string;
+            segment_id?: number;
         },
     ) =>
         req<
@@ -1054,6 +1055,7 @@ export const api = {
             to?: number;
             days?: number;
             breakdown_property?: string;
+            segment_id?: number;
         },
     ) => {
         const q = new URLSearchParams({
@@ -1064,6 +1066,7 @@ export const api = {
         if (params.to) q.set("to", String(params.to));
         if (params.days) q.set("days", String(params.days));
         if (params.breakdown_property) q.set("breakdown_property", params.breakdown_property);
+        if (params.segment_id) q.set("segment_id", String(params.segment_id));
         return req<
             ApiOne<{
                 overall: RetentionCohort[];

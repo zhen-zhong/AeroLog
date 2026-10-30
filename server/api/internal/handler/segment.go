@@ -191,6 +191,14 @@ func segmentMembershipQuery(ctx context.Context, pg *pgxpool.Pool, projectID, se
 	return query, args, nil
 }
 
+// analyticsSegmentMembers returns an optional members subquery for analytical queries.
+func (h *AnalyticsHandler) analyticsSegmentMembers(ctx context.Context, projectID, segmentID int64) (string, []any, error) {
+	if segmentID == 0 {
+		return "", nil, nil
+	}
+	return segmentMembershipQuery(ctx, h.PG, projectID, segmentID)
+}
+
 func segmentMembershipQueryForRules(projectID int64, rules SegmentRules) (string, []any) {
 	var base string
 	args := make([]any, 0, 7)

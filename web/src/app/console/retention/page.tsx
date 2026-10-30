@@ -34,6 +34,7 @@ export default function RetentionPage() {
   const [retEvent, setRetEvent] = useState<string | undefined>();
   const [days, setDays] = useState<number>(7);
   const [breakdownProperty, setBreakdownProperty] = useState<string>("");
+  const [segmentId, setSegmentId] = useState<number | undefined>();
   const [range, setRange] = useState<[Dayjs, Dayjs]>([
     dayjs().subtract(14, "day").startOf("day"),
     dayjs().endOf("day"),
@@ -44,6 +45,7 @@ export default function RetentionPage() {
     setInitEvent(undefined);
     setRetEvent(undefined);
     setBreakdownProperty("");
+    setSegmentId(undefined);
   }, [projectId]);
 
   useEffect(() => {
@@ -68,6 +70,11 @@ export default function RetentionPage() {
     queryFn: () => api.listProperties(projectId!, { scope: "event" }),
     enabled: !!projectId,
   });
+  const { data: segments } = useQuery({
+    queryKey: ["segments", projectId],
+    queryFn: () => api.listSegments(projectId!),
+    enabled: !!projectId,
+  });
 
   useEffect(() => {
     if (!initEvent && top?.data?.length) setInitEvent(top.data[0].event);
@@ -75,7 +82,7 @@ export default function RetentionPage() {
   }, [top, initEvent, retEvent]);
 
   const { data, isFetching } = useQuery({
-    queryKey: ["retention", projectId, initEvent, retEvent, days, range, breakdownProperty],
+    queryKey: ["retention", projectId, initEvent, retEvent, days, range, breakdownProperty, segmentId],
     queryFn: () =>
       api.retention(projectId!, {
         initial_event: initEvent!,
@@ -84,6 +91,7 @@ export default function RetentionPage() {
         from: range[0].valueOf(),
         to: range[1].valueOf(),
         breakdown_property: breakdownProperty || undefined,
+        segment_id: segmentId,
       }),
     enabled: !!projectId && !!initEvent && !!retEvent,
   });
@@ -112,14 +120,22 @@ export default function RetentionPage() {
           initEvent ? `initial = ${initEvent}` : "选择初始事件",
           retEvent ? `return = ${retEvent}` : "选择返回事件",
           breakdownProperty ? `分组 = ${breakdownProperty}` : "未分组",
+          segmentId ? `分群：${(segments?.data || []).find((segment) => segment.id === segmentId)?.name || segmentId}` : "全部用户",
         ]}
       />
 
       <ToolbarPanel>
-        <div className="grid gap-4 xl:grid-cols-[240px_240px_160px_240px] xl:items-end">
+        <div className="grid gap-4 xl:grid-cols-[240px_240px_160px_240px_240px] xl:items-end">
           <div className="grid gap-1.5">
             <span className="text-sm font-medium">初始事件</span>
             <EventPicker events={top?.data || []} value={initEvent} onChange={setInitEvent} placeholder="初始事件" className="sm:w-full" />
+          </div>
+          <div className="grid gap-1.5">
+            <Label>用户分群（可选）</Label>
+            <Select value={segmentId ? String(segmentId) : NONE} onValueChange={(value) => setSegmentId(value === NONE ? undefined : Number(value))}>
+              <SelectTrigger><SelectValue placeholder="全部用户" /></SelectTrigger>
+              <SelectContent><SelectItem value={NONE}>全部用户</SelectItem>{(segments?.data || []).map((segment) => <SelectItem key={segment.id} value={String(segment.id)}>{segment.name}</SelectItem>)}</SelectContent>
+            </Select>
           </div>
           <div className="grid gap-1.5">
             <span className="text-sm font-medium">返回事件</span>

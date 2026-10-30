@@ -32,6 +32,7 @@ export default function FunnelPage() {
   const [events, setEvents] = useState<string[]>([]);
   const [windowSeconds, setWindowSeconds] = useState<number>(24 * 3600);
   const [breakdownProperty, setBreakdownProperty] = useState("");
+  const [segmentId, setSegmentId] = useState<number | undefined>();
   const [range, setRange] = useState<[Dayjs, Dayjs]>([
     dayjs().subtract(7, "day").startOf("day"),
     dayjs().endOf("day"),
@@ -48,6 +49,7 @@ export default function FunnelPage() {
     setBreakdown([]);
     setBreakdownTruncated(false);
     setBreakdownProperty("");
+    setSegmentId(undefined);
     setError("");
   }, [projectId]);
 
@@ -73,6 +75,11 @@ export default function FunnelPage() {
     queryFn: () => api.listProperties(projectId!, { scope: "event" }),
     enabled: !!projectId,
   });
+  const { data: segments } = useQuery({
+    queryKey: ["segments", projectId],
+    queryFn: () => api.listSegments(projectId!),
+    enabled: !!projectId,
+  });
   const propertyRows = properties?.data || [];
 
   const runMut = useMutation({
@@ -83,6 +90,7 @@ export default function FunnelPage() {
         to: range[1].valueOf(),
         window_seconds: windowSeconds,
         breakdown_property: breakdownProperty || undefined,
+        segment_id: segmentId,
       }),
     onSuccess: (res) => {
       setError("");
@@ -183,6 +191,14 @@ export default function FunnelPage() {
                     ))}
                   </SelectContent>
                 </Select>
+              </div>
+              <div className="grid gap-1.5">
+                <div className="text-sm font-medium">用户分群（可选）</div>
+                <Select value={segmentId ? String(segmentId) : "__all__"} onValueChange={(value) => setSegmentId(value === "__all__" ? undefined : Number(value))}>
+                  <SelectTrigger><SelectValue placeholder="全部用户" /></SelectTrigger>
+                  <SelectContent><SelectItem value="__all__">全部用户</SelectItem>{(segments?.data || []).map((segment) => <SelectItem key={segment.id} value={String(segment.id)}>{segment.name}</SelectItem>)}</SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">仅圈选分群中的用户。</p>
               </div>
             </div>
 
