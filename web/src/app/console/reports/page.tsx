@@ -36,6 +36,7 @@ type ReportConfig = {
   from: number;
   to: number;
   events: string[];
+  segmentId: number;
   dimension: DimensionKind;
   property: string;
   chart: ChartKind;
@@ -53,6 +54,7 @@ const defaultConfig = (): ReportConfig => ({
   from: dayjs().subtract(7, "day").startOf("day").valueOf(),
   to: dayjs().endOf("day").valueOf(),
   events: [],
+  segmentId: 0,
   dimension: "day",
   property: "",
   chart: "table",
@@ -202,6 +204,11 @@ export default function CustomReportsPage() {
     queryFn: () => api.listQueryTemplates(projectId!),
     enabled: !!projectId,
   });
+  const segments = useQuery({
+    queryKey: ["segments", projectId],
+    queryFn: () => api.listSegments(projectId!),
+    enabled: !!projectId,
+  });
 
   const query = useMutation({
     mutationFn: () => api.queryTable(projectId!, {
@@ -209,6 +216,7 @@ export default function CustomReportsPage() {
       from: range[0].valueOf(),
       to: range[1].valueOf(),
       limit: 500,
+      segment_id: config.segmentId || undefined,
       sum_properties: config.sumProperties,
       dimensions: [toDimension(config)],
       filters: [],
@@ -327,6 +335,7 @@ export default function CustomReportsPage() {
             <div className="grid gap-2"><span className="text-sm font-medium">分析方式</span><Select value={config.mode} onValueChange={(value) => changeMode(value as ReportMode)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="standard">普通事件分析</SelectItem><SelectItem value="cohort">新增用户 cohort</SelectItem></SelectContent></Select></div>
             {isCohort ? <CohortControls config={config.cohort} events={top.data?.data || []} onChange={patchCohort} /> : <>
               <div><div className="mb-2 text-sm font-medium">事件集合</div><div className="flex max-h-40 flex-wrap gap-2 overflow-y-auto rounded-md border p-2">{(top.data?.data || []).map((item) => <button key={item.event} type="button" onClick={() => toggleEvent(item.event)} className={`rounded-md border px-2 py-1 text-xs ${config.events.includes(item.event) ? "border-primary bg-primary text-primary-foreground" : "bg-background"}`}>{item.event}</button>)}</div></div>
+              <div className="grid gap-2"><span className="text-sm font-medium">用户分群（可选）</span><Select value={config.segmentId ? String(config.segmentId) : "__all__"} onValueChange={(value) => patch({ segmentId: value === "__all__" ? 0 : Number(value) })}><SelectTrigger><SelectValue placeholder="全部用户" /></SelectTrigger><SelectContent><SelectItem value="__all__">全部用户</SelectItem>{(segments.data?.data || []).map((segment) => <SelectItem key={segment.id} value={String(segment.id)}>{segment.name}</SelectItem>)}</SelectContent></Select><p className="text-xs text-muted-foreground">分群按已保存规则实时计算。</p></div>
               <div className="grid gap-2"><span className="text-sm font-medium">表头维度</span><Select value={config.dimension} onValueChange={(value) => patch({ dimension: value as DimensionKind })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="day">按天</SelectItem><SelectItem value="hour">按小时</SelectItem><SelectItem value="event">事件名</SelectItem><SelectItem value="property">事件参数</SelectItem></SelectContent></Select>{config.dimension === "property" ? <Select value={config.property} onValueChange={(value) => patch({ property: value })}><SelectTrigger><SelectValue placeholder="选择参数" /></SelectTrigger><SelectContent>{(properties.data?.data || []).map((item) => <SelectItem key={item.id} value={item.name}>{item.name}</SelectItem>)}</SelectContent></Select> : null}</div>
             </>}
           </CardContent></Card>

@@ -923,6 +923,7 @@ export const api = {
             from?: number;
             to?: number;
             limit?: number;
+            segment_id?: number;
             sum_properties?: string[];
             dimensions: QueryDimension[];
             filters?: QueryFilter[];

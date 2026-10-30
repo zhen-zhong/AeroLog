@@ -162,6 +162,36 @@ func (h *SegmentHandler) preview(c *gin.Context) {
 }
 
 func (h *SegmentHandler) previewCount(ctx context.Context, projectID int64, rules SegmentRules) (uint64, error) {
+	query, args := segmentMembershipQueryForRules(projectID, rules)
+	var count uint64
+	if err := h.CH.QueryRow(ctx, `SELECT count() FROM (`+query+`)`, args...).Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+// segmentMembershipQuery 读取已保存规则，返回可嵌入 ClickHouse IN 子查询的成员查询。
+func segmentMembershipQuery(ctx context.Context, pg *pgxpool.Pool, projectID, segmentID int64) (string, []any, error) {
+	if segmentID <= 0 {
+		return "", nil, errors.New("segment_id must be positive")
+	}
+	var raw []byte
+	if err := pg.QueryRow(ctx, `SELECT rules FROM user_segments WHERE id=$1 AND project_id=$2 AND status=1`, segmentID, projectID).Scan(&raw); err != nil {
+		return "", nil, errors.New("segment not found")
+	}
+	var rules SegmentRules
+	if err := json.Unmarshal(raw, &rules); err != nil {
+		return "", nil, errors.New("segment rules are invalid")
+	}
+	rules, err := normalizeSegmentRules(rules)
+	if err != nil {
+		return "", nil, err
+	}
+	query, args := segmentMembershipQueryForRules(projectID, rules)
+	return query, args, nil
+}
+
+func segmentMembershipQueryForRules(projectID int64, rules SegmentRules) (string, []any) {
 	var base string
 	args := make([]any, 0, 7)
 	if rules.Event != "" && rules.EventCondition == "has" {
@@ -182,12 +212,7 @@ func (h *SegmentHandler) previewCount(ctx context.Context, projectID int64, rule
 		args = append(args, uint32(projectID), rules.Event, segmentLookbackStart(rules.LookbackDays))
 	}
 
-	query := `SELECT count() FROM (` + base + `) WHERE 1=1` + where
-	var count uint64
-	if err := h.CH.QueryRow(ctx, query, args...).Scan(&count); err != nil {
-		return 0, err
-	}
-	return count, nil
+	return base + ` AND 1=1` + where, args
 }
 
 func normalizeSegmentRules(rules SegmentRules) (SegmentRules, error) {

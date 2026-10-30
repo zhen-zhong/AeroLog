@@ -61,6 +61,7 @@ export default function EventAnalysisPage() {
   const [propertyType, setPropertyType] = useState("all");
   const [interval, setInterval] = useState<"hour" | "day">("day");
   const [chartKind, setChartKind] = useState<ChartKind>("line");
+  const [segmentId, setSegmentId] = useState<number | undefined>();
   const [range, setRange] = useState<[Dayjs, Dayjs]>([
     dayjs().subtract(7, "day").startOf("day"),
     dayjs().endOf("day"),
@@ -71,6 +72,7 @@ export default function EventAnalysisPage() {
     setActiveProperty(undefined);
     setPropertySearch("");
     setPropertyType("all");
+    setSegmentId(undefined);
   }, [projectId]);
 
   const tsRange = useMemo(() => ({ from: range[0].valueOf(), to: range[1].valueOf() }), [range]);
@@ -80,8 +82,13 @@ export default function EventAnalysisPage() {
     enabled: !!projectId,
   });
   const eventStats = useQuery({
-    queryKey: ["all_event_stats_for_analysis", projectId, tsRange],
-    queryFn: () => api.queryTable(projectId!, { ...tsRange, limit: 500, dimensions: [{ type: "event", key: "event" }] }),
+    queryKey: ["all_event_stats_for_analysis", projectId, tsRange, segmentId],
+    queryFn: () => api.queryTable(projectId!, { ...tsRange, limit: 500, segment_id: segmentId, dimensions: [{ type: "event", key: "event" }] }),
+    enabled: !!projectId,
+  });
+  const segments = useQuery({
+    queryKey: ["segments", projectId],
+    queryFn: () => api.listSegments(projectId!),
     enabled: !!projectId,
   });
   const properties = useQuery({
@@ -118,13 +125,14 @@ export default function EventAnalysisPage() {
     [metrics],
   );
   const analysis = useQuery({
-    queryKey: ["multi_event_analysis", projectId, tsRange, interval, activeMetrics],
+    queryKey: ["multi_event_analysis", projectId, tsRange, interval, activeMetrics, segmentId],
     queryFn: async () => {
       const results = await Promise.all(activeMetrics.map(async (metric) => {
         const result = await api.queryTable(projectId!, {
           events: [metric.event],
           ...tsRange,
           limit: 500,
+          segment_id: segmentId,
           dimensions: [{ type: "time", key: interval }],
           sum_properties: metric.kind === "sum" || metric.kind === "avg" ? [metric.property] : [],
         });
@@ -191,6 +199,7 @@ export default function EventAnalysisPage() {
     setMetrics((current) => current.length > 1 ? current.filter((metric) => metric.id !== id) : current);
   };
   const selectedEvents = new Set(activeMetrics.map((metric) => metric.event));
+  const selectedSegment = (segments.data?.data || []).find((segment) => segment.id === segmentId);
   const parameterEvents = useMemo(
     () => Array.from(new Set(metrics.map((metric) => metric.event).filter(Boolean))),
     [metrics],
@@ -214,7 +223,7 @@ export default function EventAnalysisPage() {
         range={range}
         onRangeChange={setRange}
         comparison="上个周期"
-        filters={activeMetrics.length ? [`${activeMetrics.length} 个分析指标`, `${selectedEvents.size} 个事件`] : ["未选择事件"]}
+        filters={activeMetrics.length ? [`${activeMetrics.length} 个分析指标`, `${selectedEvents.size} 个事件`, selectedSegment ? `分群：${selectedSegment.name}` : "全部用户"] : ["未选择事件"]}
       />
 
       <ToolbarPanel>
@@ -259,6 +268,7 @@ export default function EventAnalysisPage() {
             <div className="grid gap-1.5"><span className="text-sm font-medium">时间粒度</span><div className="grid grid-cols-2 rounded-md border bg-background p-1">{(["hour", "day"] as const).map((item) => <Button key={item} type="button" variant={interval === item ? "default" : "ghost"} size="sm" onClick={() => setInterval(item)}>{item === "hour" ? "按小时" : "按天"}</Button>)}</div></div>
             <div className="grid gap-1.5"><span className="text-sm font-medium">图表类型</span><div className="grid grid-cols-2 rounded-md border bg-background p-1">{(["line", "bar"] as const).map((item) => <Button key={item} type="button" variant={chartKind === item ? "default" : "ghost"} size="sm" onClick={() => setChartKind(item)}>{item === "line" ? "折线图" : "柱状图"}</Button>)}</div></div>
           </div>
+          <div className="grid max-w-xl gap-1.5"><span className="text-sm font-medium">用户分群（可选）</span><Select value={segmentId ? String(segmentId) : "__all__"} onValueChange={(value) => setSegmentId(value === "__all__" ? undefined : Number(value))}><SelectTrigger><SelectValue placeholder="全部用户" /></SelectTrigger><SelectContent><SelectItem value="__all__">全部用户</SelectItem>{(segments.data?.data || []).map((segment) => <SelectItem key={segment.id} value={String(segment.id)}>{segment.name}</SelectItem>)}</SelectContent></Select><p className="text-xs text-muted-foreground">分群按已保存规则实时计算。</p></div>
         </div>
       </ToolbarPanel>
 

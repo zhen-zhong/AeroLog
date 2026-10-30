@@ -804,6 +804,8 @@ type QueryTableBody struct {
 	From   int64    `json:"from"`
 	To     int64    `json:"to"`
 	Limit  int      `json:"limit"`
+	// SegmentID 限定为已保存动态分群的实时成员；0 表示全部用户。
+	SegmentID int64 `json:"segment_id"`
 	// SumProperties requests a numeric sum for each named event property.
 	// Values that cannot be parsed as numbers contribute zero.
 	SumProperties []string `json:"sum_properties"`
@@ -962,6 +964,14 @@ func (h *AnalyticsHandler) executeQueryTable(ctx context.Context, pid uint32, bo
 		default:
 			return nil, nil, &queryTableError{Status: http.StatusBadRequest, Msg: "unsupported filter op"}
 		}
+	}
+	if body.SegmentID != 0 {
+		memberQuery, memberArgs, err := segmentMembershipQuery(ctx, h.PG, int64(pid), body.SegmentID)
+		if err != nil {
+			return nil, nil, &queryTableError{Status: http.StatusBadRequest, Msg: err.Error()}
+		}
+		where += ` AND distinct_id IN (` + memberQuery + `)`
+		whereArgs = append(whereArgs, memberArgs...)
 	}
 
 	orderBy := "c DESC"
