@@ -234,7 +234,7 @@ export function ProjectsPage() {
     <AnimatedContent>
       <PageHeader
         title="项目管理"
-        description="项目对应一个具体接入应用，例如 Web 站点、Android App、iOS App 或小程序。"
+        description="统一配置项目、数据来源、神策实时订阅与分析时区。"
         actions={canManageProjects ? (
           <Button onClick={() => setOpen(true)}>
             <Plus className="h-4 w-4" />
@@ -253,6 +253,7 @@ export function ProjectsPage() {
                   <TableHead className="min-w-40">公司</TableHead>
                   <TableHead className="min-w-40">项目名</TableHead>
                   <TableHead className="min-w-28">应用类型</TableHead>
+                  <TableHead className="min-w-28">数据源</TableHead>
                   <TableHead className="min-w-56">包名</TableHead>
                   <TableHead className="min-w-72">Token</TableHead>
                   <TableHead className="min-w-64">描述</TableHead>
@@ -267,7 +268,7 @@ export function ProjectsPage() {
                 {isLoading ? (
                   Array.from({ length: 4 }).map((_, index) => (
                     <TableRow key={index}>
-                      <TableCell colSpan={12}>
+                      <TableCell colSpan={13}>
                         <Skeleton className="h-8 w-full" />
                       </TableCell>
                     </TableRow>
@@ -288,7 +289,7 @@ export function ProjectsPage() {
                   ))
                 ) : (
                   <TableRow>
-                    <TableCell colSpan={12} className="h-28 text-center text-sm text-muted-foreground">
+                    <TableCell colSpan={13} className="h-28 text-center text-sm text-muted-foreground">
                       暂无项目
                     </TableCell>
                   </TableRow>
@@ -478,6 +479,11 @@ function ProjectRow({
       <TableCell>{project.name}</TableCell>
       <TableCell>
         <Badge variant="outline">{appTypeLabel(project.app_type)}</Badge>
+      </TableCell>
+      <TableCell>
+        <Badge variant={project.data_source === "sensorsdata" ? "success" : "secondary"}>
+          {project.data_source === "sensorsdata" ? "神策" : "AeroLog"}
+        </Badge>
       </TableCell>
       <TableCell className="max-w-56 truncate text-muted-foreground">{project.package_name || "-"}</TableCell>
       <TableCell>
