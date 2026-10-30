@@ -546,6 +546,14 @@ function SensorsIntegrationSheet({ project, onOpenChange }: { project: Project |
     enabled: !!project,
     retry: false,
   });
+  const saved = integration.data?.data;
+  const health = useQuery({
+    queryKey: ["sensors-integration-health", project?.id],
+    queryFn: () => api.getSensorsIntegrationHealth(project!.id),
+    enabled: !!project && !!saved,
+    retry: false,
+    refetchInterval: 30_000,
+  });
   const connect = useMutation({
     mutationFn: () => api.connectSensorsIntegration(project!.id, {
       endpoint: endpoint.trim(), project: sourceProject.trim(), api_key: apiKey.trim(),
@@ -555,10 +563,20 @@ function SensorsIntegrationSheet({ project, onOpenChange }: { project: Project |
     onSuccess: () => {
       setAPIKey(""); setError("");
       qc.invalidateQueries({ queryKey: ["sensors-integration", project?.id] });
+      qc.invalidateQueries({ queryKey: ["sensors-integration-health", project?.id] });
     },
     onError: (e: Error) => setError(e.message),
   });
-  const saved = integration.data?.data;
+  const verify = useMutation({
+    mutationFn: () => api.verifySensorsIntegration(project!.id),
+    onSuccess: () => {
+      setError("");
+      qc.invalidateQueries({ queryKey: ["sensors-integration", project?.id] });
+      qc.invalidateQueries({ queryKey: ["sensors-integration-health", project?.id] });
+    },
+    onError: (e: Error) => setError(e.message),
+  });
+  const healthData = health.data?.data;
 
   useEffect(() => {
     if (!project) return;
@@ -593,10 +611,30 @@ function SensorsIntegrationSheet({ project, onOpenChange }: { project: Project |
           <SheetDescription>{project ? `为「${project.name}」创建独立数据路由。共享 Kafka 接收应用不会重复创建。` : ""}</SheetDescription>
         </SheetHeader>
         {saved && (
-          <div className="mt-5 rounded-lg border bg-muted/30 p-3 text-sm">
-            <p className="font-medium">已连接：{saved.source_project}（ID {saved.source_project_id}）</p>
-            <p className="mt-1 break-all text-muted-foreground">API Key：{saved.api_key_hint || "已保存"}；订阅：{saved.subscription_id || "已有订阅"}</p>
-          </div>
+          <>
+            <div className="mt-5 rounded-lg border bg-muted/30 p-3 text-sm">
+              <p className="font-medium">已连接：{saved.source_project}（ID {saved.source_project_id}）</p>
+              <p className="mt-1 break-all text-muted-foreground">API Key：{saved.api_key_hint || "已保存"}；订阅：{saved.subscription_id || "已有订阅"}</p>
+            </div>
+            <div className="mt-3 rounded-lg border p-3 text-sm">
+              <div className="flex items-center justify-between gap-3">
+                <p className="font-medium">入库健康</p>
+                <Button type="button" size="sm" variant="outline" onClick={() => verify.mutate()} disabled={verify.isPending}>
+                  {verify.isPending ? "校验中..." : "验证神策连接"}
+                </Button>
+              </div>
+              {healthData ? (
+                <div className="mt-2 space-y-1 text-muted-foreground">
+                  <p>最后入库：{healthData.last_event_at ? formatDateTime(healthData.last_event_at) : "暂无神策事件"}</p>
+                  <p>近 5 分钟：{healthData.events_last_5_minutes} 条；近 1 小时：{healthData.events_last_hour} 条</p>
+                  <p>最近校验：{healthData.last_verified_at ? formatDateTime(healthData.last_verified_at) : "未校验"}</p>
+                  {healthData.last_error && <p className="text-destructive">最近错误：{healthData.last_error}</p>}
+                </div>
+              ) : (
+                <p className="mt-2 text-muted-foreground">{health.isLoading ? "读取入库状态中..." : "暂时无法读取入库状态"}</p>
+              )}
+            </div>
+          </>
         )}
         <form onSubmit={submit} className="mt-6 space-y-4">
           <div className="space-y-2">

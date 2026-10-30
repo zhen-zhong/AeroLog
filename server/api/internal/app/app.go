@@ -143,7 +143,7 @@ func newRouter(cfg *config.Config, pool *pgxpool.Pool, chConn driver.Conn) (*gin
 	projectScoped := authed.Group("", handler.ProjectAccessRequired(pool))
 	(&handler.EventDefHandler{PG: pool}).Register(projectScoped)
 	(&handler.GovernanceHandler{PG: pool, CH: chConn}).Register(projectScoped)
-	(&handler.SensorsIntegrationHandler{PG: pool, EncryptionKey: cfg.IntegrationKey, ApplicationName: cfg.SensorsApplication}).Register(projectScoped)
+	(&handler.SensorsIntegrationHandler{PG: pool, CH: chConn, EncryptionKey: cfg.IntegrationKey, ApplicationName: cfg.SensorsApplication}).Register(projectScoped)
 	analytics.Register(projectScoped)
 	queryJobs.Register(projectScoped)
 	return r, queryJobs

@@ -100,6 +100,13 @@ export interface SensorsIntegration {
     created_at: string;
     updated_at: string;
 }
+export interface SensorsIntegrationHealth {
+    last_event_at?: string;
+    events_last_5_minutes: number;
+    events_last_hour: number;
+    last_verified_at?: string;
+    last_error: string;
+}
 export type ProjectStatus = 0 | 1 | 2 | 3;
 export interface AuthUser {
     id: number;
@@ -527,6 +534,10 @@ export const api = {
     getProject: (id: number | string) => req<ApiOne<Project>>(`/projects/${id}`),
     getSensorsIntegration: (id: number | string) =>
         req<ApiOne<SensorsIntegration>>(`/projects/${id}/integrations/sensorsdata`),
+    getSensorsIntegrationHealth: (id: number | string) =>
+        req<ApiOne<SensorsIntegrationHealth>>(`/projects/${id}/integrations/sensorsdata/health`),
+    verifySensorsIntegration: (id: number | string) =>
+        req<ApiOne<{ verified: boolean }>>(`/projects/${id}/integrations/sensorsdata/verify`, { method: "POST" }),
     connectSensorsIntegration: (
         id: number | string,
         body: { endpoint: string; project: string; api_key: string; source_project_id?: string; reuse_subscription?: boolean },

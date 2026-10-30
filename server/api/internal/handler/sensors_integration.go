@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -29,6 +30,7 @@ const sensorsDataSubscriptionPath = "/api/v3/horizon/v1/data-subscription"
 // The receiver application is shared: every source creates only its own subscription.
 type SensorsIntegrationHandler struct {
 	PG              *pgxpool.Pool
+	CH              driver.Conn
 	EncryptionKey   string
 	ApplicationName string
 	HTTPClient      *http.Client
@@ -53,7 +55,17 @@ type SensorsIntegration struct {
 func (h *SensorsIntegrationHandler) Register(r *gin.RouterGroup) {
 	owner := r.Group("", ProjectRoleRequired(h.PG, RoleOwner))
 	owner.GET("/projects/:id/integrations/sensorsdata", h.get)
+	owner.GET("/projects/:id/integrations/sensorsdata/health", h.health)
 	owner.PUT("/projects/:id/integrations/sensorsdata", h.connect)
+	owner.POST("/projects/:id/integrations/sensorsdata/verify", h.verify)
+}
+
+type SensorsIntegrationHealth struct {
+	LastEventAt       *time.Time `json:"last_event_at,omitempty"`
+	EventsLast5Minute uint64     `json:"events_last_5_minutes"`
+	EventsLastHour    uint64     `json:"events_last_hour"`
+	LastVerifiedAt    *time.Time `json:"last_verified_at,omitempty"`
+	LastError         string     `json:"last_error"`
 }
 
 func (h *SensorsIntegrationHandler) get(c *gin.Context) {
@@ -68,6 +80,59 @@ func (h *SensorsIntegrationHandler) get(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": item})
+}
+
+func (h *SensorsIntegrationHandler) health(c *gin.Context) {
+	var out SensorsIntegrationHealth
+	err := h.PG.QueryRow(c, `SELECT last_verified_at, last_error FROM sensors_integrations WHERE project_id=$1`, c.Param("id")).Scan(&out.LastVerifiedAt, &out.LastError)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"err": "未配置神策接入"})
+		return
+	}
+	if h.CH != nil {
+		var total uint64
+		var lastEvent time.Time
+		err = h.CH.QueryRow(c, `
+			SELECT count(), max(time),
+			       countIf(time >= now64(3) - INTERVAL 5 MINUTE),
+			       countIf(time >= now64(3) - INTERVAL 1 HOUR)
+			FROM events
+			WHERE project_id=? AND JSONExtractString(properties, '$aerolog_source')='sensorsdata'
+		`, uint32(atoi64(c.Param("id")))).Scan(&total, &lastEvent, &out.EventsLast5Minute, &out.EventsLastHour)
+		if err != nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"err": "读取神策入库状态失败"})
+			return
+		}
+		if total > 0 {
+			out.LastEventAt = &lastEvent
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out})
+}
+
+func (h *SensorsIntegrationHandler) verify(c *gin.Context) {
+	if strings.TrimSpace(h.EncryptionKey) == "" || strings.TrimSpace(h.ApplicationName) == "" {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"err": "神策接入服务未完成配置"})
+		return
+	}
+	var endpoint, project, ciphertext string
+	err := h.PG.QueryRow(c, `SELECT endpoint, source_project, api_key_ciphertext FROM sensors_integrations WHERE project_id=$1`, c.Param("id")).Scan(&endpoint, &project, &ciphertext)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"err": "未配置神策接入"})
+		return
+	}
+	apiKey, err := decryptIntegrationSecret(h.EncryptionKey, ciphertext)
+	if err == nil {
+		_, err = newSensorsClient(endpoint, project, apiKey, h.HTTPClient).applicationID(c, h.ApplicationName)
+	}
+	if err != nil {
+		message := "神策连接校验失败：" + safeSensorsError(err)
+		_, _ = h.PG.Exec(c, `UPDATE sensors_integrations SET last_error=$2, updated_at=now() WHERE project_id=$1`, c.Param("id"), message)
+		c.JSON(http.StatusBadGateway, gin.H{"err": message})
+		return
+	}
+	_, _ = h.PG.Exec(c, `UPDATE sensors_integrations SET status=1, last_error='', last_verified_at=now(), updated_at=now() WHERE project_id=$1`, c.Param("id"))
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"verified": true}})
 }
 
 type sensorsConnectRequest struct {
