@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS projects (
     name          VARCHAR(128) NOT NULL,
     app_type      VARCHAR(32)  NOT NULL DEFAULT 'web',     -- web | android | ios | mini_program | server | other
     package_name  VARCHAR(255) NOT NULL DEFAULT '',        -- Android/iOS 包名；Web 项目留空
+    timezone      VARCHAR(64)  NOT NULL DEFAULT 'Asia/Shanghai', -- 分析自然日时区：Asia/Shanghai | UTC
     token         VARCHAR(64)  NOT NULL UNIQUE,           -- AppKey，SDK 上报凭证
     secret        VARCHAR(128) NOT NULL,                  -- HMAC 签名密钥（仅服务端使用）
     description   TEXT,
@@ -49,6 +50,7 @@ ALTER TABLE projects ADD COLUMN IF NOT EXISTS require_signature BOOLEAN NOT NULL
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS company_id BIGINT;
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS app_type VARCHAR(32) NOT NULL DEFAULT 'web';
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS package_name VARCHAR(255) NOT NULL DEFAULT '';
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS timezone VARCHAR(64) NOT NULL DEFAULT 'Asia/Shanghai';
 UPDATE projects
 SET package_name = name
 WHERE app_type IN ('android','ios') AND COALESCE(package_name,'') = '';

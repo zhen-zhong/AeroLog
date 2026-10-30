@@ -88,14 +88,15 @@ func (h *AnalyticsHandler) conversionTrend(c *gin.Context) {
 		bucket = "hour"
 	}
 
-	current, err := h.computeFunnelTrend(c, uint32(pid), body.Events, body.From, body.To, body.WindowSeconds, bucket)
+	timezone := clickHouseTimezone(h.projectTimezone(c.Request.Context(), uint32(pid)))
+	current, err := h.computeFunnelTrend(c, uint32(pid), timezone, body.Events, body.From, body.To, body.WindowSeconds, bucket)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
 		return
 	}
 	compare := []trendPoint{}
 	if body.CompareFrom > 0 && body.CompareTo > 0 {
-		compare, err = h.computeFunnelTrend(c, uint32(pid), body.Events, body.CompareFrom, body.CompareTo, body.WindowSeconds, bucket)
+		compare, err = h.computeFunnelTrend(c, uint32(pid), timezone, body.Events, body.CompareFrom, body.CompareTo, body.WindowSeconds, bucket)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
 			return
@@ -112,7 +113,7 @@ type trendPoint struct {
 }
 
 // computeFunnelTrend 按时间桶分组计算每天/每小时的漏斗首末步用户数和总转化率。
-func (h *AnalyticsHandler) computeFunnelTrend(c *gin.Context, pid uint32, events []string, from, to, windowSeconds int64, bucket string) ([]trendPoint, error) {
+func (h *AnalyticsHandler) computeFunnelTrend(c *gin.Context, pid uint32, timezone string, events []string, from, to, windowSeconds int64, bucket string) ([]trendPoint, error) {
 	conds := make([]string, 0, len(events))
 	args := make([]any, 0, len(events)+3)
 	for _, ev := range events {
@@ -120,9 +121,9 @@ func (h *AnalyticsHandler) computeFunnelTrend(c *gin.Context, pid uint32, events
 		args = append(args, ev)
 	}
 	args = append(args, pid, from, to)
-	bucketExpr := "toStartOfDay(toDateTime(time))"
+	bucketExpr := "toStartOfDay(toDateTime(time), " + timezone + ")"
 	if bucket == "hour" {
-		bucketExpr = "toStartOfHour(toDateTime(time))"
+		bucketExpr = "toStartOfHour(toDateTime(time), " + timezone + ")"
 	}
 	inner := `SELECT ` + bucketExpr + ` AS bucket, distinct_id,
 	          windowFunnel(` + strconv.FormatInt(windowSeconds, 10) + `)(toDateTime(time), ` + joinStrs(conds, ", ") + `) AS level

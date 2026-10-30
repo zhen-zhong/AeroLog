@@ -81,6 +81,7 @@ export interface Project {
     description: string;
     require_signature: boolean;
     status: ProjectStatus;
+    timezone: "Asia/Shanghai" | "UTC";
     role?: "owner" | "editor" | "viewer";
     created_at: string;
 }
@@ -507,6 +508,7 @@ export const api = {
         package_name?: string;
         description?: string;
         status?: ProjectStatus;
+        timezone?: Project["timezone"];
     }) =>
         req<ApiOne<{
             id: number;
@@ -517,6 +519,7 @@ export const api = {
             token: string;
             require_signature: boolean;
             status: ProjectStatus;
+            timezone: Project["timezone"];
         }>>("/projects", {
             method: "POST",
             body: JSON.stringify(body),
@@ -547,6 +550,13 @@ export const api = {
             method: "PATCH",
             body: JSON.stringify(body),
         }),
+    updateProjectTimezone: (
+        id: number | string,
+        body: { timezone: Project["timezone"] },
+    ) => req<ApiOne<Project>>(`/projects/${id}/timezone`, {
+        method: "PATCH",
+        body: JSON.stringify(body),
+    }),
     listProjectMembers: (id: number | string) =>
         req<ApiList<ProjectMember>>(`/projects/${id}/members`),
     addProjectMember: (

@@ -21,6 +21,8 @@ const (
 	ProjectStatusOffline  int16 = 3
 )
 
+const defaultProjectTimezone = "Asia/Shanghai"
+
 // Project 项目记录
 type Project struct {
 	ID               int64     `json:"id"`
@@ -33,6 +35,7 @@ type Project struct {
 	Description      string    `json:"description"`
 	RequireSignature bool      `json:"require_signature"`
 	Status           int16     `json:"status"`
+	Timezone         string    `json:"timezone"`
 	Role             string    `json:"role,omitempty"`
 	CreatedAt        time.Time `json:"created_at"`
 }
@@ -70,6 +73,7 @@ func (h *ProjectHandler) Register(r *gin.RouterGroup) {
 	r.GET("/projects/:id", ProjectRoleRequired(h.PG, RoleViewer), h.get)
 	r.PATCH("/projects/:id/security", ProjectRoleRequired(h.PG, RoleOwner), h.updateSecurity)
 	r.PATCH("/projects/:id/status", ProjectRoleRequired(h.PG, RoleOwner), h.updateStatus)
+	r.PATCH("/projects/:id/timezone", ProjectRoleRequired(h.PG, RoleOwner), h.updateTimezone)
 	r.GET("/projects/:id/members", ProjectRoleRequired(h.PG, RoleViewer), h.listMembers)
 	r.POST("/projects/:id/members", ProjectRoleRequired(h.PG, RoleOwner), h.addMember)
 	r.PATCH("/projects/:id/members/:user_id", ProjectRoleRequired(h.PG, RoleOwner), h.updateMember)
@@ -83,7 +87,7 @@ func (h *ProjectHandler) list(c *gin.Context) {
 		rows, err = h.PG.Query(c, `
 			SELECT p.id, COALESCE(p.company_id,0), COALESCE(o.name,''), p.name, COALESCE(p.app_type,'web'),
 			       COALESCE(p.package_name,''), p.token, COALESCE(p.description,''), COALESCE(p.require_signature,false),
-			       p.status, 'owner'::text, p.created_at
+			       p.status, COALESCE(p.timezone,'Asia/Shanghai'), 'owner'::text, p.created_at
 			FROM projects p
 			LEFT JOIN organizations o ON o.id=p.company_id
 			ORDER BY p.id DESC LIMIT 500
@@ -92,7 +96,7 @@ func (h *ProjectHandler) list(c *gin.Context) {
 		rows, err = h.PG.Query(c, `
 			SELECT p.id, COALESCE(p.company_id,0), COALESCE(o.name,''), p.name, COALESCE(p.app_type,'web'),
 			       COALESCE(p.package_name,''), p.token, COALESCE(p.description,''), COALESCE(p.require_signature,false),
-			       p.status, 'owner'::text, p.created_at
+			       p.status, COALESCE(p.timezone,'Asia/Shanghai'), 'owner'::text, p.created_at
 			FROM projects p
 			LEFT JOIN organizations o ON o.id=p.company_id
 			WHERE p.company_id=$1
@@ -102,7 +106,7 @@ func (h *ProjectHandler) list(c *gin.Context) {
 		rows, err = h.PG.Query(c, `
 			SELECT p.id, COALESCE(p.company_id,0), COALESCE(o.name,''), p.name, COALESCE(p.app_type,'web'),
 			       COALESCE(p.package_name,''), p.token, COALESCE(p.description,''), COALESCE(p.require_signature,false),
-			       p.status, m.role, p.created_at
+			       p.status, COALESCE(p.timezone,'Asia/Shanghai'), m.role, p.created_at
 			FROM projects p
 			JOIN project_members m ON m.project_id=p.id
 			LEFT JOIN organizations o ON o.id=p.company_id
@@ -118,7 +122,7 @@ func (h *ProjectHandler) list(c *gin.Context) {
 	out := []Project{}
 	for rows.Next() {
 		var p Project
-		if err := rows.Scan(&p.ID, &p.CompanyID, &p.CompanyName, &p.Name, &p.AppType, &p.PackageName, &p.Token, &p.Description, &p.RequireSignature, &p.Status, &p.Role, &p.CreatedAt); err == nil {
+		if err := rows.Scan(&p.ID, &p.CompanyID, &p.CompanyName, &p.Name, &p.AppType, &p.PackageName, &p.Token, &p.Description, &p.RequireSignature, &p.Status, &p.Timezone, &p.Role, &p.CreatedAt); err == nil {
 			out = append(out, p)
 		}
 	}
@@ -130,11 +134,11 @@ func (h *ProjectHandler) get(c *gin.Context) {
 	var p Project
 	err := h.PG.QueryRow(c, `
 		SELECT p.id, COALESCE(p.company_id,0), COALESCE(o.name,''), p.name, COALESCE(p.app_type,'web'),
-		       COALESCE(p.package_name,''), p.token, COALESCE(p.description,''), COALESCE(p.require_signature,false), p.status, p.created_at
+		       COALESCE(p.package_name,''), p.token, COALESCE(p.description,''), COALESCE(p.require_signature,false), p.status, COALESCE(p.timezone,'Asia/Shanghai'), p.created_at
 		FROM projects p
 		LEFT JOIN organizations o ON o.id=p.company_id
 		WHERE p.id=$1
-	`, id).Scan(&p.ID, &p.CompanyID, &p.CompanyName, &p.Name, &p.AppType, &p.PackageName, &p.Token, &p.Description, &p.RequireSignature, &p.Status, &p.CreatedAt)
+	`, id).Scan(&p.ID, &p.CompanyID, &p.CompanyName, &p.Name, &p.AppType, &p.PackageName, &p.Token, &p.Description, &p.RequireSignature, &p.Status, &p.Timezone, &p.CreatedAt)
 	if err != nil {
 		c.JSON(404, gin.H{"err": "not found"})
 		return
@@ -151,6 +155,7 @@ type createProjectReq struct {
 	Description      string `json:"description"`
 	RequireSignature bool   `json:"require_signature"`
 	Status           *int16 `json:"status"`
+	Timezone         string `json:"timezone"`
 }
 
 func (h *ProjectHandler) create(c *gin.Context) {
@@ -192,6 +197,11 @@ func (h *ProjectHandler) create(c *gin.Context) {
 			return
 		}
 	}
+	timezone, ok := normalizeProjectTimezone(req.Timezone)
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"err": "timezone must be Asia/Shanghai or UTC"})
+		return
+	}
 	var id int64
 	tx, err := h.PG.BeginTx(c, pgx.TxOptions{})
 	if err != nil {
@@ -200,8 +210,8 @@ func (h *ProjectHandler) create(c *gin.Context) {
 	}
 	defer func() { _ = tx.Rollback(c) }()
 	err = tx.QueryRow(c,
-		`INSERT INTO projects(company_id, name, app_type, package_name, token, secret, description, require_signature, status, created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
-		companyID, req.Name, appType, packageName, token, secret, req.Description, req.RequireSignature, status, CurrentUserID(c)).Scan(&id)
+		`INSERT INTO projects(company_id, name, app_type, package_name, timezone, token, secret, description, require_signature, status, created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
+		companyID, req.Name, appType, packageName, timezone, token, secret, req.Description, req.RequireSignature, status, CurrentUserID(c)).Scan(&id)
 	if err != nil {
 		c.JSON(500, gin.H{"err": err.Error()})
 		return
@@ -217,7 +227,18 @@ func (h *ProjectHandler) create(c *gin.Context) {
 		c.JSON(500, gin.H{"err": err.Error()})
 		return
 	}
-	c.JSON(200, gin.H{"data": gin.H{"id": id, "company_id": companyID, "name": req.Name, "app_type": appType, "package_name": packageName, "token": token, "require_signature": req.RequireSignature, "status": status, "role": RoleOwner}})
+	c.JSON(200, gin.H{"data": gin.H{"id": id, "company_id": companyID, "name": req.Name, "app_type": appType, "package_name": packageName, "timezone": timezone, "token": token, "require_signature": req.RequireSignature, "status": status, "role": RoleOwner}})
+}
+
+func normalizeProjectTimezone(value string) (string, bool) {
+	switch strings.TrimSpace(value) {
+	case "", defaultProjectTimezone:
+		return defaultProjectTimezone, true
+	case "UTC":
+		return "UTC", true
+	default:
+		return "", false
+	}
 }
 
 func (h *ProjectHandler) updateSecurity(c *gin.Context) {
@@ -266,6 +287,35 @@ func (h *ProjectHandler) updateStatus(c *gin.Context) {
 		RETURNING id, COALESCE(company_id,0), name, COALESCE(app_type,'web'), COALESCE(package_name,''), token, COALESCE(description,''), COALESCE(require_signature,false), status, created_at
 	`, id, status).
 		Scan(&p.ID, &p.CompanyID, &p.Name, &p.AppType, &p.PackageName, &p.Token, &p.Description, &p.RequireSignature, &p.Status, &p.CreatedAt)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"err": "not found"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": p})
+}
+
+func (h *ProjectHandler) updateTimezone(c *gin.Context) {
+	var req struct {
+		Timezone string `json:"timezone" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"err": "timezone is required"})
+		return
+	}
+	timezone, ok := normalizeProjectTimezone(req.Timezone)
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"err": "timezone must be Asia/Shanghai or UTC"})
+		return
+	}
+	var p Project
+	err := h.PG.QueryRow(c, `
+		UPDATE projects SET timezone=$2, updated_at=now() WHERE id=$1
+		RETURNING id, COALESCE(company_id,0), name, COALESCE(app_type,'web'), COALESCE(package_name,''), token,
+		          COALESCE(description,''), COALESCE(require_signature,false), status, COALESCE(timezone,'Asia/Shanghai'), created_at
+	`, c.Param("id"), timezone).Scan(
+		&p.ID, &p.CompanyID, &p.Name, &p.AppType, &p.PackageName, &p.Token, &p.Description,
+		&p.RequireSignature, &p.Status, &p.Timezone, &p.CreatedAt,
+	)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"err": "not found"})
 		return

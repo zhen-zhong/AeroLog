@@ -56,6 +56,7 @@ type CreateProjectForm = {
   package_name?: string;
   description?: string;
   status?: ProjectStatus;
+  timezone: Project["timezone"];
   source: ProjectSource;
   sensors?: {
     endpoint: string;
@@ -83,6 +84,7 @@ export function ProjectsPage() {
   const [packageName, setPackageName] = useState("");
   const [companyId, setCompanyId] = useState<number | undefined>();
   const [status, setStatus] = useState<ProjectStatus>(1);
+  const [timezone, setTimezone] = useState<Project["timezone"]>("Asia/Shanghai");
   const [description, setDescription] = useState("");
   const [sensorsEndpoint, setSensorsEndpoint] = useState("http://47.84.178.190:8107");
   const [sensorsAPIKey, setSensorsAPIKey] = useState("");
@@ -129,6 +131,7 @@ export function ProjectsPage() {
       setPackageName("");
       setCompanyId(undefined);
       setStatus(1);
+      setTimezone("Asia/Shanghai");
       setDescription("");
       setSensorsEndpoint("http://47.84.178.190:8107");
       setSensorsAPIKey("");
@@ -159,6 +162,14 @@ export function ProjectsPage() {
     },
   });
 
+  const timezoneMut = useMutation({
+    mutationFn: (body: { id: number; timezone: Project["timezone"] }) =>
+      api.updateProjectTimezone(body.id, { timezone: body.timezone }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["projects"] });
+    },
+  });
+
   function toggleSignature(project: Project) {
     securityMut.mutate({
       id: project.id,
@@ -169,6 +180,11 @@ export function ProjectsPage() {
   function changeStatus(project: Project, nextStatus: ProjectStatus) {
     if (project.status === nextStatus) return;
     statusMut.mutate({ id: project.id, status: nextStatus });
+  }
+
+  function changeTimezone(project: Project, nextTimezone: Project["timezone"]) {
+    if (project.timezone === nextTimezone) return;
+    timezoneMut.mutate({ id: project.id, timezone: nextTimezone });
   }
 
   function submit(e: FormEvent) {
@@ -200,6 +216,7 @@ export function ProjectsPage() {
       package_name: source === "other" && needsPackageName ? packageName.trim() : undefined,
       description: description.trim() || undefined,
       status,
+      timezone,
       source,
       ...(source === "sensorsdata" ? {
         sensors: {
@@ -241,6 +258,7 @@ export function ProjectsPage() {
                   <TableHead className="min-w-64">描述</TableHead>
                   <TableHead className="min-w-40">签名校验</TableHead>
                   <TableHead className="min-w-24">状态</TableHead>
+                  <TableHead className="min-w-36">分析时区</TableHead>
                   <TableHead className="min-w-32">数据接入</TableHead>
                   <TableHead className="min-w-48">创建时间</TableHead>
                 </TableRow>
@@ -249,7 +267,7 @@ export function ProjectsPage() {
                 {isLoading ? (
                   Array.from({ length: 4 }).map((_, index) => (
                     <TableRow key={index}>
-                      <TableCell colSpan={11}>
+                      <TableCell colSpan={12}>
                         <Skeleton className="h-8 w-full" />
                       </TableCell>
                     </TableRow>
@@ -261,14 +279,16 @@ export function ProjectsPage() {
                       project={project}
                       pending={securityMut.isPending}
                       statusPending={statusMut.isPending}
+                      timezonePending={timezoneMut.isPending}
                       onToggleSignature={toggleSignature}
                       onStatusChange={changeStatus}
+                      onTimezoneChange={changeTimezone}
                       onSensorsConnect={setSensorsProject}
                     />
                   ))
                 ) : (
                   <TableRow>
-                    <TableCell colSpan={11} className="h-28 text-center text-sm text-muted-foreground">
+                    <TableCell colSpan={12} className="h-28 text-center text-sm text-muted-foreground">
                       暂无项目
                     </TableCell>
                   </TableRow>
@@ -325,6 +345,17 @@ export function ProjectsPage() {
                 </Select>
               </div>
             )}
+            <div className="space-y-2">
+              <Label>分析时区</Label>
+              <Select value={timezone} onValueChange={(value) => setTimezone(value as Project["timezone"])}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Asia/Shanghai">UTC+08:00（中国标准时间）</SelectItem>
+                  <SelectItem value="UTC">UTC+00:00</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">影响报表按天、留存、会话和趋势的自然日边界。</p>
+            </div>
             {source === "sensorsdata" ? (
               <>
                 <div className="space-y-2">
@@ -425,15 +456,19 @@ function ProjectRow({
   project,
   pending,
   statusPending,
+  timezonePending,
   onToggleSignature,
   onStatusChange,
+  onTimezoneChange,
   onSensorsConnect,
 }: {
   project: Project;
   pending: boolean;
   statusPending: boolean;
+  timezonePending: boolean;
   onToggleSignature: (project: Project) => void;
   onStatusChange: (project: Project, status: ProjectStatus) => void;
+  onTimezoneChange: (project: Project, timezone: Project["timezone"]) => void;
   onSensorsConnect: (project: Project) => void;
 }) {
   return (
@@ -460,6 +495,13 @@ function ProjectRow({
         />
       </TableCell>
       <TableCell>
+        <ProjectTimezoneSelect
+          timezone={project.timezone || "Asia/Shanghai"}
+          disabled={timezonePending || project.role !== "owner"}
+          onChange={(nextTimezone) => onTimezoneChange(project, nextTimezone)}
+        />
+      </TableCell>
+      <TableCell>
         <Button type="button" variant="outline" size="sm" className="h-8 gap-1.5" onClick={() => onSensorsConnect(project)} disabled={project.role !== "owner"}>
           <Link2 className="h-3.5 w-3.5" />
           神策接入
@@ -467,6 +509,26 @@ function ProjectRow({
       </TableCell>
       <TableCell className="text-muted-foreground">{formatDateTime(project.created_at)}</TableCell>
     </TableRow>
+  );
+}
+
+function ProjectTimezoneSelect({
+  timezone,
+  disabled,
+  onChange,
+}: {
+  timezone: Project["timezone"];
+  disabled: boolean;
+  onChange: (timezone: Project["timezone"]) => void;
+}) {
+  return (
+    <Select value={timezone} onValueChange={(value) => onChange(value as Project["timezone"])} disabled={disabled}>
+      <SelectTrigger className="h-8 w-36"><SelectValue /></SelectTrigger>
+      <SelectContent>
+        <SelectItem value="Asia/Shanghai">UTC+08:00</SelectItem>
+        <SelectItem value="UTC">UTC+00:00</SelectItem>
+      </SelectContent>
+    </Select>
   );
 }
 

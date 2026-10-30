@@ -227,6 +227,10 @@ func (h *AnalyticsHandler) sessionAnalysis(c *gin.Context) {
 		writeQueryTableError(c, err)
 		return
 	}
+	timezone, _ := time.LoadLocation(h.projectTimezone(c.Request.Context(), uint32(pid)))
+	if timezone == nil {
+		timezone = time.UTC
+	}
 	sessions := splitBehaviorSessions(events, body.SessionGapSeconds)
 	totalDuration := float64(0)
 	totalEvents := uint64(0)
@@ -242,7 +246,7 @@ func (h *AnalyticsHandler) sessionAnalysis(c *gin.Context) {
 		duration := session.End.Sub(session.Start).Seconds()
 		totalDuration += duration
 		totalEvents += uint64(len(session.Events))
-		day := session.Start.In(time.FixedZone("Asia/Shanghai", 8*3600)).Format("2006-01-02")
+		day := session.Start.In(timezone).Format("2006-01-02")
 		if byDay[day] == nil {
 			byDay[day] = &aggregate{users: map[string]bool{}}
 		}

@@ -68,6 +68,7 @@ ALTER TABLE projects ADD COLUMN IF NOT EXISTS require_signature BOOLEAN NOT NULL
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS company_id BIGINT;
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS app_type VARCHAR(32) NOT NULL DEFAULT 'web';
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS package_name VARCHAR(255) NOT NULL DEFAULT '';
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS timezone VARCHAR(64) NOT NULL DEFAULT 'Asia/Shanghai';
 UPDATE projects
 SET package_name = name
 WHERE app_type IN ('android','ios') AND COALESCE(package_name,'') = '';

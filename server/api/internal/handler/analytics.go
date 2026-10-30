@@ -63,9 +63,10 @@ func (h *AnalyticsHandler) trend(c *gin.Context) {
 	from := atoi64(c.DefaultQuery("from", "0"))
 	to := atoi64(c.DefaultQuery("to", "0"))
 	interval := c.DefaultQuery("interval", "day")
-	bucket := "toStartOfDay(time)"
+	timezone := clickHouseTimezone(h.projectTimezone(c.Request.Context(), uint32(pid)))
+	bucket := "toStartOfDay(time, " + timezone + ")"
 	if interval == "hour" {
-		bucket = "toStartOfHour(time)"
+		bucket = "toStartOfHour(time, " + timezone + ")"
 	}
 	if to == 0 {
 		to = time.Now().UnixMilli()
@@ -842,6 +843,7 @@ func (h *AnalyticsHandler) runQueryTable(c *gin.Context, limitCap int) ([]QueryR
 
 // executeQueryTable 真正执行查询，不依赖 gin.Context，便于 worker 调用。
 func (h *AnalyticsHandler) executeQueryTable(ctx context.Context, pid uint32, body *QueryTableBody, limitCap int) ([]QueryRow, []QueryDimMeta, error) {
+	timezone := clickHouseTimezone(h.projectTimezone(ctx, pid))
 	if body.To == 0 {
 		body.To = time.Now().UnixMilli()
 	}
@@ -902,7 +904,7 @@ func (h *AnalyticsHandler) executeQueryTable(ctx context.Context, pid uint32, bo
 			if dim.Key == "hour" {
 				format = "%F %H:00"
 			}
-			selects = append(selects, "formatDateTime(toStartOf"+map[bool]string{true: "Hour", false: "Day"}[dim.Key == "hour"]+"(time), ?, 'Asia/Shanghai') AS "+alias)
+			selects = append(selects, "formatDateTime(toStartOf"+map[bool]string{true: "Hour", false: "Day"}[dim.Key == "hour"]+"(time, "+timezone+"), ?, "+timezone+") AS "+alias)
 			selectArgs = append(selectArgs, format)
 			metas = append(metas, QueryDimMeta{Type: "time", Key: dim.Key})
 			timeAlias = alias
@@ -1113,7 +1115,8 @@ func (h *AnalyticsHandler) cohortTable(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"err": "offsets must be between 0 and 30"})
 		return
 	}
-	rows, err := h.computeCohortTable(c.Request.Context(), uint32(pid), &body, offsets)
+	timezone := clickHouseTimezone(h.projectTimezone(c.Request.Context(), uint32(pid)))
+	rows, err := h.computeCohortTable(c.Request.Context(), uint32(pid), timezone, &body, offsets)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
 		return
@@ -1140,11 +1143,11 @@ func normalizeCohortOffsets(offsets []int) ([]int, bool) {
 	return out, true
 }
 
-func (h *AnalyticsHandler) computeCohortTable(ctx context.Context, pid uint32, body *CohortTableBody, offsets []int) ([]CohortTableRow, error) {
+func (h *AnalyticsHandler) computeCohortTable(ctx context.Context, pid uint32, timezone string, body *CohortTableBody, offsets []int) ([]CohortTableRow, error) {
 	maxOffset := offsets[len(offsets)-1]
 	selects := []string{"formatDateTime(c.d0, '%F') AS cohort", "uniqExact(c.distinct_id) AS cohort_users"}
 	for _, offset := range offsets {
-		dayDiff := "dateDiff('day', c.d0, toDate(m.time, 'Asia/Shanghai')) = " + strconv.Itoa(offset)
+		dayDiff := "dateDiff('day', c.d0, toDate(m.time, " + timezone + ")) = " + strconv.Itoa(offset)
 		selects = append(selects, "countIf("+dayDiff+") AS count_"+strconv.Itoa(offset))
 		selects = append(selects, "uniqExactIf(m.distinct_id, "+dayDiff+") AS users_"+strconv.Itoa(offset))
 	}
@@ -1157,7 +1160,7 @@ func (h *AnalyticsHandler) computeCohortTable(ctx context.Context, pid uint32, b
 	metricTo := body.To + int64(maxOffset)*24*3600*1000
 	q := `
 	WITH cohort AS (
-		SELECT distinct_id, min(toDate(time, 'Asia/Shanghai')) AS d0
+		SELECT distinct_id, min(toDate(time, ` + timezone + `)) AS d0
 		FROM events
 		WHERE ` + cohortWhere + `
 		GROUP BY distinct_id
@@ -1287,14 +1290,15 @@ func (h *AnalyticsHandler) retention(c *gin.Context) {
 	}
 	breakdownProp := c.Query("breakdown_property")
 	ctx := c.Request.Context()
-	overall, err := h.computeRetention(ctx, uint32(pid), initEv, retEv, from, to, days)
+	timezone := clickHouseTimezone(h.projectTimezone(ctx, uint32(pid)))
+	overall, err := h.computeRetention(ctx, uint32(pid), timezone, initEv, retEv, from, to, days)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
 		return
 	}
 	breakdown := []retentionBreakdownRow{}
 	if breakdownProp != "" {
-		breakdown, err = h.computeRetentionBreakdown(ctx, uint32(pid), initEv, retEv, from, to, days, breakdownProp)
+		breakdown, err = h.computeRetentionBreakdown(ctx, uint32(pid), timezone, initEv, retEv, from, to, days, breakdownProp)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
 			return
@@ -1318,20 +1322,20 @@ type retentionBreakdownRow struct {
 	DayOne    float64        `json:"day_one"`
 }
 
-func (h *AnalyticsHandler) computeRetention(ctx context.Context, pid uint32, initEv, retEv string, from, to int64, days int) ([]retentionRow, error) {
+func (h *AnalyticsHandler) computeRetention(ctx context.Context, pid uint32, timezone, initEv, retEv string, from, to int64, days int) ([]retentionRow, error) {
 	valueExprs := make([]string, 0, days)
 	for i := 0; i < days; i++ {
 		valueExprs = append(valueExprs, "uniqExactIf(c.distinct_id, dateDiff('day', c.d0, r.d) = "+strconv.Itoa(i)+")")
 	}
 	q := `
 	WITH cohort AS (
-		SELECT distinct_id, min(toDate(time)) AS d0
+		SELECT distinct_id, min(toDate(time, ` + timezone + `)) AS d0
 		FROM events
 		WHERE project_id = ? AND event = ? AND time BETWEEN fromUnixTimestamp64Milli(?) AND fromUnixTimestamp64Milli(?)
 		GROUP BY distinct_id
 	),
 	ret AS (
-		SELECT distinct_id, toDate(time) AS d
+		SELECT distinct_id, toDate(time, ` + timezone + `) AS d
 		FROM events
 		WHERE project_id = ? AND event = ? AND time BETWEEN fromUnixTimestamp64Milli(?) AND fromUnixTimestamp64Milli(?)
 		GROUP BY distinct_id, d
@@ -1359,7 +1363,7 @@ func (h *AnalyticsHandler) computeRetention(ctx context.Context, pid uint32, ini
 	return out, nil
 }
 
-func (h *AnalyticsHandler) computeRetentionBreakdown(ctx context.Context, pid uint32, initEv, retEv string, from, to int64, days int, property string) ([]retentionBreakdownRow, error) {
+func (h *AnalyticsHandler) computeRetentionBreakdown(ctx context.Context, pid uint32, timezone, initEv, retEv string, from, to int64, days int, property string) ([]retentionBreakdownRow, error) {
 	valueExprs := make([]string, 0, days)
 	for i := 0; i < days; i++ {
 		valueExprs = append(valueExprs, "uniqExactIf(c.distinct_id, dateDiff('day', c.d0, r.d) = "+strconv.Itoa(i)+")")
@@ -1368,14 +1372,14 @@ func (h *AnalyticsHandler) computeRetentionBreakdown(ctx context.Context, pid ui
 	q := `
 	WITH cohort AS (
 		SELECT distinct_id,
-		       min(toDate(time)) AS d0,
+		       min(toDate(time, ` + timezone + `)) AS d0,
 		       argMin(JSONExtractRaw(properties, ?), time) AS dim
 		FROM events
 		WHERE project_id = ? AND event = ? AND time BETWEEN fromUnixTimestamp64Milli(?) AND fromUnixTimestamp64Milli(?)
 		GROUP BY distinct_id
 	),
 	ret AS (
-		SELECT distinct_id, toDate(time) AS d
+		SELECT distinct_id, toDate(time, ` + timezone + `) AS d
 		FROM events
 		WHERE project_id = ? AND event = ? AND time BETWEEN fromUnixTimestamp64Milli(?) AND fromUnixTimestamp64Milli(?)
 		GROUP BY distinct_id, d
