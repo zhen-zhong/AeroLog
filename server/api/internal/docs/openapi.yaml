@@ -385,6 +385,18 @@ paths:
   /v1/projects/{id}/users:
     parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
     get: { tags: [用户画像], summary: 用户列表, responses: { "200": { description: ok } } }
+  /v1/projects/{id}/segments:
+    parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+    get:  { tags: [用户画像], summary: 用户分群列表, responses: { "200": { description: ok } } }
+    post: { tags: [用户画像], summary: 保存动态用户分群, responses: { "200": { description: ok } } }
+  /v1/projects/{id}/segments/preview:
+    parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+    post: { tags: [用户画像], summary: 预览分群人数, responses: { "200": { description: ok } } }
+  /v1/projects/{id}/segments/{segment_id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer } }
+      - { name: segment_id, in: path, required: true, schema: { type: integer } }
+    delete: { tags: [用户画像], summary: 删除用户分群, responses: { "200": { description: ok } } }
   /v1/projects/{id}/users/{distinct_id}/profile:
     parameters:
       - { name: id, in: path, required: true, schema: { type: integer } }

@@ -373,6 +373,20 @@ CREATE TABLE IF NOT EXISTS query_templates (
 CREATE INDEX IF NOT EXISTS idx_query_templates_project
     ON query_templates(project_id, status, updated_at DESC);
 
+CREATE TABLE IF NOT EXISTS user_segments (
+    id          BIGSERIAL PRIMARY KEY,
+    project_id  BIGINT       NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    name        VARCHAR(128) NOT NULL,
+    description TEXT         NOT NULL DEFAULT '',
+    rules       JSONB        NOT NULL DEFAULT '{}'::jsonb,
+    status      SMALLINT     NOT NULL DEFAULT 1,
+    created_by  BIGINT       REFERENCES users(id),
+    created_at  TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    updated_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_user_segments_project
+    ON user_segments(project_id, status, updated_at DESC);
+
 CREATE TABLE IF NOT EXISTS analytics_jobs (
     id            BIGSERIAL PRIMARY KEY,
     project_id    BIGINT       NOT NULL REFERENCES projects(id) ON DELETE CASCADE,

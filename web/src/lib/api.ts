@@ -366,6 +366,23 @@ export interface QueryTemplate {
     created_at: string;
     updated_at: string;
 }
+export interface SegmentRules {
+    profile_property?: string;
+    profile_value?: string;
+    event?: string;
+    event_condition?: "has" | "not_has";
+    lookback_days?: number;
+}
+export interface UserSegment {
+    id: number;
+    project_id: number;
+    name: string;
+    description: string;
+    rules: SegmentRules;
+    status: number;
+    created_at: string;
+    updated_at: string;
+}
 export interface AnalyticsJob {
     id: number;
     project_id: number;
@@ -761,6 +778,25 @@ export const api = {
             `/projects/${id}/users/${encodeURIComponent(distinctId)}/events?${q}`,
         );
     },
+    listSegments: (id: number | string) =>
+        req<ApiList<UserSegment>>(`/projects/${id}/segments`),
+    previewSegment: (id: number | string, rules: SegmentRules) =>
+        req<ApiOne<{ users: number }>>(`/projects/${id}/segments/preview`, {
+            method: "POST",
+            body: JSON.stringify({ rules }),
+        }),
+    createSegment: (
+        id: number | string,
+        body: { name: string; description?: string; rules: SegmentRules },
+    ) =>
+        req<ApiOne<UserSegment>>(`/projects/${id}/segments`, {
+            method: "POST",
+            body: JSON.stringify(body),
+        }),
+    deleteSegment: (id: number | string, segmentId: number | string) =>
+        req<ApiOne<{ ok: boolean }>>(`/projects/${id}/segments/${segmentId}`, {
+            method: "DELETE",
+        }),
     topEvents: (
         id: number | string,
         params?: { from?: number; to?: number; limit?: number },

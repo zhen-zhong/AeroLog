@@ -65,6 +65,7 @@ const navGroups = [
     icon: Users,
     items: [
       { href: "/console/users", label: "用户", icon: Users },
+      { href: "/console/segments", label: "用户分群", icon: Users },
       { href: "/console/governance", label: "数据治理", icon: ShieldCheck },
       { href: "/console/debugger", label: "调试器", icon: Bug },
     ],
