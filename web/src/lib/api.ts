@@ -871,6 +871,7 @@ export const api = {
             compare_from?: number;
             compare_to?: number;
             interval?: "hour" | "day";
+            segment_id?: number;
         },
     ) =>
         req<
@@ -891,6 +892,7 @@ export const api = {
             to?: number;
             window_seconds?: number;
             breakdown_property?: string;
+            segment_id?: number;
         },
         filename = "conversion_breakdown.csv",
     ) =>
@@ -907,6 +909,7 @@ export const api = {
             to?: number;
             window_seconds?: number;
             breakdown_property?: string;
+            segment_id?: number;
         },
     ) =>
         req<ApiOne<{ steps: ConversionStep[]; breakdown: ConversionBreakdownRow[] }>>(
@@ -946,6 +949,7 @@ export const api = {
             from?: number;
             to?: number;
             offsets?: number[];
+            segment_id?: number;
         },
     ) =>
         req<ApiOne<{ offsets: number[]; rows: CohortTableRow[] }>>(

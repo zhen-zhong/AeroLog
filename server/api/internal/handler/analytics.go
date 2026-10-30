@@ -395,6 +395,7 @@ func (h *AnalyticsHandler) conversion(c *gin.Context) {
 		To                int64    `json:"to"`
 		WindowSeconds     int64    `json:"window_seconds"`
 		BreakdownProperty string   `json:"breakdown_property"`
+		SegmentID         int64    `json:"segment_id"`
 	}
 	if err := c.BindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
@@ -415,7 +416,12 @@ func (h *AnalyticsHandler) conversion(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
-	steps, err := h.computeFunnel(ctx, uint32(pid), body.Events, body.From, body.To, body.WindowSeconds)
+	memberQuery, memberArgs, err := h.analyticsSegmentMembers(ctx, int64(pid), body.SegmentID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
+		return
+	}
+	steps, err := h.computeFunnelForMembers(ctx, uint32(pid), body.Events, body.From, body.To, body.WindowSeconds, memberQuery, memberArgs)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
 		return
@@ -423,7 +429,7 @@ func (h *AnalyticsHandler) conversion(c *gin.Context) {
 	breakdown := []conversionBreakdownRow{}
 	breakdownTruncated := false
 	if body.BreakdownProperty != "" {
-		breakdown, err = h.computeFunnelBreakdown(ctx, uint32(pid), body.Events, body.From, body.To, body.WindowSeconds, body.BreakdownProperty)
+		breakdown, err = h.computeFunnelBreakdownForMembers(ctx, uint32(pid), body.Events, body.From, body.To, body.WindowSeconds, body.BreakdownProperty, memberQuery, memberArgs)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
 			return
@@ -1105,6 +1111,7 @@ type CohortTableBody struct {
 	From           int64  `json:"from"`
 	To             int64  `json:"to"`
 	Offsets        []int  `json:"offsets"`
+	SegmentID      int64  `json:"segment_id"`
 }
 
 type CohortMetricValue struct {
@@ -1143,8 +1150,14 @@ func (h *AnalyticsHandler) cohortTable(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"err": "offsets must be between 0 and 30"})
 		return
 	}
-	timezone := clickHouseTimezone(h.projectTimezone(c.Request.Context(), uint32(pid)))
-	rows, err := h.computeCohortTable(c.Request.Context(), uint32(pid), timezone, &body, offsets)
+	ctx := c.Request.Context()
+	memberQuery, memberArgs, err := h.analyticsSegmentMembers(ctx, int64(pid), body.SegmentID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
+		return
+	}
+	timezone := clickHouseTimezone(h.projectTimezone(ctx, uint32(pid)))
+	rows, err := h.computeCohortTableForMembers(ctx, uint32(pid), timezone, &body, offsets, memberQuery, memberArgs)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
 		return
@@ -1172,6 +1185,10 @@ func normalizeCohortOffsets(offsets []int) ([]int, bool) {
 }
 
 func (h *AnalyticsHandler) computeCohortTable(ctx context.Context, pid uint32, timezone string, body *CohortTableBody, offsets []int) ([]CohortTableRow, error) {
+	return h.computeCohortTableForMembers(ctx, pid, timezone, body, offsets, "", nil)
+}
+
+func (h *AnalyticsHandler) computeCohortTableForMembers(ctx context.Context, pid uint32, timezone string, body *CohortTableBody, offsets []int, memberQuery string, memberArgs []any) ([]CohortTableRow, error) {
 	maxOffset := offsets[len(offsets)-1]
 	selects := []string{"formatDateTime(c.d0, '%F') AS cohort", "uniqExact(c.distinct_id) AS cohort_users"}
 	for _, offset := range offsets {
@@ -1184,6 +1201,10 @@ func (h *AnalyticsHandler) computeCohortTable(ctx context.Context, pid uint32, t
 	if body.CohortProperty != "" {
 		cohortWhere += " AND JSONExtractRaw(properties, ?) = ?"
 		cohortArgs = append(cohortArgs, body.CohortProperty, rawJSONValue(body.CohortValue))
+	}
+	if memberQuery != "" {
+		cohortWhere += " AND distinct_id IN (" + memberQuery + ")"
+		cohortArgs = append(cohortArgs, memberArgs...)
 	}
 	metricTo := body.To + int64(maxOffset)*24*3600*1000
 	q := `

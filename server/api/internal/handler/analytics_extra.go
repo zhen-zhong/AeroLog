@@ -65,6 +65,7 @@ func (h *AnalyticsHandler) conversionTrend(c *gin.Context) {
 		CompareFrom   int64    `json:"compare_from"`
 		CompareTo     int64    `json:"compare_to"`
 		Interval      string   `json:"interval"`
+		SegmentID     int64    `json:"segment_id"`
 	}
 	if err := c.BindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
@@ -88,15 +89,21 @@ func (h *AnalyticsHandler) conversionTrend(c *gin.Context) {
 		bucket = "hour"
 	}
 
-	timezone := clickHouseTimezone(h.projectTimezone(c.Request.Context(), uint32(pid)))
-	current, err := h.computeFunnelTrend(c, uint32(pid), timezone, body.Events, body.From, body.To, body.WindowSeconds, bucket)
+	ctx := c.Request.Context()
+	memberQuery, memberArgs, err := h.analyticsSegmentMembers(ctx, int64(pid), body.SegmentID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
+		return
+	}
+	timezone := clickHouseTimezone(h.projectTimezone(ctx, uint32(pid)))
+	current, err := h.computeFunnelTrendForMembers(c, uint32(pid), timezone, body.Events, body.From, body.To, body.WindowSeconds, bucket, memberQuery, memberArgs)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
 		return
 	}
 	compare := []trendPoint{}
 	if body.CompareFrom > 0 && body.CompareTo > 0 {
-		compare, err = h.computeFunnelTrend(c, uint32(pid), timezone, body.Events, body.CompareFrom, body.CompareTo, body.WindowSeconds, bucket)
+		compare, err = h.computeFunnelTrendForMembers(c, uint32(pid), timezone, body.Events, body.CompareFrom, body.CompareTo, body.WindowSeconds, bucket, memberQuery, memberArgs)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
 			return
@@ -114,13 +121,22 @@ type trendPoint struct {
 
 // computeFunnelTrend 按时间桶分组计算每天/每小时的漏斗首末步用户数和总转化率。
 func (h *AnalyticsHandler) computeFunnelTrend(c *gin.Context, pid uint32, timezone string, events []string, from, to, windowSeconds int64, bucket string) ([]trendPoint, error) {
+	return h.computeFunnelTrendForMembers(c, pid, timezone, events, from, to, windowSeconds, bucket, "", nil)
+}
+
+func (h *AnalyticsHandler) computeFunnelTrendForMembers(c *gin.Context, pid uint32, timezone string, events []string, from, to, windowSeconds int64, bucket, memberQuery string, memberArgs []any) ([]trendPoint, error) {
 	conds := make([]string, 0, len(events))
-	args := make([]any, 0, len(events)+3)
+	args := make([]any, 0, len(events)+3+len(memberArgs))
 	for _, ev := range events {
 		conds = append(conds, "event = ?")
 		args = append(args, ev)
 	}
 	args = append(args, pid, from, to)
+	memberClause := ""
+	if memberQuery != "" {
+		memberClause = ` AND distinct_id IN (` + memberQuery + `)`
+		args = append(args, memberArgs...)
+	}
 	bucketExpr := "toStartOfDay(toDateTime(time), " + timezone + ")"
 	if bucket == "hour" {
 		bucketExpr = "toStartOfHour(toDateTime(time), " + timezone + ")"
@@ -128,7 +144,7 @@ func (h *AnalyticsHandler) computeFunnelTrend(c *gin.Context, pid uint32, timezo
 	inner := `SELECT ` + bucketExpr + ` AS bucket, distinct_id,
 	          windowFunnel(` + strconv.FormatInt(windowSeconds, 10) + `)(toDateTime(time), ` + joinStrs(conds, ", ") + `) AS level
 	          FROM events
-	          WHERE project_id = ? AND time BETWEEN fromUnixTimestamp64Milli(?) AND fromUnixTimestamp64Milli(?)
+	          WHERE project_id = ? AND time BETWEEN fromUnixTimestamp64Milli(?) AND fromUnixTimestamp64Milli(?)` + memberClause + `
 	          GROUP BY bucket, distinct_id`
 	q := `SELECT bucket, level, count() FROM (` + inner + `) GROUP BY bucket, level ORDER BY bucket`
 	rows, err := h.CH.Query(c, q, args...)
@@ -190,6 +206,7 @@ func (h *AnalyticsHandler) conversionExport(c *gin.Context) {
 		To                int64    `json:"to"`
 		WindowSeconds     int64    `json:"window_seconds"`
 		BreakdownProperty string   `json:"breakdown_property"`
+		SegmentID         int64    `json:"segment_id"`
 	}
 	if err := c.BindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
@@ -209,14 +226,19 @@ func (h *AnalyticsHandler) conversionExport(c *gin.Context) {
 		body.WindowSeconds = 7 * 24 * 3600
 	}
 	ctx := c.Request.Context()
-	steps, err := h.computeFunnel(ctx, uint32(pid), body.Events, body.From, body.To, body.WindowSeconds)
+	memberQuery, memberArgs, err := h.analyticsSegmentMembers(ctx, int64(pid), body.SegmentID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
+		return
+	}
+	steps, err := h.computeFunnelForMembers(ctx, uint32(pid), body.Events, body.From, body.To, body.WindowSeconds, memberQuery, memberArgs)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
 		return
 	}
 	breakdown := []conversionBreakdownRow{}
 	if body.BreakdownProperty != "" {
-		breakdown, err = h.computeFunnelBreakdown(ctx, uint32(pid), body.Events, body.From, body.To, body.WindowSeconds, body.BreakdownProperty)
+		breakdown, err = h.computeFunnelBreakdownForMembers(ctx, uint32(pid), body.Events, body.From, body.To, body.WindowSeconds, body.BreakdownProperty, memberQuery, memberArgs)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
 			return

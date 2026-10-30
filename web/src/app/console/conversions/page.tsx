@@ -42,6 +42,7 @@ export default function ConversionsPage() {
   const [events, setEvents] = useState<string[]>([]);
   const [windowSeconds, setWindowSeconds] = useState(7 * 24 * 3600);
   const [breakdownProperty, setBreakdownProperty] = useState("");
+  const [segmentId, setSegmentId] = useState<number | undefined>();
   const [versionNote, setVersionNote] = useState("");
   const [versionGoalId, setVersionGoalId] = useState<number | null>(null);
   const [trendData, setTrendData] = useState<{
@@ -53,6 +54,7 @@ export default function ConversionsPage() {
   useEffect(() => {
     setEvents([]);
     setBreakdownProperty("");
+    setSegmentId(undefined);
   }, [projectId]);
 
   const tsRange = useMemo(() => ({ from: range[0].valueOf(), to: range[1].valueOf() }), [range]);
@@ -75,6 +77,11 @@ export default function ConversionsPage() {
     enabled: !!projectId,
     placeholderData: (previousData) => previousData,
   });
+  const segments = useQuery({
+    queryKey: ["segments", projectId],
+    queryFn: () => api.listSegments(projectId!),
+    enabled: !!projectId,
+  });
 
   const eventRows = top.data?.data || [];
   const propertyRows = props.data?.data || [];
@@ -94,6 +101,7 @@ export default function ConversionsPage() {
         ...tsRange,
         window_seconds: windowSeconds,
         breakdown_property: breakdownProperty || undefined,
+        segment_id: segmentId,
       }),
   });
 
@@ -122,6 +130,7 @@ export default function ConversionsPage() {
         compare_from: tsRange.from - span,
         compare_to: tsRange.from,
         interval: "day",
+        segment_id: segmentId,
       });
     },
     onSuccess: (resp) => {
@@ -139,6 +148,7 @@ export default function ConversionsPage() {
         ...tsRange,
         window_seconds: windowSeconds,
         breakdown_property: breakdownProperty || undefined,
+        segment_id: segmentId,
       }),
   });
 
@@ -197,6 +207,14 @@ export default function ConversionsPage() {
               <div className="grid gap-1.5">
                 <div className="text-sm font-medium">转化目标名称</div>
                 <Input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：购买转化" />
+              </div>
+              <div className="grid gap-1.5">
+                <div className="text-sm font-medium">用户分群（本次分析）</div>
+                <Select value={segmentId ? String(segmentId) : "__all__"} onValueChange={(value) => setSegmentId(value === "__all__" ? undefined : Number(value))}>
+                  <SelectTrigger><SelectValue placeholder="全部用户" /></SelectTrigger>
+                  <SelectContent><SelectItem value="__all__">全部用户</SelectItem>{(segments.data?.data || []).map((segment) => <SelectItem key={segment.id} value={String(segment.id)}>{segment.name}</SelectItem>)}</SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">不写入转化目标定义。</p>
               </div>
               <NumberField
                 label="转化窗口（秒）"
