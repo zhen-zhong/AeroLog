@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { LogOut, Moon, PanelLeft, PanelLeftClose, Sun } from "lucide-react";
@@ -23,6 +23,8 @@ export function TopHeader() {
   const clearAuth = useAuthStore((s) => s.clearAuth);
   const projectId = useProjectStore((s) => s.projectId);
   const setProjectId = useProjectStore((s) => s.setProjectId);
+  const dataSource = useProjectStore((s) => s.dataSource);
+  const setDataSource = useProjectStore((s) => s.setDataSource);
   const theme = useUIStore((s) => s.theme);
   const toggleTheme = useUIStore((s) => s.toggleTheme);
   const toggleSidebar = useUIStore((s) => s.toggleSidebar);
@@ -34,6 +36,10 @@ export function TopHeader() {
   });
 
   const projects = data?.data || [];
+  const visibleProjects = useMemo(
+    () => projects.filter((project) => project.data_source === dataSource),
+    [projects, dataSource],
+  );
 
   async function logout() {
     try {
@@ -44,15 +50,16 @@ export function TopHeader() {
     }
   }
 
-  // 项目列表加载完成后，如果 store 中没有选中的项目，自动选第一个
+  // 数据源切换后必须丢弃当前项目，避免跨源复用筛选条件或分析缓存。
   useEffect(() => {
-    if (!projectId && projects.length) {
-      setProjectId(projects[0].id);
+    if (!visibleProjects.length) {
+      if (projectId) setProjectId(undefined);
+      return;
     }
-    if (projectId && projects.length && !projects.find((p) => p.id === projectId)) {
-      setProjectId(projects[0].id);
+    if (!projectId || !visibleProjects.some((p) => p.id === projectId)) {
+      setProjectId(visibleProjects[0].id);
     }
-  }, [projects, projectId, setProjectId]);
+  }, [visibleProjects, projectId, setProjectId]);
 
   return (
     <header className="sticky top-0 z-30 hidden h-14 items-center justify-between border-b bg-card/90 px-4 backdrop-blur lg:flex">
@@ -68,6 +75,19 @@ export function TopHeader() {
         </Button>
 
         <div className="flex items-center gap-2">
+          <span className="text-xs font-medium text-muted-foreground">数据源</span>
+          <Select value={dataSource} onValueChange={(value) => setDataSource(value as "sensorsdata" | "aerolog")}>
+            <SelectTrigger className="h-9 w-32">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="sensorsdata">神策数据</SelectItem>
+              <SelectItem value="aerolog">AeroLog 数据</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="flex items-center gap-2">
           <span className="text-xs font-medium text-muted-foreground">项目</span>
           <Select
             value={projectId ? String(projectId) : undefined}
@@ -77,7 +97,7 @@ export function TopHeader() {
               <SelectValue placeholder={isLoading ? "加载中..." : "选择项目"} />
             </SelectTrigger>
             <SelectContent>
-              {projects.map((project) => (
+              {visibleProjects.map((project) => (
                 <SelectItem key={project.id} value={String(project.id)}>
                   {project.name}
                 </SelectItem>

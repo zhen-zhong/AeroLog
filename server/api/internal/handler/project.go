@@ -36,6 +36,7 @@ type Project struct {
 	RequireSignature bool      `json:"require_signature"`
 	Status           int16     `json:"status"`
 	Timezone         string    `json:"timezone"`
+	DataSource       string    `json:"data_source"`
 	Role             string    `json:"role,omitempty"`
 	CreatedAt        time.Time `json:"created_at"`
 }
@@ -87,18 +88,22 @@ func (h *ProjectHandler) list(c *gin.Context) {
 		rows, err = h.PG.Query(c, `
 			SELECT p.id, COALESCE(p.company_id,0), COALESCE(o.name,''), p.name, COALESCE(p.app_type,'web'),
 			       COALESCE(p.package_name,''), p.token, COALESCE(p.description,''), COALESCE(p.require_signature,false),
-			       p.status, COALESCE(p.timezone,'Asia/Shanghai'), 'owner'::text, p.created_at
+			       p.status, COALESCE(p.timezone,'Asia/Shanghai'),
+			       CASE WHEN si.project_id IS NULL THEN 'aerolog' ELSE 'sensorsdata' END, 'owner'::text, p.created_at
 			FROM projects p
 			LEFT JOIN organizations o ON o.id=p.company_id
+			LEFT JOIN sensors_integrations si ON si.project_id=p.id AND si.status=1
 			ORDER BY p.id DESC LIMIT 500
 		`)
 	} else if IsCompanyAdmin(c) {
 		rows, err = h.PG.Query(c, `
 			SELECT p.id, COALESCE(p.company_id,0), COALESCE(o.name,''), p.name, COALESCE(p.app_type,'web'),
 			       COALESCE(p.package_name,''), p.token, COALESCE(p.description,''), COALESCE(p.require_signature,false),
-			       p.status, COALESCE(p.timezone,'Asia/Shanghai'), 'owner'::text, p.created_at
+			       p.status, COALESCE(p.timezone,'Asia/Shanghai'),
+			       CASE WHEN si.project_id IS NULL THEN 'aerolog' ELSE 'sensorsdata' END, 'owner'::text, p.created_at
 			FROM projects p
 			LEFT JOIN organizations o ON o.id=p.company_id
+			LEFT JOIN sensors_integrations si ON si.project_id=p.id AND si.status=1
 			WHERE p.company_id=$1
 			ORDER BY p.id DESC LIMIT 200
 		`, CurrentCompanyID(c))
@@ -106,10 +111,12 @@ func (h *ProjectHandler) list(c *gin.Context) {
 		rows, err = h.PG.Query(c, `
 			SELECT p.id, COALESCE(p.company_id,0), COALESCE(o.name,''), p.name, COALESCE(p.app_type,'web'),
 			       COALESCE(p.package_name,''), p.token, COALESCE(p.description,''), COALESCE(p.require_signature,false),
-			       p.status, COALESCE(p.timezone,'Asia/Shanghai'), m.role, p.created_at
+			       p.status, COALESCE(p.timezone,'Asia/Shanghai'),
+			       CASE WHEN si.project_id IS NULL THEN 'aerolog' ELSE 'sensorsdata' END, m.role, p.created_at
 			FROM projects p
 			JOIN project_members m ON m.project_id=p.id
 			LEFT JOIN organizations o ON o.id=p.company_id
+			LEFT JOIN sensors_integrations si ON si.project_id=p.id AND si.status=1
 			WHERE m.user_id=$1
 			ORDER BY p.id DESC LIMIT 200
 		`, CurrentUserID(c))
@@ -122,7 +129,7 @@ func (h *ProjectHandler) list(c *gin.Context) {
 	out := []Project{}
 	for rows.Next() {
 		var p Project
-		if err := rows.Scan(&p.ID, &p.CompanyID, &p.CompanyName, &p.Name, &p.AppType, &p.PackageName, &p.Token, &p.Description, &p.RequireSignature, &p.Status, &p.Timezone, &p.Role, &p.CreatedAt); err == nil {
+		if err := rows.Scan(&p.ID, &p.CompanyID, &p.CompanyName, &p.Name, &p.AppType, &p.PackageName, &p.Token, &p.Description, &p.RequireSignature, &p.Status, &p.Timezone, &p.DataSource, &p.Role, &p.CreatedAt); err == nil {
 			out = append(out, p)
 		}
 	}
@@ -134,11 +141,14 @@ func (h *ProjectHandler) get(c *gin.Context) {
 	var p Project
 	err := h.PG.QueryRow(c, `
 		SELECT p.id, COALESCE(p.company_id,0), COALESCE(o.name,''), p.name, COALESCE(p.app_type,'web'),
-		       COALESCE(p.package_name,''), p.token, COALESCE(p.description,''), COALESCE(p.require_signature,false), p.status, COALESCE(p.timezone,'Asia/Shanghai'), p.created_at
+		       COALESCE(p.package_name,''), p.token, COALESCE(p.description,''), COALESCE(p.require_signature,false),
+		       p.status, COALESCE(p.timezone,'Asia/Shanghai'),
+		       CASE WHEN si.project_id IS NULL THEN 'aerolog' ELSE 'sensorsdata' END, p.created_at
 		FROM projects p
 		LEFT JOIN organizations o ON o.id=p.company_id
+		LEFT JOIN sensors_integrations si ON si.project_id=p.id AND si.status=1
 		WHERE p.id=$1
-	`, id).Scan(&p.ID, &p.CompanyID, &p.CompanyName, &p.Name, &p.AppType, &p.PackageName, &p.Token, &p.Description, &p.RequireSignature, &p.Status, &p.Timezone, &p.CreatedAt)
+	`, id).Scan(&p.ID, &p.CompanyID, &p.CompanyName, &p.Name, &p.AppType, &p.PackageName, &p.Token, &p.Description, &p.RequireSignature, &p.Status, &p.Timezone, &p.DataSource, &p.CreatedAt)
 	if err != nil {
 		c.JSON(404, gin.H{"err": "not found"})
 		return

@@ -82,6 +82,7 @@ export interface Project {
     require_signature: boolean;
     status: ProjectStatus;
     timezone: "Asia/Shanghai" | "UTC";
+    data_source: "sensorsdata" | "aerolog";
     role?: "owner" | "editor" | "viewer";
     created_at: string;
 }
