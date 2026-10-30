@@ -733,10 +733,12 @@ export const api = {
     },
     listUsers: (
         id: number | string,
-        params?: { query?: string; limit?: number },
+        params?: { query?: string; profile_property?: string; profile_value?: string; limit?: number },
     ) => {
         const q = new URLSearchParams();
         if (params?.query) q.set("query", params.query);
+        if (params?.profile_property) q.set("profile_property", params.profile_property);
+        if (params?.profile_value) q.set("profile_value", params.profile_value);
         if (params?.limit) q.set("limit", String(params.limit));
         return req<ApiList<UserProfile>>(`/projects/${id}/users?${q}`);
     },

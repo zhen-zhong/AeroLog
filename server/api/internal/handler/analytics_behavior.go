@@ -186,7 +186,18 @@ func buildPaths(sessions []behaviorSession, startEvent string, maxSteps, maxNode
 	for name, count := range nodeCounts {
 		nodes = append(nodes, pathNode{Name: name, Count: count})
 	}
-	sort.Slice(nodes, func(i, j int) bool { return nodes[i].Count > nodes[j].Count })
+	sort.Slice(nodes, func(i, j int) bool {
+		if nodes[i].Count != nodes[j].Count {
+			return nodes[i].Count > nodes[j].Count
+		}
+		if nodes[i].Name == startEvent {
+			return true
+		}
+		if nodes[j].Name == startEvent {
+			return false
+		}
+		return nodes[i].Name < nodes[j].Name
+	})
 	if len(nodes) > maxNodes {
 		nodes = nodes[:maxNodes]
 	}
@@ -201,7 +212,15 @@ func buildPaths(sessions []behaviorSession, startEvent string, maxSteps, maxNode
 			edges = append(edges, pathEdge{Source: parts[0], Target: parts[1], Count: count})
 		}
 	}
-	sort.Slice(edges, func(i, j int) bool { return edges[i].Count > edges[j].Count })
+	sort.Slice(edges, func(i, j int) bool {
+		if edges[i].Count != edges[j].Count {
+			return edges[i].Count > edges[j].Count
+		}
+		if edges[i].Source != edges[j].Source {
+			return edges[i].Source < edges[j].Source
+		}
+		return edges[i].Target < edges[j].Target
+	})
 	return nodes, edges, matched
 }
 

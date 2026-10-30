@@ -602,8 +602,14 @@ func (h *GovernanceHandler) identities(c *gin.Context) {
 
 func (h *GovernanceHandler) users(c *gin.Context) {
 	pid, _ := strconv.ParseUint(c.Param("id"), 10, 32)
-	query := c.Query("query")
+	query := strings.TrimSpace(c.Query("query"))
+	profileProperty := strings.TrimSpace(c.Query("profile_property"))
+	profileValue := strings.TrimSpace(c.Query("profile_value"))
 	limit := clampLimit(c.DefaultQuery("limit", "100"), 1, 500)
+	if len(profileProperty) > 128 {
+		c.JSON(http.StatusBadRequest, gin.H{"err": "profile_property is too long"})
+		return
+	}
 
 	q := `SELECT distinct_id, user_id, anonymous_id, properties, updated_at
 	      FROM users FINAL
@@ -612,6 +618,10 @@ func (h *GovernanceHandler) users(c *gin.Context) {
 	if query != "" {
 		q += ` AND (distinct_id = ? OR user_id = ? OR anonymous_id = ?)`
 		args = append(args, query, query, query)
+	}
+	if profileProperty != "" {
+		q += ` AND JSONExtractRaw(properties, ?) = ?`
+		args = append(args, profileProperty, rawJSONValue(profileValue))
 	}
 	q += ` ORDER BY updated_at DESC LIMIT ?`
 	args = append(args, uint32(limit))

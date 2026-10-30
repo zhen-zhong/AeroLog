@@ -15,6 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -26,6 +27,9 @@ export function UsersPage() {
   const setProjectId = useProjectStore((s) => s.setProjectId);
   const [query, setQuery] = useState("");
   const [submittedQuery, setSubmittedQuery] = useState("");
+  const [profileProperty, setProfileProperty] = useState("");
+  const [profileValue, setProfileValue] = useState("");
+  const [submittedProfile, setSubmittedProfile] = useState({ property: "", value: "" });
   const [selected, setSelected] = useState<UserProfile | null>(null);
   const [deepLinkReady, setDeepLinkReady] = useState(false);
   const [fallbackOpened, setFallbackOpened] = useState(false);
@@ -34,6 +38,9 @@ export function UsersPage() {
   // 切换项目时重置选中用户
   useEffect(() => {
     setSelected(null);
+    setProfileProperty("");
+    setProfileValue("");
+    setSubmittedProfile({ property: "", value: "" });
   }, [projectId]);
 
   useEffect(() => {
@@ -61,8 +68,18 @@ export function UsersPage() {
   }, [deepLinkReady, searchParams, setProjectId]);
 
   const users = useQuery({
-    queryKey: ["users", projectId, submittedQuery],
-    queryFn: () => api.listUsers(projectId!, { query: submittedQuery, limit: 100 }),
+    queryKey: ["users", projectId, submittedQuery, submittedProfile],
+    queryFn: () => api.listUsers(projectId!, {
+      query: submittedQuery,
+      profile_property: submittedProfile.property || undefined,
+      profile_value: submittedProfile.property ? submittedProfile.value : undefined,
+      limit: 100,
+    }),
+    enabled: !!projectId,
+  });
+  const profileProperties = useQuery({
+    queryKey: ["user-properties", projectId],
+    queryFn: () => api.listProperties(projectId!, { scope: "user" }),
     enabled: !!projectId,
   });
 
@@ -95,6 +112,7 @@ export function UsersPage() {
   function submitSearch(e: React.FormEvent) {
     e.preventDefault();
     setSubmittedQuery(query.trim());
+    setSubmittedProfile({ property: profileProperty, value: profileValue.trim() });
   }
 
   return (
@@ -110,7 +128,7 @@ export function UsersPage() {
         <MetricCard label="搜索结果" value={rows.length} loading={users.isLoading} />
       </div>
 
-      <form onSubmit={submitSearch} className="mb-4 flex flex-col gap-2 sm:flex-row">
+      <form onSubmit={submitSearch} className="mb-4 grid gap-2 lg:grid-cols-[minmax(0,1fr)_220px_minmax(0,1fr)_auto]">
         <div className="relative flex-1">
           <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
           <Input
@@ -120,8 +138,31 @@ export function UsersPage() {
             placeholder="搜索 distinct_id / user_id / anonymous_id"
           />
         </div>
+        <Select value={profileProperty || "__all__"} onValueChange={(value) => setProfileProperty(value === "__all__" ? "" : value)}>
+          <SelectTrigger><SelectValue placeholder="用户属性" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__all__">全部用户属性</SelectItem>
+            {(profileProperties.data?.data || []).map((property) => (
+              <SelectItem key={property.id} value={property.name}>{property.display_name || property.name}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Input
+          value={profileValue}
+          onChange={(e) => setProfileValue(e.target.value)}
+          disabled={!profileProperty}
+          placeholder={profileProperty ? "属性值，例如 Android / true / 1" : "先选择用户属性"}
+        />
         <Button type="submit">搜索</Button>
       </form>
+
+      {submittedProfile.property && (
+        <div className="mb-4 flex items-center gap-2 text-sm text-muted-foreground">
+          <span>用户属性筛选：</span>
+          <Badge variant="info">{submittedProfile.property} = {submittedProfile.value || '""'}</Badge>
+          <Button type="button" variant="ghost" size="sm" onClick={() => { setProfileProperty(""); setProfileValue(""); setSubmittedProfile({ property: "", value: "" }); }}>清除</Button>
+        </div>
+      )}
 
       {!projectId ? (
         <EmptyState title="暂无项目" description="创建项目并上报 profile_set 后，这里会出现用户画像。" />
