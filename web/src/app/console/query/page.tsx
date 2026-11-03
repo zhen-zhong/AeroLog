@@ -568,7 +568,7 @@ export default function QueryBuilderPage() {
                 </div>
               </div>
             ) : (
-              <EmptyAnalysis className="min-h-40 py-8" title="暂无查询结果" description="选择事件、参数过滤和维度后点击生成表格。" />
+              <div className="p-4 sm:p-5"><EmptyAnalysis className="min-h-40 py-8" title="暂无查询结果" description="选择事件、参数过滤和维度后点击生成表格。" /></div>
             )}
           </ChartPanel>
 
@@ -619,7 +619,7 @@ function TemplateList({
   buildShareLink: (token: string) => string;
 }) {
   if (!templates.length) {
-    return <EmptyAnalysis className="min-h-40 py-8" title="暂无模板" description="在左侧填写名称并保存当前查询，即可在此处复用、分享。" />;
+    return <div className="p-4 sm:p-5"><EmptyAnalysis className="min-h-40 py-8" title="暂无模板" description="在左侧填写名称并保存当前查询，即可在此处复用、分享。" /></div>;
   }
   return (
     <Table>
@@ -704,7 +704,7 @@ function JobList({
   downloadingJobId?: number;
 }) {
   if (!jobs.length) {
-    return <EmptyAnalysis className="min-h-40 py-8" title="暂无异步任务" description="点击「异步导出」可把当前查询提交到后台，结果集 5 万行内，完成后在此查看。" />;
+    return <div className="p-4 sm:p-5"><EmptyAnalysis className="min-h-40 py-8" title="暂无异步任务" description="点击「异步导出」可把当前查询提交到后台，结果集 5 万行内，完成后在此查看。" /></div>;
   }
   return (
     <Table>
