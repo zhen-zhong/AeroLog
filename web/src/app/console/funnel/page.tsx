@@ -158,8 +158,8 @@ export default function FunnelPage() {
         description="按用户行为顺序计算转化链路，适合观察搜索、浏览、加购、支付等关键路径的流失。"
       />
 
-      <div className="grid gap-5 xl:grid-cols-[390px_minmax(0,1fr)]">
-        <div className="grid gap-5">
+      <div className="grid min-w-0 items-start gap-5 xl:grid-cols-[minmax(0,390px)_minmax(0,1fr)]">
+        <div className="grid min-w-0 gap-5">
           <ToolbarPanel className="mb-0">
             <div className="grid gap-4">
               <DateTimeRange value={range} onChange={setRange} stacked />
@@ -261,7 +261,7 @@ export default function FunnelPage() {
           </div>
         </div>
 
-        <div className="grid gap-5">
+        <div className="grid min-w-0 content-start gap-3">
           {result.length === 0 ? (
             <EmptyAnalysis title="选择步骤并点击计算" description="建议先选择 search、view_product、add_to_cart、pay_success 这类连续事件。" />
           ) : (
