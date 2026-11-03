@@ -213,7 +213,7 @@ export function ProjectsPage() {
       name: name.trim(),
       company_id: companyId,
       app_type: source === "sensorsdata" ? "other" : appType,
-      package_name: source === "other" && needsPackageName ? packageName.trim() : undefined,
+      package_name: packageName.trim() || undefined,
       description: description.trim() || undefined,
       status,
       timezone,
@@ -250,7 +250,6 @@ export function ProjectsPage() {
               <TableHeader>
                 <TableRow>
                   <TableHead className="min-w-20">ID</TableHead>
-                  <TableHead className="min-w-40">公司</TableHead>
                   <TableHead className="min-w-40">项目名</TableHead>
                   <TableHead className="min-w-28">应用类型</TableHead>
                   <TableHead className="min-w-36">数据源配置</TableHead>
@@ -267,7 +266,7 @@ export function ProjectsPage() {
                 {isLoading ? (
                   Array.from({ length: 4 }).map((_, index) => (
                     <TableRow key={index}>
-                      <TableCell colSpan={12}>
+                      <TableCell colSpan={11}>
                         <Skeleton className="h-8 w-full" />
                       </TableCell>
                     </TableRow>
@@ -288,7 +287,7 @@ export function ProjectsPage() {
                   ))
                 ) : (
                   <TableRow>
-                    <TableCell colSpan={12} className="h-28 text-center text-sm text-muted-foreground">
+                    <TableCell colSpan={11} className="h-28 text-center text-sm text-muted-foreground">
                       暂无项目
                     </TableCell>
                   </TableRow>
@@ -356,6 +355,16 @@ export function ProjectsPage() {
               </Select>
               <p className="text-xs text-muted-foreground">影响报表按天、留存、会话和趋势的自然日边界。</p>
             </div>
+            <div className="space-y-2">
+              <Label htmlFor="project-package">包名{source === "other" && needsPackageName ? "（必填）" : "（可选）"}</Label>
+              <Input
+                id="project-package"
+                value={packageName}
+                onChange={(e) => setPackageName(e.target.value)}
+                placeholder="如：com.company.app"
+              />
+              <p className="text-xs text-muted-foreground">用于标识 Android 或 iOS 应用；神策项目可按需补充。</p>
+            </div>
             {source === "sensorsdata" ? (
               <>
                 <div className="space-y-2">
@@ -395,17 +404,6 @@ export function ProjectsPage() {
                     </SelectContent>
                   </Select>
                 </div>
-                {needsPackageName && (
-                  <div className="space-y-2">
-                    <Label htmlFor="project-package">包名</Label>
-                    <Input
-                      id="project-package"
-                      value={packageName}
-                      onChange={(e) => setPackageName(e.target.value)}
-                      placeholder="com.company.app"
-                    />
-                  </div>
-                )}
               </>
             )}
             <div className="space-y-2">
@@ -474,7 +472,6 @@ function ProjectRow({
   return (
     <TableRow>
       <TableCell className="font-medium">{project.id}</TableCell>
-      <TableCell className="text-muted-foreground">{project.company_name || "-"}</TableCell>
       <TableCell>{project.name}</TableCell>
       <TableCell>
         <Badge variant="outline">{appTypeLabel(project.app_type)}</Badge>
