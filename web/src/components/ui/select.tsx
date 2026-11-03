@@ -96,6 +96,7 @@ const SelectContent = React.forwardRef<
             "max-h-[min(20rem,var(--radix-select-content-available-height))] overflow-x-auto overflow-y-auto overscroll-contain overscroll-x-contain p-1 scroll-py-1",
             position === "popper" && "w-full min-w-[var(--radix-select-trigger-width)]",
           )}
+          style={{ overflowX: "auto", overflowY: "auto" }}
         >
           {children}
           {query && !hasMatch ? <p className="px-2 py-3 text-center text-sm text-muted-foreground">无匹配选项</p> : null}
