@@ -454,21 +454,25 @@ export function EventStepSelector({
               {(step.filters || []).length ? (
                 <div className="grid gap-2">
                   {(step.filters || []).map((filter, filterIndex) => (
-                    <div key={`${filter.property}:${filterIndex}`} className="grid min-w-0 gap-2 sm:grid-cols-[minmax(0,1fr)_112px_minmax(0,1fr)_32px]">
+                    <div key={`${filter.property}:${filterIndex}`} className="grid min-w-0 grid-cols-[minmax(0,1fr)_32px] gap-2">
                       <Select value={filter.property} onValueChange={(property) => updateFilter(index, filterIndex, { property })}>
-                        <SelectTrigger className="min-w-0"><SelectValue placeholder="选择参数" /></SelectTrigger>
+                        <SelectTrigger className="min-w-0" title={availableProperties.find((property) => property.name === filter.property)?.display_name || filter.property}>
+                          <SelectValue placeholder="选择参数" />
+                        </SelectTrigger>
                         <SelectContent>{availableProperties.map((property) => <SelectItem key={`${property.event}:${property.name}`} value={property.name}>{property.display_name || property.name}</SelectItem>)}</SelectContent>
                       </Select>
-                      <Select value={filter.op} onValueChange={(op) => updateFilter(index, filterIndex, { op })}>
-                        <SelectTrigger className="min-w-0"><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="eq">等于</SelectItem>
-                          <SelectItem value="neq">不等于</SelectItem>
-                          <SelectItem value="exists">有值</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      {filter.op === "exists" ? <div className="flex h-9 items-center rounded-md border bg-secondary/40 px-3 text-sm text-muted-foreground">无需填写值</div> : <Input value={filter.value || ""} onChange={(event) => updateFilter(index, filterIndex, { value: event.target.value })} placeholder="参数值" />}
                       <Button type="button" variant="ghost" size="icon" aria-label={`删除 ${filter.property} 筛选`} onClick={() => removeFilter(index, filterIndex)}><Trash2 className="h-4 w-4 text-muted-foreground" /></Button>
+                      <div className="col-span-2 grid min-w-0 gap-2 sm:grid-cols-[112px_minmax(0,1fr)]">
+                        <Select value={filter.op} onValueChange={(op) => updateFilter(index, filterIndex, { op })}>
+                          <SelectTrigger className="min-w-0"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="eq">等于</SelectItem>
+                            <SelectItem value="neq">不等于</SelectItem>
+                            <SelectItem value="exists">有值</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        {filter.op === "exists" ? <div className="flex h-9 min-w-0 items-center rounded-md border bg-secondary/40 px-3 text-sm text-muted-foreground">无需填写值</div> : <Input className="min-w-0" value={filter.value || ""} onChange={(event) => updateFilter(index, filterIndex, { value: event.target.value })} placeholder="参数值" />}
+                      </div>
                     </div>
                   ))}
                 </div>
