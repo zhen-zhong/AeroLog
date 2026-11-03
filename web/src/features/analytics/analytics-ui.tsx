@@ -1,8 +1,8 @@
 "use client";
 
 import dayjs, { Dayjs } from "dayjs";
-import type { ReactNode } from "react";
-import { ChevronLeft, ChevronRight, Clock3, Filter, Plus, Sparkles, Trash2, X } from "lucide-react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, Filter, Plus, Search, Sparkles, Trash2, X } from "lucide-react";
 import type { FunnelStepInput, PropertyDefinition } from "@/lib/api";
 import { AnimatedContent } from "@/components/react-bits/animated-content";
 import { CountUp } from "@/components/react-bits/count-up";
@@ -146,23 +146,71 @@ export function EventCollectionPicker({
   max?: number;
 }) {
   const options = Array.from(new Set(events)).sort((a, b) => a.localeCompare(b));
-  const addEvent = (event: string) => {
-    if (event === "__aerolog_all_events__") {
-      onChange([]);
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const rootRef = useRef<HTMLDivElement>(null);
+  const selected = Array.from(new Set(value));
+  const unselected = options.filter((event) => !value.includes(event));
+  const visibleEvents = [...selected, ...unselected].filter((event) => fuzzyMatch(event, query));
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (event: MouseEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [open]);
+
+  function toggleEvent(event: string) {
+    if (value.includes(event)) {
+      onChange(value.filter((item) => item !== event));
       return;
     }
-    if (!value.includes(event) && value.length < max) onChange([...value, event]);
-  };
+    if (value.length < max) onChange([...value, event]);
+  }
 
   return (
     <div className="grid min-w-0 gap-2">
-      <Select key={value.join("\u0000")} onValueChange={addEvent}>
-        <SelectTrigger className="min-w-0"><SelectValue placeholder={placeholder} /></SelectTrigger>
-        <SelectContent>
-          <SelectItem value="__aerolog_all_events__">全部事件（清空选择）</SelectItem>
-          {options.map((event) => <SelectItem key={event} value={event}>{event}</SelectItem>)}
-        </SelectContent>
-      </Select>
+      <div ref={rootRef} className="relative min-w-0">
+        <Button type="button" variant="outline" className="w-full justify-between font-normal" onClick={() => setOpen((current) => !current)} aria-expanded={open}>
+          <span className="truncate text-left">{value.length ? `已选 ${value.length} 个事件` : placeholder}</span>
+          <ChevronDown className="h-4 w-4 shrink-0 opacity-60" />
+        </Button>
+        {open ? (
+          <div className="absolute z-50 mt-1 grid w-full min-w-64 gap-1 overflow-hidden rounded-md border bg-card p-1.5 shadow-md">
+            <div className="flex h-8 items-center gap-2 rounded-sm border bg-background px-2">
+              <Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              <input autoFocus className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索事件…" />
+            </div>
+            <button type="button" className="flex h-8 w-full items-center rounded-sm px-2 text-left text-sm hover:bg-accent" onClick={() => onChange([])}>
+              <span className="truncate">全部事件（清空选择）</span>
+            </button>
+            <div className="max-h-60 overflow-y-auto overscroll-contain">
+              {visibleEvents.map((event) => {
+                const isSelected = value.includes(event);
+                return (
+                  <button
+                    key={event}
+                    type="button"
+                    role="option"
+                    aria-selected={isSelected}
+                    disabled={!isSelected && value.length >= max}
+                    className={cn("flex h-8 w-full items-center gap-2 rounded-sm px-2 text-left text-sm hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50", isSelected && "bg-accent")}
+                    onClick={() => toggleEvent(event)}
+                  >
+                    <Check className={cn("h-4 w-4 shrink-0", isSelected ? "opacity-100" : "opacity-0")} />
+                    <span className="min-w-0 flex-1 truncate" title={event}>{event}</span>
+                    {isSelected ? <span className="text-xs text-muted-foreground">已选</span> : null}
+                  </button>
+                );
+              })}
+              {!visibleEvents.length ? <p className="px-2 py-3 text-center text-sm text-muted-foreground">无匹配事件</p> : null}
+            </div>
+            <p className="px-1 pt-1 text-xs text-muted-foreground">已选 {value.length} / {max}；再次点击可取消。</p>
+          </div>
+        ) : null}
+      </div>
       {value.length ? (
         <div className="flex min-w-0 flex-wrap gap-1.5 rounded-md border bg-background p-2">
           {value.map((event) => (
@@ -174,6 +222,19 @@ export function EventCollectionPicker({
       ) : <p className="text-xs text-muted-foreground">{emptyLabel}</p>}
     </div>
   );
+}
+
+function fuzzyMatch(value: string, query: string) {
+  const normalized = query.trim().toLocaleLowerCase();
+  if (!normalized) return true;
+  const text = value.toLocaleLowerCase();
+  let cursor = 0;
+  for (const char of normalized) {
+    cursor = text.indexOf(char, cursor);
+    if (cursor < 0) return false;
+    cursor += 1;
+  }
+  return true;
 }
 
 export function DateTimeRange({

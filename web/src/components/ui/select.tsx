@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import * as SelectPrimitive from "@radix-ui/react-select";
-import { Check, ChevronDown } from "lucide-react";
+import { Check, ChevronDown, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const Select = SelectPrimitive.Root;
@@ -33,30 +33,87 @@ SelectTrigger.displayName = SelectPrimitive.Trigger.displayName;
 const SelectContent = React.forwardRef<
   React.ElementRef<typeof SelectPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof SelectPrimitive.Content>
->(({ className, children, position = "popper", ...props }, ref) => (
-  <SelectPrimitive.Portal>
-    <SelectPrimitive.Content
-      ref={ref}
-      className={cn(
-        "relative z-50 min-w-32 overflow-hidden rounded-md border bg-card text-card-foreground",
-        position === "popper" && "data-[side=bottom]:translate-y-1 data-[side=top]:-translate-y-1",
-        className,
-      )}
-      position={position}
-      {...props}
-    >
-      <SelectPrimitive.Viewport
+>(({ className, children, position = "popper", ...props }, ref) => {
+  const contentRef = React.useRef<React.ElementRef<typeof SelectPrimitive.Content> | null>(null);
+  const [query, setQuery] = React.useState("");
+  const [hasMatch, setHasMatch] = React.useState(true);
+
+  React.useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      const items = Array.from(contentRef.current?.querySelectorAll<HTMLElement>('[role="option"]') || []);
+      const normalizedQuery = query.trim().toLocaleLowerCase();
+      let matches = 0;
+
+      items.forEach((item) => {
+        const text = item.textContent?.trim().toLocaleLowerCase() || "";
+        const visible = !normalizedQuery || fuzzyMatch(text, normalizedQuery);
+        item.hidden = !visible;
+        item.setAttribute("aria-hidden", String(!visible));
+        if (visible) matches += 1;
+      });
+      setHasMatch(matches > 0);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [children, query]);
+
+  const setRefs = (node: React.ElementRef<typeof SelectPrimitive.Content> | null) => {
+    contentRef.current = node;
+    if (typeof ref === "function") ref(node);
+    else if (ref) ref.current = node;
+  };
+
+  return (
+    <SelectPrimitive.Portal>
+      <SelectPrimitive.Content
+        ref={setRefs}
         className={cn(
-          "max-h-[min(20rem,var(--radix-select-content-available-height))] overflow-y-auto overscroll-contain p-1 scroll-py-1",
-          position === "popper" && "w-full min-w-[var(--radix-select-trigger-width)]",
+          "relative z-50 min-w-32 overflow-hidden rounded-md border bg-card text-card-foreground",
+          position === "popper" && "data-[side=bottom]:translate-y-1 data-[side=top]:-translate-y-1",
+          className,
         )}
+        position={position}
+        {...props}
       >
-        {children}
-      </SelectPrimitive.Viewport>
-    </SelectPrimitive.Content>
-  </SelectPrimitive.Portal>
-));
+        <div className="border-b p-1.5" onPointerDown={(event) => event.stopPropagation()}>
+          <div className="flex h-8 items-center gap-2 rounded-sm border bg-background px-2">
+            <Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            <input
+              aria-label="搜索下拉选项"
+              autoFocus
+              className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+              onChange={(event) => setQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key !== "Escape") event.stopPropagation();
+              }}
+              placeholder="搜索…"
+              value={query}
+            />
+          </div>
+        </div>
+        <SelectPrimitive.Viewport
+          className={cn(
+            "max-h-[min(20rem,var(--radix-select-content-available-height))] overflow-y-auto overscroll-contain p-1 scroll-py-1",
+            position === "popper" && "w-full min-w-[var(--radix-select-trigger-width)]",
+          )}
+        >
+          {children}
+          {query && !hasMatch ? <p className="px-2 py-3 text-center text-sm text-muted-foreground">无匹配选项</p> : null}
+        </SelectPrimitive.Viewport>
+      </SelectPrimitive.Content>
+    </SelectPrimitive.Portal>
+  );
+});
 SelectContent.displayName = SelectPrimitive.Content.displayName;
+
+function fuzzyMatch(text: string, query: string) {
+  let cursor = 0;
+  for (const char of query) {
+    cursor = text.indexOf(char, cursor);
+    if (cursor < 0) return false;
+    cursor += 1;
+  }
+  return true;
+}
 
 const SelectItem = React.forwardRef<
   React.ElementRef<typeof SelectPrimitive.Item>,
