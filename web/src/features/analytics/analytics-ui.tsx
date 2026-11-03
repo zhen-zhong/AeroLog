@@ -418,19 +418,19 @@ export function EventStepSelector({
         const availableProperties = properties.filter((property) => !property.event || property.event === step.event);
         return (
           <div key={`${index}:${step.event}`} className="rounded-lg border bg-background p-3 shadow-sm">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="inline-flex h-8 shrink-0 items-center rounded-md bg-primary px-2.5 text-xs font-semibold text-primary-foreground">
-                步骤 {index + 1}
+            <div className="flex min-w-0 flex-nowrap items-center gap-2">
+              <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary text-xs font-semibold text-primary-foreground" title={`步骤 ${index + 1}`}>
+                {index + 1}
               </span>
               <Select value={step.event} onValueChange={(event) => updateStep(index, { event })}>
-                <SelectTrigger className="min-w-[190px] flex-1"><SelectValue placeholder="选择事件" /></SelectTrigger>
+                <SelectTrigger className="min-w-0 flex-1"><SelectValue placeholder="选择事件" /></SelectTrigger>
                 <SelectContent>{options.map((item) => <SelectItem key={item.event} value={item.event}>{item.event}</SelectItem>)}</SelectContent>
               </Select>
-              <Button type="button" variant="outline" size="sm" disabled={index === 0} onClick={() => move(index, -1)}>
-                <ChevronLeft className="h-4 w-4" /> 前移
+              <Button type="button" variant="outline" size="icon" title="前移" aria-label={`将步骤 ${index + 1} 前移`} disabled={index === 0} onClick={() => move(index, -1)}>
+                <ChevronLeft className="h-4 w-4" />
               </Button>
-              <Button type="button" variant="outline" size="sm" disabled={index === value.length - 1} onClick={() => move(index, 1)}>
-                后移 <ChevronRight className="h-4 w-4" />
+              <Button type="button" variant="outline" size="icon" title="后移" aria-label={`将步骤 ${index + 1} 后移`} disabled={index === value.length - 1} onClick={() => move(index, 1)}>
+                <ChevronRight className="h-4 w-4" />
               </Button>
               <Button type="button" variant="ghost" size="icon" aria-label={`删除步骤 ${index + 1}`} onClick={() => onChange(value.filter((_, current) => current !== index))}>
                 <Trash2 className="h-4 w-4 text-muted-foreground" />
