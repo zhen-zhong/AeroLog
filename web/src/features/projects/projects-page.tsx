@@ -480,7 +480,7 @@ function ProjectRow({
         <Badge variant="outline">{appTypeLabel(project.app_type)}</Badge>
       </TableCell>
       <TableCell>
-        <div className="flex flex-col items-start gap-2">
+        <div className="flex items-center gap-2 whitespace-nowrap">
           <Badge variant={project.data_source === "sensorsdata" ? "success" : "secondary"}>
             {project.data_source === "sensorsdata" ? "神策" : "AeroLog"}
           </Badge>
