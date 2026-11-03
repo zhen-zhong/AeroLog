@@ -350,6 +350,7 @@ export interface ConversionGoal {
     name: string;
     description: string;
     events: string[];
+    steps?: FunnelStepInput[];
     window_seconds: number;
     breakdown_property: string;
     status: number;
@@ -364,6 +365,7 @@ export interface ConversionGoalVersion {
     name: string;
     description: string;
     events: string[];
+    steps?: FunnelStepInput[];
     window_seconds: number;
     breakdown_property: string;
     note: string;
@@ -425,9 +427,19 @@ export interface AnalyticsJob {
 }
 export interface ConversionStep {
     event: string;
+    filters?: FunnelStepFilter[];
     users: number;
     conversion: number;
     dropoff: number;
+}
+export interface FunnelStepFilter {
+    property: string;
+    op: "eq" | "neq" | "exists";
+    value?: string;
+}
+export interface FunnelStepInput {
+    event: string;
+    filters?: FunnelStepFilter[];
 }
 export interface ConversionBreakdownRow {
     raw: string;
@@ -865,6 +877,7 @@ export const api = {
             name: string;
             description?: string;
             events: string[];
+            steps?: FunnelStepInput[];
             window_seconds: number;
             breakdown_property?: string;
             note?: string;
@@ -887,6 +900,7 @@ export const api = {
         id: number | string,
         body: {
             events: string[];
+            steps?: FunnelStepInput[];
             from?: number;
             to?: number;
             window_seconds?: number;
@@ -910,6 +924,7 @@ export const api = {
         id: number | string,
         body: {
             events: string[];
+            steps?: FunnelStepInput[];
             from?: number;
             to?: number;
             window_seconds?: number;
@@ -927,6 +942,7 @@ export const api = {
         id: number | string,
         body: {
             events: string[];
+            steps?: FunnelStepInput[];
             from?: number;
             to?: number;
             window_seconds?: number;
@@ -1055,6 +1071,7 @@ export const api = {
         id: number | string,
         body: {
             events: string[];
+            steps?: FunnelStepInput[];
             from?: number;
             to?: number;
             window_seconds?: number;

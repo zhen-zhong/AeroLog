@@ -239,17 +239,120 @@ func parsePropertyValue(raw string) (any, string) {
 }
 
 type conversionGoal struct {
-	ID                int64     `json:"id"`
-	ProjectID         int64     `json:"project_id"`
-	Name              string    `json:"name"`
-	Description       string    `json:"description"`
-	Events            []string  `json:"events"`
-	WindowSeconds     int       `json:"window_seconds"`
-	BreakdownProperty string    `json:"breakdown_property"`
-	Version           int       `json:"version"`
-	Status            int16     `json:"status"`
-	CreatedAt         time.Time `json:"created_at"`
-	UpdatedAt         time.Time `json:"updated_at"`
+	ID                int64             `json:"id"`
+	ProjectID         int64             `json:"project_id"`
+	Name              string            `json:"name"`
+	Description       string            `json:"description"`
+	Events            []string          `json:"events"`
+	Steps             []funnelInputStep `json:"steps,omitempty"`
+	WindowSeconds     int               `json:"window_seconds"`
+	BreakdownProperty string            `json:"breakdown_property"`
+	Version           int               `json:"version"`
+	Status            int16             `json:"status"`
+	CreatedAt         time.Time         `json:"created_at"`
+	UpdatedAt         time.Time         `json:"updated_at"`
+}
+
+// funnelInputStep defines one ordered behavior. Filters are evaluated on the
+// event itself, so identical event names can appear in multiple steps.
+type funnelInputStep struct {
+	Event   string             `json:"event"`
+	Filters []funnelStepFilter `json:"filters,omitempty"`
+}
+
+type funnelStepFilter struct {
+	Property string `json:"property"`
+	Op       string `json:"op"`
+	Value    any    `json:"value,omitempty"`
+}
+
+func normalizeFunnelSteps(events []string, steps []funnelInputStep, min, max int) ([]funnelInputStep, error) {
+	if len(steps) == 0 {
+		steps = make([]funnelInputStep, 0, len(events))
+		for _, event := range events {
+			steps = append(steps, funnelInputStep{Event: event})
+		}
+	}
+	if len(steps) < min || len(steps) > max {
+		return nil, fmt.Errorf("steps length must be %d..%d", min, max)
+	}
+	for i := range steps {
+		steps[i].Event = strings.TrimSpace(steps[i].Event)
+		if steps[i].Event == "" || len(steps[i].Event) > 128 {
+			return nil, fmt.Errorf("invalid step event")
+		}
+		if len(steps[i].Filters) > 4 {
+			return nil, fmt.Errorf("step filters length must be <= 4")
+		}
+		for j := range steps[i].Filters {
+			filter := &steps[i].Filters[j]
+			filter.Property = strings.TrimSpace(filter.Property)
+			if filter.Property == "" || len(filter.Property) > 128 {
+				return nil, fmt.Errorf("invalid step filter property")
+			}
+			if filter.Op == "" {
+				filter.Op = "eq"
+			}
+			if filter.Op != "eq" && filter.Op != "neq" && filter.Op != "exists" {
+				return nil, fmt.Errorf("unsupported step filter op")
+			}
+		}
+	}
+	return steps, nil
+}
+
+func funnelEvents(steps []funnelInputStep) []string {
+	events := make([]string, len(steps))
+	for i, step := range steps {
+		events[i] = step.Event
+	}
+	return events
+}
+
+func funnelCondition(step funnelInputStep, prefix string) (string, []any) {
+	condition := prefix + "event = ?"
+	args := []any{step.Event}
+	for _, filter := range step.Filters {
+		switch filter.Op {
+		case "exists":
+			condition += " AND JSONExtractRaw(" + prefix + "properties, ?) != ''"
+			args = append(args, filter.Property)
+		case "neq":
+			condition += " AND JSONExtractRaw(" + prefix + "properties, ?) != ?"
+			args = append(args, filter.Property, rawJSONValue(filter.Value))
+		default:
+			condition += " AND JSONExtractRaw(" + prefix + "properties, ?) = ?"
+			args = append(args, filter.Property, rawJSONValue(filter.Value))
+		}
+	}
+	return condition, args
+}
+
+func funnelConditions(steps []funnelInputStep, prefix string) ([]string, []any) {
+	conditions := make([]string, 0, len(steps))
+	args := make([]any, 0, len(steps))
+	for _, step := range steps {
+		condition, conditionArgs := funnelCondition(step, prefix)
+		conditions = append(conditions, condition)
+		args = append(args, conditionArgs...)
+	}
+	return conditions, args
+}
+
+func parseFunnelSteps(raw []byte) []funnelInputStep {
+	var steps []funnelInputStep
+	if json.Unmarshal(raw, &steps) == nil && len(steps) > 0 {
+		return steps
+	}
+	var events []string
+	if json.Unmarshal(raw, &events) != nil {
+		return nil
+	}
+	steps = make([]funnelInputStep, 0, len(events))
+	for _, event := range events {
+		steps = append(steps, funnelInputStep{Event: event})
+	}
+	return steps
 }
 
 func (h *AnalyticsHandler) listConversionGoals(c *gin.Context) {
@@ -278,7 +381,8 @@ func (h *AnalyticsHandler) listConversionGoals(c *gin.Context) {
 		var item conversionGoal
 		var raw []byte
 		if err := rows.Scan(&item.ID, &item.ProjectID, &item.Name, &item.Description, &raw, &item.WindowSeconds, &item.BreakdownProperty, &item.Version, &item.Status, &item.CreatedAt, &item.UpdatedAt); err == nil {
-			_ = json.Unmarshal(raw, &item.Events)
+			item.Steps = parseFunnelSteps(raw)
+			item.Events = funnelEvents(item.Steps)
 			out = append(out, item)
 		}
 	}
@@ -288,12 +392,13 @@ func (h *AnalyticsHandler) listConversionGoals(c *gin.Context) {
 func (h *AnalyticsHandler) createConversionGoal(c *gin.Context) {
 	pid, _ := strconv.ParseInt(c.Param("id"), 10, 64)
 	var body struct {
-		Name              string   `json:"name"`
-		Description       string   `json:"description"`
-		Events            []string `json:"events"`
-		WindowSeconds     int      `json:"window_seconds"`
-		BreakdownProperty string   `json:"breakdown_property"`
-		Note              string   `json:"note"`
+		Name              string            `json:"name"`
+		Description       string            `json:"description"`
+		Events            []string          `json:"events"`
+		Steps             []funnelInputStep `json:"steps"`
+		WindowSeconds     int               `json:"window_seconds"`
+		BreakdownProperty string            `json:"breakdown_property"`
+		Note              string            `json:"note"`
 	}
 	if err := c.BindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
@@ -303,14 +408,15 @@ func (h *AnalyticsHandler) createConversionGoal(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"err": "name required"})
 		return
 	}
-	if len(body.Events) < 2 || len(body.Events) > 12 {
-		c.JSON(http.StatusBadRequest, gin.H{"err": "events length must be 2..12"})
+	steps, err := normalizeFunnelSteps(body.Events, body.Steps, 2, 12)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
 		return
 	}
 	if body.WindowSeconds <= 0 {
 		body.WindowSeconds = 7 * 24 * 3600
 	}
-	rawEvents, _ := json.Marshal(body.Events)
+	rawEvents, _ := json.Marshal(steps)
 	tx, err := h.PG.Begin(c)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
@@ -346,7 +452,8 @@ func (h *AnalyticsHandler) createConversionGoal(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
 		return
 	}
-	_ = json.Unmarshal(raw, &item.Events)
+	item.Steps = parseFunnelSteps(raw)
+	item.Events = funnelEvents(item.Steps)
 
 	if _, err := tx.Exec(c, `
 		INSERT INTO conversion_goal_versions(goal_id, project_id, version, name, description, events, window_seconds, breakdown_property, note)
@@ -390,19 +497,21 @@ func (h *AnalyticsHandler) deleteConversionGoal(c *gin.Context) {
 func (h *AnalyticsHandler) conversion(c *gin.Context) {
 	pid, _ := strconv.ParseUint(c.Param("id"), 10, 32)
 	var body struct {
-		Events            []string `json:"events"`
-		From              int64    `json:"from"`
-		To                int64    `json:"to"`
-		WindowSeconds     int64    `json:"window_seconds"`
-		BreakdownProperty string   `json:"breakdown_property"`
-		SegmentID         int64    `json:"segment_id"`
+		Events            []string          `json:"events"`
+		Steps             []funnelInputStep `json:"steps"`
+		From              int64             `json:"from"`
+		To                int64             `json:"to"`
+		WindowSeconds     int64             `json:"window_seconds"`
+		BreakdownProperty string            `json:"breakdown_property"`
+		SegmentID         int64             `json:"segment_id"`
 	}
 	if err := c.BindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
 		return
 	}
-	if len(body.Events) < 2 || len(body.Events) > 12 {
-		c.JSON(http.StatusBadRequest, gin.H{"err": "events length must be 2..12"})
+	stepsInput, err := normalizeFunnelSteps(body.Events, body.Steps, 2, 12)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
 		return
 	}
 	if body.To == 0 {
@@ -421,7 +530,7 @@ func (h *AnalyticsHandler) conversion(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
 		return
 	}
-	steps, err := h.computeFunnelForMembers(ctx, uint32(pid), body.Events, body.From, body.To, body.WindowSeconds, memberQuery, memberArgs)
+	steps, err := h.computeFunnelForMembers(ctx, uint32(pid), stepsInput, body.From, body.To, body.WindowSeconds, memberQuery, memberArgs)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
 		return
@@ -429,7 +538,7 @@ func (h *AnalyticsHandler) conversion(c *gin.Context) {
 	breakdown := []conversionBreakdownRow{}
 	breakdownTruncated := false
 	if body.BreakdownProperty != "" {
-		breakdown, err = h.computeFunnelBreakdownForMembers(ctx, uint32(pid), body.Events, body.From, body.To, body.WindowSeconds, body.BreakdownProperty, memberQuery, memberArgs)
+		breakdown, err = h.computeFunnelBreakdownForMembers(ctx, uint32(pid), stepsInput, body.From, body.To, body.WindowSeconds, body.BreakdownProperty, memberQuery, memberArgs)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
 			return
@@ -440,10 +549,11 @@ func (h *AnalyticsHandler) conversion(c *gin.Context) {
 }
 
 type funnelStep struct {
-	Event      string  `json:"event"`
-	Users      uint64  `json:"users"`
-	Conversion float64 `json:"conversion"`
-	Dropoff    float64 `json:"dropoff"`
+	Event      string             `json:"event"`
+	Filters    []funnelStepFilter `json:"filters,omitempty"`
+	Users      uint64             `json:"users"`
+	Conversion float64            `json:"conversion"`
+	Dropoff    float64            `json:"dropoff"`
 }
 
 type conversionBreakdownRow struct {
@@ -455,17 +565,12 @@ type conversionBreakdownRow struct {
 	Conversion float64      `json:"conversion"`
 }
 
-func (h *AnalyticsHandler) computeFunnel(ctx context.Context, pid uint32, events []string, from, to, windowSeconds int64) ([]funnelStep, error) {
-	return h.computeFunnelForMembers(ctx, pid, events, from, to, windowSeconds, "", nil)
+func (h *AnalyticsHandler) computeFunnel(ctx context.Context, pid uint32, steps []funnelInputStep, from, to, windowSeconds int64) ([]funnelStep, error) {
+	return h.computeFunnelForMembers(ctx, pid, steps, from, to, windowSeconds, "", nil)
 }
 
-func (h *AnalyticsHandler) computeFunnelForMembers(ctx context.Context, pid uint32, events []string, from, to, windowSeconds int64, memberQuery string, memberArgs []any) ([]funnelStep, error) {
-	conds := make([]string, 0, len(events))
-	args := make([]any, 0, len(events)+3+len(memberArgs))
-	for _, ev := range events {
-		conds = append(conds, "event = ?")
-		args = append(args, ev)
-	}
+func (h *AnalyticsHandler) computeFunnelForMembers(ctx context.Context, pid uint32, steps []funnelInputStep, from, to, windowSeconds int64, memberQuery string, memberArgs []any) ([]funnelStep, error) {
+	conds, args := funnelConditions(steps, "")
 	args = append(args, pid, from, to)
 	memberClause := ""
 	if memberQuery != "" {
@@ -491,31 +596,31 @@ func (h *AnalyticsHandler) computeFunnelForMembers(ctx context.Context, pid uint
 			levelCounts[lv] = cnt
 		}
 	}
-	return buildFunnelSteps(events, levelCounts), nil
+	return buildFunnelSteps(steps, levelCounts), nil
 }
 
-func (h *AnalyticsHandler) computeFunnelBreakdown(ctx context.Context, pid uint32, events []string, from, to, windowSeconds int64, property string) ([]conversionBreakdownRow, error) {
-	return h.computeFunnelBreakdownForMembers(ctx, pid, events, from, to, windowSeconds, property, "", nil)
+func (h *AnalyticsHandler) computeFunnelBreakdown(ctx context.Context, pid uint32, steps []funnelInputStep, from, to, windowSeconds int64, property string) ([]conversionBreakdownRow, error) {
+	return h.computeFunnelBreakdownForMembers(ctx, pid, steps, from, to, windowSeconds, property, "", nil)
 }
 
-func (h *AnalyticsHandler) computeFunnelBreakdownForMembers(ctx context.Context, pid uint32, events []string, from, to, windowSeconds int64, property, memberQuery string, memberArgs []any) ([]conversionBreakdownRow, error) {
-	conds := make([]string, 0, len(events))
-	args := []any{property, pid, events[0], from, to}
+func (h *AnalyticsHandler) computeFunnelBreakdownForMembers(ctx context.Context, pid uint32, steps []funnelInputStep, from, to, windowSeconds int64, property, memberQuery string, memberArgs []any) ([]conversionBreakdownRow, error) {
+	firstCondition, firstArgs := funnelCondition(steps[0], "")
+	conds, conditionArgs := funnelConditions(steps, "e.")
+	args := []any{property, pid}
+	args = append(args, firstArgs...)
+	args = append(args, from, to)
 	memberClause := ""
 	if memberQuery != "" {
 		memberClause = ` AND distinct_id IN (` + memberQuery + `)`
 		args = append(args, memberArgs...)
 	}
-	for _, ev := range events {
-		conds = append(conds, "e.event = ?")
-		args = append(args, ev)
-	}
+	args = append(args, conditionArgs...)
 	args = append(args, pid, from, to)
 	q := `
 		WITH first_dims AS (
 			SELECT distinct_id, argMin(JSONExtractRaw(properties, ?), time) AS dim
 			FROM events
-			WHERE project_id = ? AND event = ? AND time BETWEEN fromUnixTimestamp64Milli(?) AND fromUnixTimestamp64Milli(?)` + memberClause + `
+			WHERE project_id = ? AND ` + firstCondition + ` AND time BETWEEN fromUnixTimestamp64Milli(?) AND fromUnixTimestamp64Milli(?)` + memberClause + `
 			GROUP BY distinct_id
 		)
 		SELECT dim, level, count()
@@ -552,15 +657,15 @@ func (h *AnalyticsHandler) computeFunnelBreakdownForMembers(ctx context.Context,
 	}
 	out := make([]conversionBreakdownRow, 0, len(byDim))
 	for raw, counts := range byDim {
-		steps := buildFunnelSteps(events, counts)
+		stepResults := buildFunnelSteps(steps, counts)
 		value, label := parsePropertyValue(raw)
 		users := uint64(0)
 		conversion := 0.0
-		if len(steps) > 0 {
-			users = steps[0].Users
-			conversion = steps[len(steps)-1].Conversion
+		if len(stepResults) > 0 {
+			users = stepResults[0].Users
+			conversion = stepResults[len(stepResults)-1].Conversion
 		}
-		out = append(out, conversionBreakdownRow{Raw: raw, Value: value, Label: label, Steps: steps, Users: users, Conversion: conversion})
+		out = append(out, conversionBreakdownRow{Raw: raw, Value: value, Label: label, Steps: stepResults, Users: users, Conversion: conversion})
 	}
 	return out, nil
 }
@@ -595,6 +700,7 @@ func limitFunnelBreakdown(rows []conversionBreakdownRow, max int) ([]conversionB
 		other.Users += row.Users
 		for i, step := range row.Steps {
 			other.Steps[i].Event = step.Event
+			other.Steps[i].Filters = step.Filters
 			other.Steps[i].Users += step.Users
 		}
 	}
@@ -610,8 +716,8 @@ func limitFunnelBreakdown(rows []conversionBreakdownRow, max int) ([]conversionB
 	return append(kept, other), true
 }
 
-func buildFunnelSteps(events []string, levelCounts map[uint8]uint64) []funnelStep {
-	n := len(events)
+func buildFunnelSteps(input []funnelInputStep, levelCounts map[uint8]uint64) []funnelStep {
+	n := len(input)
 	cum := make([]uint64, n+1)
 	for lv, cnt := range levelCounts {
 		for i := 0; i <= int(lv) && i <= n; i++ {
@@ -630,7 +736,7 @@ func buildFunnelSteps(events []string, levelCounts map[uint8]uint64) []funnelSte
 		if i > 0 && cum[i] > 0 {
 			dropoff = 1 - float64(users)/float64(cum[i])
 		}
-		steps[i] = funnelStep{Event: events[i], Users: users, Conversion: conversion, Dropoff: dropoff}
+		steps[i] = funnelStep{Event: input[i].Event, Filters: input[i].Filters, Users: users, Conversion: conversion, Dropoff: dropoff}
 	}
 	return steps
 }
@@ -1272,19 +1378,21 @@ func atoi64(s string) int64 {
 func (h *AnalyticsHandler) funnel(c *gin.Context) {
 	pid, _ := strconv.ParseUint(c.Param("id"), 10, 32)
 	var body struct {
-		Events            []string `json:"events"`
-		From              int64    `json:"from"`
-		To                int64    `json:"to"`
-		WindowSeconds     int64    `json:"window_seconds"`
-		BreakdownProperty string   `json:"breakdown_property"`
-		SegmentID         int64    `json:"segment_id"`
+		Events            []string          `json:"events"`
+		Steps             []funnelInputStep `json:"steps"`
+		From              int64             `json:"from"`
+		To                int64             `json:"to"`
+		WindowSeconds     int64             `json:"window_seconds"`
+		BreakdownProperty string            `json:"breakdown_property"`
+		SegmentID         int64             `json:"segment_id"`
 	}
 	if err := c.BindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
 		return
 	}
-	if len(body.Events) < 2 || len(body.Events) > 8 {
-		c.JSON(http.StatusBadRequest, gin.H{"err": "events length must be 2..8"})
+	stepsInput, err := normalizeFunnelSteps(body.Events, body.Steps, 2, 8)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
 		return
 	}
 	if body.To == 0 {
@@ -1303,7 +1411,7 @@ func (h *AnalyticsHandler) funnel(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
 		return
 	}
-	steps, err := h.computeFunnelForMembers(ctx, uint32(pid), body.Events, body.From, body.To, body.WindowSeconds, memberQuery, memberArgs)
+	steps, err := h.computeFunnelForMembers(ctx, uint32(pid), stepsInput, body.From, body.To, body.WindowSeconds, memberQuery, memberArgs)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
 		return
@@ -1311,7 +1419,7 @@ func (h *AnalyticsHandler) funnel(c *gin.Context) {
 	breakdown := []conversionBreakdownRow{}
 	breakdownTruncated := false
 	if body.BreakdownProperty != "" {
-		breakdown, err = h.computeFunnelBreakdownForMembers(ctx, uint32(pid), body.Events, body.From, body.To, body.WindowSeconds, body.BreakdownProperty, memberQuery, memberArgs)
+		breakdown, err = h.computeFunnelBreakdownForMembers(ctx, uint32(pid), stepsInput, body.From, body.To, body.WindowSeconds, body.BreakdownProperty, memberQuery, memberArgs)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
 			return

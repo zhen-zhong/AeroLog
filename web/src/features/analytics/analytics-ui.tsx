@@ -2,7 +2,8 @@
 
 import dayjs, { Dayjs } from "dayjs";
 import type { ReactNode } from "react";
-import { Check, ChevronLeft, ChevronRight, Clock3, Filter, Layers3, Sparkles } from "lucide-react";
+import { ChevronLeft, ChevronRight, Clock3, Filter, Plus, Sparkles, Trash2 } from "lucide-react";
+import type { FunnelStepInput, PropertyDefinition } from "@/lib/api";
 import { AnimatedContent } from "@/components/react-bits/animated-content";
 import { CountUp } from "@/components/react-bits/count-up";
 import { Badge } from "@/components/ui/badge";
@@ -372,19 +373,17 @@ export function EventStepSelector({
   options,
   value,
   onChange,
+  properties = [],
+  maxSteps = 8,
+  showFilters = true,
 }: {
   options: AnalyticsEvent[];
-  value: string[];
-  onChange: (value: string[]) => void;
+  value: FunnelStepInput[];
+  onChange: (value: FunnelStepInput[]) => void;
+  properties?: PropertyDefinition[];
+  maxSteps?: number;
+  showFilters?: boolean;
 }) {
-  const toggle = (event: string) => {
-    if (value.includes(event)) {
-      onChange(value.filter((item) => item !== event));
-      return;
-    }
-    if (value.length < 8) onChange([...value, event]);
-  };
-
   const move = (index: number, direction: -1 | 1) => {
     const nextIndex = index + direction;
     if (nextIndex < 0 || nextIndex >= value.length) return;
@@ -393,57 +392,103 @@ export function EventStepSelector({
     onChange(next);
   };
 
+  const updateStep = (index: number, patch: Partial<FunnelStepInput>) => {
+    onChange(value.map((step, current) => (current === index ? { ...step, ...patch } : step)));
+  };
+
+  const updateFilter = (stepIndex: number, filterIndex: number, patch: Record<string, string>) => {
+    onChange(value.map((step, current) => {
+      if (current !== stepIndex) return step;
+      return {
+        ...step,
+        filters: (step.filters || []).map((filter, itemIndex) => itemIndex === filterIndex ? { ...filter, ...patch } : filter),
+      };
+    }));
+  };
+
+  const removeFilter = (stepIndex: number, filterIndex: number) => {
+    onChange(value.map((step, current) => current === stepIndex
+      ? { ...step, filters: (step.filters || []).filter((_, itemIndex) => itemIndex !== filterIndex) }
+      : step));
+  };
+
   return (
     <div className="grid gap-3">
-      <div className="flex flex-wrap gap-2">
-        {options.map((item) => {
-          const active = value.includes(item.event);
-          return (
-            <button
-              key={item.event}
-              type="button"
-              onClick={() => toggle(item.event)}
-              className={cn(
-                "inline-flex h-9 items-center gap-2 rounded-md border bg-background px-3 text-sm font-medium transition-colors hover:border-primary/40 hover:bg-accent",
-                active && "border-primary/50 bg-primary text-primary-foreground hover:bg-primary/90",
-              )}
-            >
-              {active ? <Check className="h-3.5 w-3.5" /> : <Layers3 className="h-3.5 w-3.5" />}
-              {item.event}
-            </button>
-          );
-        })}
-      </div>
-      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+      {value.map((step, index) => {
+        const availableProperties = properties.filter((property) => !property.event || property.event === step.event);
+        return (
+          <div key={`${index}:${step.event}`} className="rounded-lg border bg-background p-3 shadow-sm">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="inline-flex h-8 shrink-0 items-center rounded-md bg-primary px-2.5 text-xs font-semibold text-primary-foreground">
+                步骤 {index + 1}
+              </span>
+              <Select value={step.event} onValueChange={(event) => updateStep(index, { event })}>
+                <SelectTrigger className="min-w-[190px] flex-1"><SelectValue placeholder="选择事件" /></SelectTrigger>
+                <SelectContent>{options.map((item) => <SelectItem key={item.event} value={item.event}>{item.event}</SelectItem>)}</SelectContent>
+              </Select>
+              <Button type="button" variant="outline" size="sm" disabled={index === 0} onClick={() => move(index, -1)}>
+                <ChevronLeft className="h-4 w-4" /> 前移
+              </Button>
+              <Button type="button" variant="outline" size="sm" disabled={index === value.length - 1} onClick={() => move(index, 1)}>
+                后移 <ChevronRight className="h-4 w-4" />
+              </Button>
+              <Button type="button" variant="ghost" size="icon" aria-label={`删除步骤 ${index + 1}`} onClick={() => onChange(value.filter((_, current) => current !== index))}>
+                <Trash2 className="h-4 w-4 text-muted-foreground" />
+              </Button>
+            </div>
+            {showFilters ? <div className="mt-3 border-t pt-3">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <span className="text-xs font-medium text-muted-foreground">事件参数筛选（可选，多个条件同时满足）</span>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  disabled={!availableProperties.length}
+                  onClick={() => onChange(value.map((item, current) => current === index
+                    ? { ...item, filters: [...(item.filters || []), { property: availableProperties[0].name, op: "eq", value: "" }] }
+                    : item))}
+                >
+                  <Plus className="h-3.5 w-3.5" /> 添加参数
+                </Button>
+              </div>
+              {(step.filters || []).length ? (
+                <div className="grid gap-2">
+                  {(step.filters || []).map((filter, filterIndex) => (
+                    <div key={`${filter.property}:${filterIndex}`} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_112px_minmax(0,1fr)_32px]">
+                      <Select value={filter.property} onValueChange={(property) => updateFilter(index, filterIndex, { property })}>
+                        <SelectTrigger><SelectValue placeholder="选择参数" /></SelectTrigger>
+                        <SelectContent>{availableProperties.map((property) => <SelectItem key={`${property.event}:${property.name}`} value={property.name}>{property.display_name || property.name}</SelectItem>)}</SelectContent>
+                      </Select>
+                      <Select value={filter.op} onValueChange={(op) => updateFilter(index, filterIndex, { op })}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="eq">等于</SelectItem>
+                          <SelectItem value="neq">不等于</SelectItem>
+                          <SelectItem value="exists">有值</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      {filter.op === "exists" ? <div className="flex h-9 items-center rounded-md border bg-secondary/40 px-3 text-sm text-muted-foreground">无需填写值</div> : <Input value={filter.value || ""} onChange={(event) => updateFilter(index, filterIndex, { value: event.target.value })} placeholder="参数值" />}
+                      <Button type="button" variant="ghost" size="icon" aria-label={`删除 ${filter.property} 筛选`} onClick={() => removeFilter(index, filterIndex)}><Trash2 className="h-4 w-4 text-muted-foreground" /></Button>
+                    </div>
+                  ))}
+                </div>
+              ) : <p className="text-xs text-muted-foreground">未限定参数，匹配该事件的全部数据。</p>}
+            </div> : null}
+          </div>
+        );
+      })}
+      {value.length < maxSteps ? (
+        <Select key={value.length} onValueChange={(event) => event !== "__add_step__" && onChange([...value, { event, filters: [] }])}>
+          <SelectTrigger><SelectValue placeholder="添加下一步事件" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__add_step__" disabled>选择事件添加步骤</SelectItem>
+            {options.map((item) => <SelectItem key={item.event} value={item.event}>{item.event}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      ) : null}
+      <div className="flex items-center gap-2 text-xs text-muted-foreground">
         <Clock3 className="h-3.5 w-3.5" />
-        当前顺序：
-        {value.length ? (
-          value.map((item, index) => (
-            <span key={`${item}:${index}`} className="inline-flex items-center gap-0.5 rounded-md border bg-info/10 py-0.5 pl-2 pr-0.5 text-info-foreground">
-              <span>{index + 1}. {item}</span>
-              <button
-                type="button"
-                aria-label={`将 ${item} 前移`}
-                disabled={index === 0}
-                onClick={() => move(index, -1)}
-                className="rounded p-0.5 hover:bg-background disabled:cursor-not-allowed disabled:opacity-35"
-              >
-                <ChevronLeft className="h-3.5 w-3.5" />
-              </button>
-              <button
-                type="button"
-                aria-label={`将 ${item} 后移`}
-                disabled={index === value.length - 1}
-                onClick={() => move(index, 1)}
-                className="rounded p-0.5 hover:bg-background disabled:cursor-not-allowed disabled:opacity-35"
-              >
-                <ChevronRight className="h-3.5 w-3.5" />
-              </button>
-            </span>
-          ))
-        ) : (
-          <span>请选择 2-8 个事件</span>
-        )}
+        顺序从步骤 1 到步骤 {value.length || 1}。同一事件可重复选择，并可用参数区分。
       </div>
     </div>
   );

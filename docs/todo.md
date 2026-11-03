@@ -55,6 +55,7 @@
 - [ ] 分享链接增强：过期时间、撤销记录、访问日志和权限边界。
 - [ ] 导出文件存储正规化：本地/MinIO/S3 适配、过期清理、下载鉴权。
 - [ ] SDK Debugger 闭环：按 `$insert_id`、设备、用户、session 串联 SDK 本地日志、Collector、Schema、Consumer、ClickHouse 查询结果。
+- [ ] 企业微信机器人告警接入：配置密钥环境变量、不写入仓库；推送 Kafka 消费停止/积压、DLQ、ClickHouse 写入失败、神策连接或订阅异常、项目事件中断等告警，并包含项目、级别、当前值、阈值和 UTC+8 时间。
 
 ## P2
 

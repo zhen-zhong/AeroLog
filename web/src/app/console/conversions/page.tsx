@@ -25,7 +25,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { api, ConversionGoal, ConversionGoalVersion } from "@/lib/api";
+import { api, ConversionGoal, ConversionGoalVersion, FunnelStepInput } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { useProjectStore } from "@/stores/project-store";
 
@@ -39,7 +39,7 @@ export default function ConversionsPage() {
     dayjs().endOf("day"),
   ]);
   const [name, setName] = useState("购买转化");
-  const [events, setEvents] = useState<string[]>([]);
+  const [steps, setSteps] = useState<FunnelStepInput[]>([]);
   const [windowSeconds, setWindowSeconds] = useState(7 * 24 * 3600);
   const [breakdownProperty, setBreakdownProperty] = useState("");
   const [segmentId, setSegmentId] = useState<number | undefined>();
@@ -52,7 +52,7 @@ export default function ConversionsPage() {
 
   // 切换项目时重置
   useEffect(() => {
-    setEvents([]);
+    setSteps([]);
     setBreakdownProperty("");
     setSegmentId(undefined);
   }, [projectId]);
@@ -62,6 +62,11 @@ export default function ConversionsPage() {
   const top = useQuery({
     queryKey: ["conversion_top", projectId, tsRange],
     queryFn: () => api.topEvents(projectId!, { ...tsRange, limit: 100 }),
+    enabled: !!projectId,
+  });
+  const allEventDefinitions = useQuery({
+    queryKey: ["conversion_events", projectId],
+    queryFn: () => api.listEvents(projectId!),
     enabled: !!projectId,
   });
 
@@ -84,20 +89,27 @@ export default function ConversionsPage() {
   });
 
   const eventRows = top.data?.data || [];
+  const eventOptions = useMemo(() => {
+    const definitions = allEventDefinitions.data?.data || [];
+    const names = definitions.length ? definitions.map((item) => item.name) : eventRows.map((item) => item.event);
+    return names.map((event) => ({ event, count: 0, users: 0 }));
+  }, [allEventDefinitions.data?.data, eventRows]);
   const propertyRows = props.data?.data || [];
+  const events = useMemo(() => steps.map((step) => step.event), [steps]);
 
   useEffect(() => {
-    if (!events.length && eventRows.length) {
+    if (!steps.length && eventOptions.length) {
       const defaults = DEFAULT_EVENTS.filter((event) => eventRows.some((item) => item.event === event));
-      if (defaults.length >= 2) setEvents(defaults);
-      else setEvents(eventRows.slice(0, 3).map((item) => item.event));
+      if (defaults.length >= 2) setSteps(defaults.map((event) => ({ event, filters: [] })));
+      else setSteps(eventOptions.slice(0, 3).map((item) => ({ event: item.event, filters: [] })));
     }
-  }, [eventRows, events.length]);
+  }, [eventRows, eventOptions, steps.length]);
 
   const analyze = useMutation({
     mutationFn: () =>
       api.conversion(projectId!, {
         events,
+        steps,
         ...tsRange,
         window_seconds: windowSeconds,
         breakdown_property: breakdownProperty || undefined,
@@ -110,6 +122,7 @@ export default function ConversionsPage() {
       api.createConversionGoal(projectId!, {
         name,
         events,
+        steps,
         window_seconds: windowSeconds,
         breakdown_property: breakdownProperty || undefined,
         note: versionNote || undefined,
@@ -125,6 +138,7 @@ export default function ConversionsPage() {
       const span = tsRange.to - tsRange.from;
       return api.conversionTrend(projectId!, {
         events,
+        steps,
         ...tsRange,
         window_seconds: windowSeconds,
         compare_from: tsRange.from - span,
@@ -145,6 +159,7 @@ export default function ConversionsPage() {
     mutationFn: () =>
       api.conversionExport(projectId!, {
         events,
+        steps,
         ...tsRange,
         window_seconds: windowSeconds,
         breakdown_property: breakdownProperty || undefined,
@@ -164,7 +179,7 @@ export default function ConversionsPage() {
       const deleted = (goals.data?.data || []).find((goal) => goal.id === goalId);
       if (deleted?.name === name) {
         setName("购买转化");
-        setEvents([]);
+        setSteps([]);
         setBreakdownProperty("");
         setWindowSeconds(7 * 24 * 3600);
         analyze.reset();
@@ -173,19 +188,19 @@ export default function ConversionsPage() {
     },
   });
 
-  const steps = analyze.data?.data.steps || [];
+  const resultSteps = analyze.data?.data.steps || [];
   const breakdown = analyze.data?.data.breakdown || [];
-  const firstUsers = steps[0]?.users || 0;
-  const lastUsers = steps[steps.length - 1]?.users || 0;
+  const firstUsers = resultSteps[0]?.users || 0;
+  const lastUsers = resultSteps[resultSteps.length - 1]?.users || 0;
   const finalRate = firstUsers ? Math.round((lastUsers / firstUsers) * 10000) / 100 : 0;
-  const avgDropoff = steps.length > 1
-    ? Math.round((steps.slice(1).reduce((sum, step) => sum + step.dropoff, 0) / (steps.length - 1)) * 10000) / 100
+  const avgDropoff = resultSteps.length > 1
+    ? Math.round((resultSteps.slice(1).reduce((sum, step) => sum + step.dropoff, 0) / (resultSteps.length - 1)) * 10000) / 100
     : 0;
   const breakdownTableMinWidth = Math.max(820, events.length * 180 + 360);
 
   function loadGoal(goal: ConversionGoal) {
     setName(goal.name);
-    setEvents(goal.events);
+    setSteps(goal.steps?.length ? goal.steps : goal.events.map((event) => ({ event, filters: [] })));
     setWindowSeconds(goal.window_seconds);
     setBreakdownProperty(goal.breakdown_property || "");
     analyze.reset();
@@ -245,7 +260,7 @@ export default function ConversionsPage() {
                 <div className="text-sm font-medium">自定义转化路径</div>
                 <Badge variant="secondary">{events.length} steps</Badge>
               </div>
-              <EventStepSelector options={eventRows} value={events} onChange={setEvents} />
+              <EventStepSelector options={eventOptions} value={steps} onChange={setSteps} properties={propertyRows} maxSteps={12} />
               <Input
                 value={versionNote}
                 onChange={(event) => setVersionNote(event.target.value)}
@@ -273,7 +288,7 @@ export default function ConversionsPage() {
                   variant="ghost"
                   onClick={() => {
                     setName("购买转化");
-                    setEvents([]);
+                    setSteps([]);
                     setBreakdownProperty("");
                     setWindowSeconds(7 * 24 * 3600);
                     setVersionNote("");
@@ -363,9 +378,9 @@ export default function ConversionsPage() {
           </div>
 
           <ChartPanel title="转化路径" description={events.length ? events.join(" → ") : "请选择至少两个事件"} className="min-w-0" contentClassName="pt-3 sm:pt-3">
-            {steps.length ? (
+            {resultSteps.length ? (
               <div className="grid gap-3">
-                {steps.map((step, index) => (
+                {resultSteps.map((step, index) => (
                   <div key={`${step.event}:${index}`} className="rounded-md border bg-background p-3">
                     <div className="mb-2 flex items-center justify-between gap-3">
                       <div className="flex min-w-0 items-center gap-2">

@@ -20,7 +20,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { api, ConversionBreakdownRow, ConversionStep } from "@/lib/api";
+import { api, ConversionBreakdownRow, ConversionStep, FunnelStepInput } from "@/lib/api";
 import { useProjectStore } from "@/stores/project-store";
 
 const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
@@ -29,7 +29,7 @@ export default function FunnelPage() {
   const projectId = useProjectStore((s) => s.projectId);
   const searchParams = useSearchParams();
   const presetEvents = searchParams.get("events");
-  const [events, setEvents] = useState<string[]>([]);
+  const [steps, setSteps] = useState<FunnelStepInput[]>([]);
   const [windowSeconds, setWindowSeconds] = useState<number>(24 * 3600);
   const [breakdownProperty, setBreakdownProperty] = useState("");
   const [segmentId, setSegmentId] = useState<number | undefined>();
@@ -44,7 +44,7 @@ export default function FunnelPage() {
 
   // 切换项目时重置
   useEffect(() => {
-    setEvents([]);
+    setSteps([]);
     setResult([]);
     setBreakdown([]);
     setBreakdownTruncated(false);
@@ -56,7 +56,7 @@ export default function FunnelPage() {
   useEffect(() => {
     if (!presetEvents) return;
     const events = Array.from(new Set(presetEvents.split(",").map((item) => item.trim()).filter(Boolean))).slice(0, 10);
-    if (events.length >= 2) setEvents(events);
+    if (events.length >= 2) setSteps(events.map((event) => ({ event, filters: [] })));
   }, [presetEvents, projectId]);
 
   const { data: top, isLoading: topLoading } = useQuery({
@@ -67,6 +67,11 @@ export default function FunnelPage() {
         to: Date.now(),
         limit: 100,
       }),
+    enabled: !!projectId,
+  });
+  const { data: eventDefinitions } = useQuery({
+    queryKey: ["funnel_events", projectId],
+    queryFn: () => api.listEvents(projectId!),
     enabled: !!projectId,
   });
 
@@ -81,11 +86,18 @@ export default function FunnelPage() {
     enabled: !!projectId,
   });
   const propertyRows = properties?.data || [];
+  const eventOptions = useMemo(() => {
+    const definitions = eventDefinitions?.data || [];
+    const names = definitions.length ? definitions.map((item) => item.name) : top?.data?.map((item) => item.event) || [];
+    return names.map((event) => ({ event, count: 0, users: 0 }));
+  }, [eventDefinitions?.data, top?.data]);
+  const events = useMemo(() => steps.map((step) => step.event), [steps]);
 
   const runMut = useMutation({
     mutationFn: () =>
       api.funnel(projectId!, {
         events,
+        steps,
         from: range[0].valueOf(),
         to: range[1].valueOf(),
         window_seconds: windowSeconds,
@@ -204,7 +216,7 @@ export default function FunnelPage() {
 
             <div className="mt-5">
               <div className="mb-2 text-sm font-medium">漏斗步骤</div>
-              <EventStepSelector options={top?.data || []} value={events} onChange={setEvents} />
+              <EventStepSelector options={eventOptions} value={steps} onChange={setSteps} properties={propertyRows} />
             </div>
 
             <div className="mt-5 flex flex-col gap-2">
@@ -220,7 +232,7 @@ export default function FunnelPage() {
                 type="button"
                 variant="outline"
                 onClick={() => {
-                  setEvents([]);
+                  setSteps([]);
                   setResult([]);
                   setBreakdown([]);
                   setBreakdownTruncated(false);
@@ -270,7 +282,7 @@ export default function FunnelPage() {
                     </TableHeader>
                     <TableBody>
                       {result.map((step, index) => (
-                        <TableRow key={step.event}>
+                        <TableRow key={`${step.event}:${index}`}>
                           <TableCell>
                             <div className="flex items-center gap-2">
                               <span className="flex h-7 w-7 items-center justify-center rounded-md bg-primary text-xs font-semibold text-primary-foreground">

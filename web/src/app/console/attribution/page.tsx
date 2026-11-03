@@ -102,6 +102,7 @@ export default function AttributionPage() {
   });
 
   const result = runMut.data?.data;
+  const touchSteps = useMemo(() => touchEvents.map((event) => ({ event, filters: [] })), [touchEvents]);
   const rows: AttributionRow[] = result?.rows || [];
   const lagBuckets: AttributionLagBucket[] = result?.lag_buckets || [];
   const breakdown: AttributionBreakdownGroup[] = result?.breakdown || [];
@@ -314,7 +315,12 @@ export default function AttributionPage() {
 
           <div className="mt-5">
             <div className="mb-2 text-sm font-medium">触点事件</div>
-            <EventStepSelector options={top?.data || []} value={touchEvents} onChange={setTouchEvents} />
+            <EventStepSelector
+              options={top?.data || []}
+              value={touchSteps}
+              onChange={(next) => setTouchEvents(next.map((step) => step.event))}
+              showFilters={false}
+            />
           </div>
 
           <div className="mt-5 flex flex-wrap items-center gap-2">
