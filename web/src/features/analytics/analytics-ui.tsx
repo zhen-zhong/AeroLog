@@ -520,11 +520,11 @@ export function EventStepSelector({
   };
 
   return (
-    <div className="grid gap-3">
+    <div className="grid min-w-0 gap-3">
       {value.map((step, index) => {
         const availableProperties = properties.filter((property) => !property.event || property.event === step.event);
         return (
-          <div key={`${index}:${step.event}`} className="rounded-lg border bg-background p-3 shadow-sm">
+          <div key={`${index}:${step.event}`} className="min-w-0 overflow-hidden rounded-lg border bg-background p-3 shadow-sm">
             <div className="flex min-w-0 flex-nowrap items-center gap-2">
               <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary text-xs font-semibold text-primary-foreground" title={`步骤 ${index + 1}`}>
                 {index + 1}
@@ -543,9 +543,9 @@ export function EventStepSelector({
                 <Trash2 className="h-4 w-4 text-muted-foreground" />
               </Button>
             </div>
-            {showFilters ? <div className="mt-3 border-t pt-3">
+            {showFilters ? <div className="mt-3 min-w-0 border-t pt-3">
               <div className="mb-2 flex items-center justify-between gap-2">
-                <span className="text-xs font-medium text-muted-foreground">事件参数筛选（可选，多个条件同时满足）</span>
+                <span className="min-w-0 truncate text-xs font-medium text-muted-foreground">事件参数筛选（可选，多个条件同时满足）</span>
                 <Button
                   type="button"
                   size="sm"

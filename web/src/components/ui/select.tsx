@@ -33,7 +33,7 @@ SelectTrigger.displayName = SelectPrimitive.Trigger.displayName;
 const SelectContent = React.forwardRef<
   React.ElementRef<typeof SelectPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof SelectPrimitive.Content>
->(({ className, children, position = "popper", ...props }, ref) => {
+>(({ className, children, position = "popper", style, ...props }, ref) => {
   const contentRef = React.useRef<React.ElementRef<typeof SelectPrimitive.Content> | null>(null);
   const [query, setQuery] = React.useState("");
   const [hasMatch, setHasMatch] = React.useState(true);
@@ -67,11 +67,12 @@ const SelectContent = React.forwardRef<
       <SelectPrimitive.Content
         ref={setRefs}
         className={cn(
-          "relative z-50 min-w-32 overflow-hidden rounded-md border bg-card text-card-foreground",
+          "relative z-50 min-w-32 max-w-[calc(100vw-2rem)] overflow-hidden rounded-md border bg-card text-card-foreground sm:max-w-lg",
           position === "popper" && "data-[side=bottom]:translate-y-1 data-[side=top]:-translate-y-1",
           className,
         )}
         position={position}
+        style={{ maxWidth: "min(32rem, calc(100vw - 2rem))", ...style }}
         {...props}
       >
         <div className="border-b p-1.5" onPointerDown={(event) => event.stopPropagation()}>
@@ -92,7 +93,7 @@ const SelectContent = React.forwardRef<
         </div>
         <SelectPrimitive.Viewport
           className={cn(
-            "max-h-[min(20rem,var(--radix-select-content-available-height))] overflow-y-auto overscroll-contain p-1 scroll-py-1",
+            "max-h-[min(20rem,var(--radix-select-content-available-height))] overflow-x-auto overflow-y-auto overscroll-contain overscroll-x-contain p-1 scroll-py-1",
             position === "popper" && "w-full min-w-[var(--radix-select-trigger-width)]",
           )}
         >
@@ -122,7 +123,7 @@ const SelectItem = React.forwardRef<
   <SelectPrimitive.Item
     ref={ref}
     className={cn(
-      "relative flex w-full cursor-default select-none items-center overflow-hidden text-ellipsis whitespace-nowrap rounded-sm py-1.5 pl-8 pr-2 text-sm outline-none focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+      "relative flex min-w-full w-max cursor-default select-none items-center whitespace-nowrap rounded-sm py-1.5 pl-8 pr-2 text-sm outline-none focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
       className,
     )}
     {...props}
