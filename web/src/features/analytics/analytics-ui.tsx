@@ -454,13 +454,13 @@ export function EventStepSelector({
               {(step.filters || []).length ? (
                 <div className="grid gap-2">
                   {(step.filters || []).map((filter, filterIndex) => (
-                    <div key={`${filter.property}:${filterIndex}`} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_112px_minmax(0,1fr)_32px]">
+                    <div key={`${filter.property}:${filterIndex}`} className="grid min-w-0 gap-2 sm:grid-cols-[minmax(0,1fr)_112px_minmax(0,1fr)_32px]">
                       <Select value={filter.property} onValueChange={(property) => updateFilter(index, filterIndex, { property })}>
-                        <SelectTrigger><SelectValue placeholder="选择参数" /></SelectTrigger>
+                        <SelectTrigger className="min-w-0"><SelectValue placeholder="选择参数" /></SelectTrigger>
                         <SelectContent>{availableProperties.map((property) => <SelectItem key={`${property.event}:${property.name}`} value={property.name}>{property.display_name || property.name}</SelectItem>)}</SelectContent>
                       </Select>
                       <Select value={filter.op} onValueChange={(op) => updateFilter(index, filterIndex, { op })}>
-                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectTrigger className="min-w-0"><SelectValue /></SelectTrigger>
                         <SelectContent>
                           <SelectItem value="eq">等于</SelectItem>
                           <SelectItem value="neq">不等于</SelectItem>
