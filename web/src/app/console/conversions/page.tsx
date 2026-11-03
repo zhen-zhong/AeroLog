@@ -422,7 +422,7 @@ export default function ConversionsPage() {
                 </Table>
               </div>
             ) : (
-              <EmptyAnalysis title="暂无拆解结果" description="选择拆解参数并计算后，这里会展示不同参数值下的转化率。" />
+              <div className="p-4 sm:p-5"><EmptyAnalysis title="暂无拆解结果" description="选择拆解参数并计算后，这里会展示不同参数值下的转化率。" /></div>
             )}
           </ChartPanel>
 

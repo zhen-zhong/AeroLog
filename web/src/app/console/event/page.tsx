@@ -281,10 +281,10 @@ export default function EventAnalysisPage() {
 
       {!projectId ? <EmptyAnalysis title="暂无项目" description="请选择项目后配置事件分析。" /> : <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_420px]">
         <ChartPanel title="指标趋势" description="每条曲线或柱体对应一个事件指标">
-          {!activeMetrics.length ? <EmptyAnalysis className="min-h-[430px]" title="请完善事件指标" description="选择事件；数值属性指标还需选择属性。" /> : <div className="relative">{analysis.isFetching ? <div className="absolute inset-x-0 top-0 h-px aero-scan-line" /> : null}<ReactECharts option={option} style={{ height: 430 }} /></div>}
+          {!activeMetrics.length ? <div className="p-1 sm:p-2"><EmptyAnalysis className="min-h-[430px]" title="请完善事件指标" description="选择事件；数值属性指标还需选择属性。" /></div> : <div className="relative">{analysis.isFetching ? <div className="absolute inset-x-0 top-0 h-px aero-scan-line" /> : null}<ReactECharts option={option} style={{ height: 430 }} /></div>}
         </ChartPanel>
         <ChartPanel title="指标汇总" description="当前时间范围内每项指标的总值" contentClassName="p-0 sm:p-0">
-          {!series.length ? <EmptyAnalysis className="min-h-56" title="暂无结果" description="配置完成后自动计算。" /> : <div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>事件与指标</TableHead><TableHead className="text-right">总值</TableHead></TableRow></TableHeader><TableBody>{series.map((item) => <TableRow key={item.metric.id}><TableCell className="max-w-64 break-words font-medium">{item.name}</TableCell><TableCell className="text-right font-mono">{item.total.toLocaleString(undefined, { maximumFractionDigits: 2 })}</TableCell></TableRow>)}</TableBody></Table></div>}
+          {!series.length ? <div className="p-4 sm:p-5"><EmptyAnalysis className="min-h-56" title="暂无结果" description="配置完成后自动计算。" /></div> : <div className="overflow-x-auto"><Table><TableHeader><TableRow><TableHead>事件与指标</TableHead><TableHead className="text-right">总值</TableHead></TableRow></TableHeader><TableBody>{series.map((item) => <TableRow key={item.metric.id}><TableCell className="max-w-64 break-words font-medium">{item.name}</TableCell><TableCell className="text-right font-mono">{item.total.toLocaleString(undefined, { maximumFractionDigits: 2 })}</TableCell></TableRow>)}</TableBody></Table></div>}
         </ChartPanel>
       </div>}
 

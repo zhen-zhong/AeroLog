@@ -176,7 +176,7 @@ export default function RetentionPage() {
         </ChartPanel>
         <ChartPanel title="留存热力矩阵" description="每行是一个同期日，每列是 DayN 回访比例">
           {!initEvent || !retEvent ? (
-            <EmptyAnalysis title="请选择事件" description="选择初始事件和返回事件后，留存矩阵会自动计算。" />
+            <div className="p-1 sm:p-2"><EmptyAnalysis title="请选择事件" description="选择初始事件和返回事件后，留存矩阵会自动计算。" /></div>
           ) : isFetching ? (
             <div className="grid gap-2">
               {Array.from({ length: 8 }).map((_, index) => (
@@ -184,7 +184,7 @@ export default function RetentionPage() {
               ))}
             </div>
           ) : overall.length === 0 ? (
-            <EmptyAnalysis title="暂无留存数据" description="当前时间范围内没有满足条件的同期用户。" />
+            <div className="p-1 sm:p-2"><EmptyAnalysis title="暂无留存数据" description="当前时间范围内没有满足条件的同期用户。" /></div>
           ) : (
             <RetentionHeatmap rows={overall} days={days} />
           )}
