@@ -23,6 +23,7 @@ import {
   ChartPanel,
   DateTimeRange,
   EmptyAnalysis,
+  EventCollectionPicker,
 } from "@/features/analytics/analytics-ui";
 import { ProfileSheet } from "@/features/users/users-page";
 import { Badge } from "@/components/ui/badge";
@@ -38,7 +39,6 @@ import {
 } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api, AnalyticsJob, QueryDimension, QueryFilter, QueryTemplate, UserProfile } from "@/lib/api";
-import { cn } from "@/lib/utils";
 import { useProjectStore } from "@/stores/project-store";
 
 type DraftFilter = {
@@ -127,6 +127,13 @@ export default function QueryBuilderPage() {
     placeholderData: (previousData) => previousData,
   });
 
+  const allEvents = useQuery({
+    queryKey: ["query_all_events", projectId],
+    queryFn: () => api.listEvents(projectId!),
+    enabled: !!projectId,
+    placeholderData: (previousData) => previousData,
+  });
+
   const props = useQuery({
     queryKey: ["query_properties", projectId],
     queryFn: () => api.listProperties(projectId!, { scope: "event" }),
@@ -135,7 +142,17 @@ export default function QueryBuilderPage() {
   });
 
   const eventRows = top.data?.data || [];
+  const eventOptions = useMemo(() => {
+    const names = allEvents.data?.data.map((item) => item.name) || [];
+    return names.length ? names : eventRows.map((item) => item.event);
+  }, [allEvents.data, eventRows]);
   const propertyRows = props.data?.data || [];
+  const dimensionOptions = useMemo(() => [
+    { value: "time:day", label: "按天", dimension: { type: "time", key: "day" } as QueryDimension },
+    { value: "time:hour", label: "按小时", dimension: { type: "time", key: "hour" } as QueryDimension },
+    { value: "event:event", label: "事件名", dimension: { type: "event", key: "event" } as QueryDimension },
+    ...propertyRows.map((item) => ({ value: `property:${item.name}`, label: item.display_name || item.name, dimension: { type: "property", key: item.name } as QueryDimension })),
+  ], [propertyRows]);
 
   const query = useMutation({
     mutationFn: () =>
@@ -279,21 +296,19 @@ export default function QueryBuilderPage() {
   const resultDimensions = query.data?.data.dimensions || dimensions;
   const tableMinWidth = Math.max(920, resultDimensions.length * 220 + 340);
 
-  function toggleEvent(event: string) {
-    setEvents((current) =>
-      current.includes(event) ? current.filter((item) => item !== event) : [...current, event],
-    );
-  }
-
-  function toggleDimension(dim: QueryDimension) {
+  function addDimension(dim: QueryDimension) {
     const key = `${dim.type}:${dim.key}`;
     setDimensions((current) => {
       const exists = current.some((item) => `${item.type}:${item.key}` === key);
-      if (exists) {
-        const next = current.filter((item) => `${item.type}:${item.key}` !== key);
-        return next.length ? next : [{ type: "event", key: "event" }];
-      }
-      return [...current, dim];
+      return exists ? current : [...current, dim];
+    });
+  }
+
+  function removeDimension(dim: QueryDimension) {
+    const key = `${dim.type}:${dim.key}`;
+    setDimensions((current) => {
+      const next = current.filter((item) => `${item.type}:${item.key}` !== key);
+      return next.length ? next : [{ type: "event", key: "event" }];
     });
   }
 
@@ -319,21 +334,7 @@ export default function QueryBuilderPage() {
                   <div className="text-sm font-medium">事件集合</div>
                   <Badge variant="secondary" className="shrink-0">{selectedEventLabel}</Badge>
                 </div>
-                <div className="flex max-h-44 min-w-0 flex-wrap gap-2 overflow-y-auto rounded-md border bg-background p-2">
-                  {eventRows.map((item) => (
-                    <button
-                      key={item.event}
-                      type="button"
-                      onClick={() => toggleEvent(item.event)}
-                      className={cn(
-                        "inline-flex h-8 max-w-full items-center rounded-md border px-2.5 text-xs font-medium transition-colors hover:border-primary/40 hover:bg-accent",
-                        events.includes(item.event) && "border-primary/50 bg-primary text-primary-foreground hover:bg-primary/90",
-                      )}
-                    >
-                      <span className="truncate">{item.event}</span>
-                    </button>
-                  ))}
-                </div>
+                <EventCollectionPicker events={eventOptions} value={events} onChange={setEvents} />
               </div>
             </CardContent>
           </Card>
@@ -360,7 +361,7 @@ export default function QueryBuilderPage() {
                       <SelectTrigger className="min-w-0"><SelectValue placeholder="适用事件" /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="__all__">全部事件</SelectItem>
-                        {eventRows.map((item) => <SelectItem key={item.event} value={item.event}>{item.event}</SelectItem>)}
+                        {eventOptions.map((event) => <SelectItem key={event} value={event}>{event}</SelectItem>)}
                       </SelectContent>
                     </Select>
                     <Select value={filter.property || undefined} onValueChange={(value) => updateFilter(filter.id, { property: value })}>
@@ -404,30 +405,22 @@ export default function QueryBuilderPage() {
           <Card className="min-w-0 overflow-hidden">
             <CardContent className="grid gap-3 pt-4 sm:pt-4">
               <div className="text-sm font-medium">表格维度</div>
-              <div className="flex min-w-0 flex-wrap gap-2">
-                <DimensionButton
-                  active={dimensions.some((item) => item.type === "time" && item.key === "day")}
-                  label="按天"
-                  onClick={() => toggleDimension({ type: "time", key: "day" })}
-                />
-                <DimensionButton
-                  active={dimensions.some((item) => item.type === "time" && item.key === "hour")}
-                  label="按小时"
-                  onClick={() => toggleDimension({ type: "time", key: "hour" })}
-                />
-                <DimensionButton
-                  active={dimensions.some((item) => item.type === "event")}
-                  label="事件名"
-                  onClick={() => toggleDimension({ type: "event", key: "event" })}
-                />
-                {propertyRows.map((item) => (
-                  <DimensionButton
-                    key={item.id}
-                    active={dimensions.some((dim) => dim.type === "property" && dim.key === item.name)}
-                    label={item.name}
-                    onClick={() => toggleDimension({ type: "property", key: item.name })}
-                  />
-                ))}
+              <Select key={dimensions.map((item) => `${item.type}:${item.key}`).join("\u0000")} onValueChange={(value) => {
+                const option = dimensionOptions.find((item) => item.value === value);
+                if (option) addDimension(option.dimension);
+              }}>
+                <SelectTrigger><SelectValue placeholder="添加表格维度" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__add_dimension__" disabled>选择维度添加</SelectItem>
+                  {dimensionOptions.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <div className="flex min-w-0 flex-wrap gap-1.5 rounded-md border bg-background p-2">
+                {dimensions.map((dimension) => {
+                  const key = `${dimension.type}:${dimension.key}`;
+                  const label = dimensionOptions.find((item) => item.value === key)?.label || dimension.key;
+                  return <Button key={key} type="button" size="sm" variant="secondary" className="max-w-full" title={label} onClick={() => removeDimension(dimension)}><span className="truncate">{label}</span><X className="h-3.5 w-3.5 shrink-0" /></Button>;
+                })}
               </div>
               <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
                 <Button type="button" disabled={!projectId || query.isPending} onClick={() => query.mutate()}>
@@ -607,21 +600,6 @@ export default function QueryBuilderPage() {
         onClose={() => setProfileUser(null)}
       />
     </div>
-  );
-}
-
-function DimensionButton({ active, label, onClick }: { active: boolean; label: string; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        "inline-flex h-8 max-w-full items-center rounded-md border bg-background px-2.5 text-xs font-medium transition-colors hover:border-primary/40 hover:bg-accent",
-        active && "border-primary/50 bg-primary text-primary-foreground hover:bg-primary/90",
-      )}
-    >
-      <span className="truncate">{label}</span>
-    </button>
   );
 }
 

@@ -2,7 +2,7 @@
 
 import dayjs, { Dayjs } from "dayjs";
 import type { ReactNode } from "react";
-import { ChevronLeft, ChevronRight, Clock3, Filter, Plus, Sparkles, Trash2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Clock3, Filter, Plus, Sparkles, Trash2, X } from "lucide-react";
 import type { FunnelStepInput, PropertyDefinition } from "@/lib/api";
 import { AnimatedContent } from "@/components/react-bits/animated-content";
 import { CountUp } from "@/components/react-bits/count-up";
@@ -127,6 +127,52 @@ export function EventPicker({
         ))}
       </SelectContent>
     </Select>
+  );
+}
+
+export function EventCollectionPicker({
+  events,
+  value,
+  onChange,
+  placeholder = "添加事件",
+  emptyLabel = "未选择，默认全部事件",
+  max = 20,
+}: {
+  events: string[];
+  value: string[];
+  onChange: (value: string[]) => void;
+  placeholder?: string;
+  emptyLabel?: string;
+  max?: number;
+}) {
+  const options = Array.from(new Set(events)).sort((a, b) => a.localeCompare(b));
+  const addEvent = (event: string) => {
+    if (event === "__aerolog_all_events__") {
+      onChange([]);
+      return;
+    }
+    if (!value.includes(event) && value.length < max) onChange([...value, event]);
+  };
+
+  return (
+    <div className="grid min-w-0 gap-2">
+      <Select key={value.join("\u0000")} onValueChange={addEvent}>
+        <SelectTrigger className="min-w-0"><SelectValue placeholder={placeholder} /></SelectTrigger>
+        <SelectContent>
+          <SelectItem value="__aerolog_all_events__">全部事件（清空选择）</SelectItem>
+          {options.map((event) => <SelectItem key={event} value={event}>{event}</SelectItem>)}
+        </SelectContent>
+      </Select>
+      {value.length ? (
+        <div className="flex min-w-0 flex-wrap gap-1.5 rounded-md border bg-background p-2">
+          {value.map((event) => (
+            <Button key={event} type="button" size="sm" variant="secondary" className="max-w-full" title={event} onClick={() => onChange(value.filter((item) => item !== event))}>
+              <span className="truncate">{event}</span><X className="h-3.5 w-3.5 shrink-0" />
+            </Button>
+          ))}
+        </div>
+      ) : <p className="text-xs text-muted-foreground">{emptyLabel}</p>}
+    </div>
   );
 }
 

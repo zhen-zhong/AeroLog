@@ -6,7 +6,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import dayjs, { Dayjs } from "dayjs";
 import Link from "next/link";
 import { ArrowRight, Bookmark, Play, Plus, Star, Trash2 } from "lucide-react";
-import { AnalyticsHeader, ChartPanel, DateTimeRange, EmptyAnalysis } from "@/features/analytics/analytics-ui";
+import { AnalyticsHeader, ChartPanel, DateTimeRange, EmptyAnalysis, EventCollectionPicker } from "@/features/analytics/analytics-ui";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -189,9 +189,9 @@ export default function CustomReportsPage() {
   const [range, setRange] = useState<[Dayjs, Dayjs]>([dayjs(config.from), dayjs(config.to)]);
   const [name, setName] = useState("");
 
-  const top = useQuery({
-    queryKey: ["custom_report_events", projectId, range],
-    queryFn: () => api.topEvents(projectId!, { from: range[0].valueOf(), to: range[1].valueOf(), limit: 100 }),
+  const allEvents = useQuery({
+    queryKey: ["custom_report_events", projectId],
+    queryFn: () => api.listEvents(projectId!),
     enabled: !!projectId,
   });
   const properties = useQuery({
@@ -254,6 +254,7 @@ export default function CustomReportsPage() {
   }, [range]);
 
   const rows = query.data?.data.rows || [];
+  const eventOptions = useMemo(() => allEvents.data?.data.map((item) => item.name) || [], [allEvents.data]);
   const cohortRows = cohortQuery.data?.data.rows || [];
   const reportTemplates = (reports.data?.data || []).filter((item) => (item.config as Partial<ReportConfig>).kind === "custom_report_v1");
   const shortcuts = reportTemplates.filter((item) => (item.config as Partial<ReportConfig>).shortcut);
@@ -284,9 +285,6 @@ export default function CustomReportsPage() {
 
   function patch(patchValue: Partial<ReportConfig>) {
     setConfig((current) => ({ ...current, ...patchValue }));
-  }
-  function toggleEvent(event: string) {
-    patch({ events: config.events.includes(event) ? config.events.filter((item) => item !== event) : [...config.events, event] });
   }
   function patchFormula(id: string, value: Partial<FormulaColumn>) {
     patch({ formulas: config.formulas.map((formula) => formula.id === id ? { ...formula, ...value } : formula) });
@@ -334,8 +332,8 @@ export default function CustomReportsPage() {
           <Card><CardContent className="grid gap-4 pt-5 sm:pt-5">
             <DateTimeRange value={range} onChange={setRange} stacked />
             <div className="grid gap-2"><span className="text-sm font-medium">分析方式</span><Select value={config.mode} onValueChange={(value) => changeMode(value as ReportMode)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="standard">普通事件分析</SelectItem><SelectItem value="cohort">新增用户 cohort</SelectItem></SelectContent></Select></div>
-            {isCohort ? <><CohortControls config={config.cohort} events={top.data?.data || []} onChange={patchCohort} /><div className="grid gap-2"><span className="text-sm font-medium">用户分群（可选）</span><Select value={config.segmentId ? String(config.segmentId) : "__all__"} onValueChange={(value) => patch({ segmentId: value === "__all__" ? 0 : Number(value) })}><SelectTrigger><SelectValue placeholder="全部用户" /></SelectTrigger><SelectContent><SelectItem value="__all__">全部用户</SelectItem>{(segments.data?.data || []).map((segment) => <SelectItem key={segment.id} value={String(segment.id)}>{segment.name}</SelectItem>)}</SelectContent></Select><p className="text-xs text-muted-foreground">只限制进入新增同期的用户。</p></div></> : <>
-              <div><div className="mb-2 text-sm font-medium">事件集合</div><div className="flex max-h-40 flex-wrap gap-2 overflow-y-auto rounded-md border p-2">{(top.data?.data || []).map((item) => <button key={item.event} type="button" onClick={() => toggleEvent(item.event)} className={`rounded-md border px-2 py-1 text-xs ${config.events.includes(item.event) ? "border-primary bg-primary text-primary-foreground" : "bg-background"}`}>{item.event}</button>)}</div></div>
+            {isCohort ? <><CohortControls config={config.cohort} events={eventOptions} onChange={patchCohort} /><div className="grid gap-2"><span className="text-sm font-medium">用户分群（可选）</span><Select value={config.segmentId ? String(config.segmentId) : "__all__"} onValueChange={(value) => patch({ segmentId: value === "__all__" ? 0 : Number(value) })}><SelectTrigger><SelectValue placeholder="全部用户" /></SelectTrigger><SelectContent><SelectItem value="__all__">全部用户</SelectItem>{(segments.data?.data || []).map((segment) => <SelectItem key={segment.id} value={String(segment.id)}>{segment.name}</SelectItem>)}</SelectContent></Select><p className="text-xs text-muted-foreground">只限制进入新增同期的用户。</p></div></> : <>
+              <div><div className="mb-2 text-sm font-medium">事件集合</div><EventCollectionPicker events={eventOptions} value={config.events} onChange={(events) => patch({ events })} /></div>
               <div className="grid gap-2"><span className="text-sm font-medium">用户分群（可选）</span><Select value={config.segmentId ? String(config.segmentId) : "__all__"} onValueChange={(value) => patch({ segmentId: value === "__all__" ? 0 : Number(value) })}><SelectTrigger><SelectValue placeholder="全部用户" /></SelectTrigger><SelectContent><SelectItem value="__all__">全部用户</SelectItem>{(segments.data?.data || []).map((segment) => <SelectItem key={segment.id} value={String(segment.id)}>{segment.name}</SelectItem>)}</SelectContent></Select><p className="text-xs text-muted-foreground">分群按已保存规则实时计算。</p></div>
               <div className="grid gap-2"><span className="text-sm font-medium">表头维度</span><Select value={config.dimension} onValueChange={(value) => patch({ dimension: value as DimensionKind })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="day">按天</SelectItem><SelectItem value="hour">按小时</SelectItem><SelectItem value="event">事件名</SelectItem><SelectItem value="property">事件参数</SelectItem></SelectContent></Select>{config.dimension === "property" ? <Select value={config.property} onValueChange={(value) => patch({ property: value })}><SelectTrigger><SelectValue placeholder="选择参数" /></SelectTrigger><SelectContent>{(properties.data?.data || []).map((item) => <SelectItem key={item.id} value={item.name}>{item.name}</SelectItem>)}</SelectContent></Select> : null}</div>
             </>}
@@ -354,8 +352,8 @@ export default function CustomReportsPage() {
   );
 }
 
-function CohortControls({ config, events, onChange }: { config: CohortConfig; events: { event: string }[]; onChange: (value: Partial<CohortConfig>) => void }) {
-  const eventNames = Array.from(new Set(["$AppStart", ...events.map((event) => event.event)]));
+function CohortControls({ config, events, onChange }: { config: CohortConfig; events: string[]; onChange: (value: Partial<CohortConfig>) => void }) {
+  const eventNames = Array.from(new Set(["$AppStart", ...events]));
   function toggleOffset(offset: number) {
     const offsets = config.offsets.includes(offset) ? config.offsets.filter((item) => item !== offset) : [...config.offsets, offset].sort((a, b) => a - b);
     if (offsets.length) onChange({ offsets });
