@@ -139,6 +139,7 @@ func newRouter(cfg *config.Config, pool *pgxpool.Pool, chConn driver.Conn) (*gin
 	authed := v1.Group("", handler.AuthRequired(pool))
 	auth.RegisterPrivate(authed)
 	(&handler.ProjectHandler{PG: pool}).Register(authed)
+	(&handler.DataQualityHandler{PG: pool, CH: chConn, PrometheusURL: cfg.PrometheusURL}).Register(authed)
 
 	projectScoped := authed.Group("", handler.ProjectAccessRequired(pool))
 	(&handler.EventDefHandler{PG: pool}).Register(projectScoped)

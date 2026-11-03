@@ -108,6 +108,27 @@ export interface SensorsIntegrationHealth {
     last_verified_at?: string;
     last_error: string;
 }
+
+export interface SensorsDataQualityProject {
+    project_id: number;
+    project_name: string;
+    source_project: string;
+    status: number;
+    last_error: string;
+    last_verified_at?: string;
+    last_event_at?: string;
+    events_last_5_minutes: number;
+    events_last_hour: number;
+    dlq_last_hour: number;
+}
+
+export interface SensorsQueueHealth {
+    available: boolean;
+    consumers_up: boolean;
+    kafka_lag: number;
+    dlq_last_hour: number;
+    error?: string;
+}
 export type ProjectStatus = 0 | 1 | 2 | 3;
 export interface AuthUser {
     id: number;
@@ -554,6 +575,7 @@ export const api = {
         req<ApiOne<SensorsIntegration>>(`/projects/${id}/integrations/sensorsdata`),
     getSensorsIntegrationHealth: (id: number | string) =>
         req<ApiOne<SensorsIntegrationHealth>>(`/projects/${id}/integrations/sensorsdata/health`),
+    getSensorsDataQuality: () => req<ApiOne<{ projects: SensorsDataQualityProject[]; queue: SensorsQueueHealth }>>("/data-quality/sensorsdata"),
     verifySensorsIntegration: (id: number | string) =>
         req<ApiOne<{ verified: boolean }>>(`/projects/${id}/integrations/sensorsdata/verify`, { method: "POST" }),
     connectSensorsIntegration: (

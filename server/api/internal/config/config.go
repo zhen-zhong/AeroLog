@@ -16,6 +16,7 @@ type Config struct {
 	DebugRetentionDays int
 	IntegrationKey     string
 	SensorsApplication string
+	PrometheusURL      string
 }
 
 type ClickHouseConf struct {
@@ -41,6 +42,7 @@ func FromEnv() *Config {
 		DebugRetentionDays: getEnvInt("AEROLOG_DEBUG_RETENTION_DAYS", 7),
 		IntegrationKey:     getEnv("AEROLOG_INTEGRATION_ENCRYPTION_KEY", ""),
 		SensorsApplication: getEnv("AEROLOG_SENSORS_APPLICATION_NAME", ""),
+		PrometheusURL:      strings.TrimRight(getEnv("AEROLOG_PROMETHEUS_URL", "http://prometheus:9090"), "/"),
 	}
 }
 
