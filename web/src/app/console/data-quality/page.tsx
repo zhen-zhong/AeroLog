@@ -72,9 +72,9 @@ function eventPair(row: SensorsReconciliationDay, event: string) {
 
 function ReconciliationTable({ data }: { data: SensorsReconciliation }) {
   return <div className="space-y-5 p-4 sm:p-5">
-    <p className="text-xs text-muted-foreground">对账区间：{data.from} 至 {data.to}。每格格式：神策 / AeroLog。</p>
+    <p className="text-xs text-muted-foreground">仅统计完整自然日；每个项目按自身时区计算。每格格式：神策 / AeroLog。</p>
     {data.projects.map((project) => <div key={project.project_id} className="overflow-hidden rounded-md border">
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-secondary/30 px-3 py-2"><div className="text-sm font-medium">{project.project_name} <span className="font-normal text-muted-foreground">· {project.source_project} · {project.timezone}</span></div>{project.error ? <Badge variant="danger">查询失败</Badge> : <Badge variant="success">已完成</Badge>}</div>
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-secondary/30 px-3 py-2"><div className="text-sm font-medium">{project.project_name} <span className="font-normal text-muted-foreground">· {project.source_project} · {project.timezone} · {project.from} 至 {project.to}</span></div>{project.error ? <Badge variant="danger">查询失败</Badge> : <Badge variant="success">已完成</Badge>}</div>
       {project.error ? <div className="p-3 text-sm text-destructive">{project.error}</div> : <div className="overflow-x-auto"><Table className="min-w-[1120px]"><TableHeader><TableRow><TableHead>日期</TableHead><TableHead>总事件</TableHead><TableHead>去重用户</TableHead>{data.events.map((event) => <TableHead key={event}>{event}</TableHead>)}</TableRow></TableHeader><TableBody>{project.rows.map((row) => <TableRow key={row.date}><TableCell className="font-mono text-xs">{row.date}</TableCell><TableCell>{pair(row.sensors_events, row.aerolog_events)}</TableCell><TableCell>{pair(row.sensors_users, row.aerolog_users)}</TableCell>{data.events.map((event) => <TableCell key={event}>{eventPair(row, event)}</TableCell>)}</TableRow>)}</TableBody></Table></div>}
     </div>)}
   </div>;

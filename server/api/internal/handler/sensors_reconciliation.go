@@ -24,6 +24,8 @@ type sensorsReconciliationProject struct {
 	ProjectName   string                     `json:"project_name"`
 	SourceProject string                     `json:"source_project"`
 	Timezone      string                     `json:"timezone"`
+	From          string                     `json:"from"`
+	To            string                     `json:"to"`
 	Error         string                     `json:"error,omitempty"`
 	Rows          []sensorsReconciliationDay `json:"rows"`
 }
@@ -73,14 +75,13 @@ func (h *DataQualityHandler) reconcileSensorsData(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"err": "读取神策接入配置失败"})
 		return
 	}
-	// Compare completed calendar days only. Today's subscription stream can still be in transit.
-	end := time.Now().In(time.Local).AddDate(0, 0, -1)
-	start := end.AddDate(0, 0, -(days - 1))
 	out := make([]sensorsReconciliationProject, 0, len(integrations))
 	for _, integration := range integrations {
+		start, end := reconciliationDateRange(integration.Timezone, days)
 		item := sensorsReconciliationProject{
 			ProjectID: integration.ProjectID, ProjectName: integration.ProjectName,
 			SourceProject: integration.SourceProject, Timezone: integration.Timezone,
+			From: start.Format("2006-01-02"), To: end.Format("2006-01-02"),
 		}
 		apiKey, err := decryptIntegrationSecret(h.EncryptionKey, integration.APIKeyCiphertext)
 		if err != nil {
@@ -106,9 +107,17 @@ func (h *DataQualityHandler) reconcileSensorsData(c *gin.Context) {
 		out = append(out, item)
 	}
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{
-		"from": start.Format("2006-01-02"), "to": end.Format("2006-01-02"),
 		"projects": out, "events": reconciliationEvents,
 	}})
+}
+
+func reconciliationDateRange(timezone string, days int) (time.Time, time.Time) {
+	location, err := time.LoadLocation(timezone)
+	if err != nil {
+		location = time.UTC
+	}
+	end := time.Now().In(location).AddDate(0, 0, -1)
+	return end.AddDate(0, 0, -(days - 1)), end
 }
 
 func (h *DataQualityHandler) visibleReconciliationIntegrations(c *gin.Context) ([]reconciliationIntegration, error) {

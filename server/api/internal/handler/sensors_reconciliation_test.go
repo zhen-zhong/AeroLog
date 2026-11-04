@@ -49,6 +49,13 @@ func TestMergeReconciliationDaysIncludesMissingDays(t *testing.T) {
 	}
 }
 
+func TestReconciliationDateRangeUsesProjectTimezone(t *testing.T) {
+	from, to := reconciliationDateRange("Asia/Shanghai", 3)
+	if from.Location().String() != "Asia/Shanghai" || to.Sub(from) < 47*time.Hour || to.Sub(from) > 49*time.Hour {
+		t.Fatalf("unexpected range: %s to %s", from, to)
+	}
+}
+
 func mustReconciliationDate(t *testing.T, value string) time.Time {
 	t.Helper()
 	date, err := time.Parse("2006-01-02", value)
