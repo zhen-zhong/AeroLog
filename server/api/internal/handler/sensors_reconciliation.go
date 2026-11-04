@@ -169,7 +169,7 @@ func (s *sensorsClient) dailySegmentation(ctx context.Context, from, to time.Tim
 	body := map[string]any{
 		"measures": measures, "from_date": from.Format("2006-01-02"), "to_date": to.Format("2006-01-02"),
 		"unit": "DAY", "by_fields": []string{}, "filter": map[string]any{}, "use_cache": false,
-		"sampling_factor": 64, "rollup": false,
+		"approx": false, "sampling_factor": 64, "rollup": false,
 	}
 	raw, err := s.postAnalytics(ctx, body)
 	if err != nil {
