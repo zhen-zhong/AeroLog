@@ -43,9 +43,24 @@ func TestMergeReconciliationDaysIncludesMissingDays(t *testing.T) {
 	rows := mergeReconciliationDays(from, to,
 		map[string]sensorsReconciliationDay{"2026-11-01": {SensorsEvents: 2}},
 		map[string]sensorsReconciliationDay{"2026-11-03": {AeroLogEvents: 3}},
+		nil,
+		"UTC",
 	)
-	if len(rows) != 3 || rows[1].Date != "2026-11-02" || rows[2].AeroLogEvents != 3 {
+	if len(rows) != 3 || rows[1].Date != "2026-11-02" || rows[2].AeroLogEvents != 3 || rows[0].CoverageStatus != "pending" {
 		t.Fatalf("unexpected rows: %#v", rows)
+	}
+}
+
+func TestReconciliationCoverageStatusUsesProjectTimezone(t *testing.T) {
+	startedAt := time.Date(2026, 11, 3, 0, 30, 0, 0, time.UTC)
+	if got := reconciliationCoverageStatus("2026-11-02", &startedAt, "Asia/Shanghai"); got != "not_covered" {
+		t.Fatalf("expected not_covered, got %q", got)
+	}
+	if got := reconciliationCoverageStatus("2026-11-03", &startedAt, "Asia/Shanghai"); got != "partial" {
+		t.Fatalf("expected partial, got %q", got)
+	}
+	if got := reconciliationCoverageStatus("2026-11-04", &startedAt, "Asia/Shanghai"); got != "covered" {
+		t.Fatalf("expected covered, got %q", got)
 	}
 }
 

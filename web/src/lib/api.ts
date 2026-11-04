@@ -138,6 +138,7 @@ export interface SensorsReconciliationDay {
     aerolog_distinct_ids: number;
     sensors_by_event: Record<string, number>;
     aerolog_by_event: Record<string, number>;
+    coverage_status: "covered" | "partial" | "not_covered" | "pending";
 }
 export interface SensorsReconciliationProject {
     project_id: number;
@@ -147,6 +148,8 @@ export interface SensorsReconciliationProject {
     events: string[];
     from: string;
     to: string;
+    integration_configured_at: string;
+    coverage_started_at?: string;
     error?: string;
     rows: SensorsReconciliationDay[];
 }

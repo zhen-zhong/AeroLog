@@ -16,6 +16,10 @@ function formatTime(value?: string) {
   return value ? dayjs(value).format("YYYY-MM-DD HH:mm:ss") : "暂无事件";
 }
 
+function formatProjectTime(value: string, timezone: string) {
+  return new Intl.DateTimeFormat("zh-CN", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" }).format(new Date(value));
+}
+
 function projectState(project: SensorsDataQualityProject) {
   if (project.last_error) return { label: "连接异常", variant: "danger" as const };
   if (!project.last_event_at) return { label: "等待数据", variant: "warning" as const };
@@ -61,21 +65,30 @@ export default function DataQualityPage() {
   </div>;
 }
 
-function pair(sensors: number, aerolog: number) {
+function coverageMeta(status: SensorsReconciliationDay["coverage_status"]) {
+  if (status === "not_covered") return { label: "未覆盖", variant: "secondary" as const, detail: "早于首条实时数据入库时间，不计为对账异常" };
+  if (status === "partial") return { label: "部分覆盖", variant: "warning" as const, detail: "首条实时数据在当日到达，当日数据不完整" };
+  if (status === "pending") return { label: "等待数据", variant: "secondary" as const, detail: "尚未收到神策实时事件，无法确认数据覆盖范围" };
+  return { label: "完整覆盖", variant: "success" as const, detail: "该日期在首条实时数据入库后" };
+}
+
+function pair(sensors: number, aerolog: number, coverage: SensorsReconciliationDay["coverage_status"]) {
   const delta = aerolog - sensors;
-  return <div className="leading-5"><div>{sensors.toLocaleString()} <span className="text-muted-foreground">/</span> {aerolog.toLocaleString()}</div><div className={delta === 0 ? "text-xs text-emerald-600" : "text-xs text-amber-600"}>差值 {delta > 0 ? "+" : ""}{delta.toLocaleString()}</div></div>;
+  const status = coverageMeta(coverage);
+  if (coverage === "not_covered" || coverage === "pending") return <div className="leading-5"><div>{sensors.toLocaleString()} <span className="text-muted-foreground">/</span> {aerolog.toLocaleString()}</div><div className="text-xs text-muted-foreground" title={status.detail}>{status.label}，不判定差异</div></div>;
+  return <div className="leading-5"><div>{sensors.toLocaleString()} <span className="text-muted-foreground">/</span> {aerolog.toLocaleString()}</div><div className={delta === 0 ? "text-xs text-emerald-600" : "text-xs text-amber-600"}>{coverage === "partial" ? "部分覆盖，" : ""}差值 {delta > 0 ? "+" : ""}{delta.toLocaleString()}</div></div>;
 }
 
 function eventPair(row: SensorsReconciliationDay, event: string) {
-  return pair(row.sensors_by_event?.[event] || 0, row.aerolog_by_event?.[event] || 0);
+  return pair(row.sensors_by_event?.[event] || 0, row.aerolog_by_event?.[event] || 0, row.coverage_status);
 }
 
 function ReconciliationTable({ data }: { data: SensorsReconciliation }) {
   return <div className="space-y-5 p-4 sm:p-5">
-    <p className="text-xs text-muted-foreground">仅统计完整自然日；每个项目按自身时区计算。总事件默认排除身份绑定事件 <code>$SignUp</code>；事件明细仍保留。</p>
+    <p className="text-xs text-muted-foreground">仅统计完整自然日；每个项目按自身时区计算。总事件默认排除身份绑定事件 <code>$SignUp</code>；事件明细仍保留。首条实时事件到达前为未覆盖，首条到达当日为部分覆盖，不计为对账异常。</p>
     {data.projects.map((project) => <div key={project.project_id} className="overflow-hidden rounded-md border">
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-secondary/30 px-3 py-2"><div className="text-sm font-medium">{project.project_name} <span className="font-normal text-muted-foreground">· {project.source_project} · {project.timezone} · {project.from} 至 {project.to}</span></div>{project.error ? <Badge variant="danger">查询失败</Badge> : <Badge variant="success">已完成</Badge>}</div>
-      {project.error ? <div className="p-3 text-sm text-destructive">{project.error}</div> : <div className="overflow-x-auto"><Table className="min-w-[1040px]"><TableHeader><TableRow><TableHead>日期</TableHead><TableHead>总事件<br /><span className="font-normal text-muted-foreground">神策 / AeroLog</span></TableHead><TableHead>神策合并用户</TableHead><TableHead>AeroLog 原始 Distinct ID</TableHead><TableHead>$SignUp<br /><span className="font-normal text-muted-foreground">身份绑定事件</span></TableHead>{project.events.map((event) => <TableHead key={event}>{event}</TableHead>)}</TableRow></TableHeader><TableBody>{project.rows.map((row) => <TableRow key={row.date}><TableCell className="font-mono text-xs">{row.date}</TableCell><TableCell>{pair(row.sensors_events, row.aerolog_events)}</TableCell><TableCell className="font-mono">{row.sensors_merged_users.toLocaleString()}</TableCell><TableCell className="font-mono">{row.aerolog_distinct_ids.toLocaleString()}</TableCell><TableCell className="font-mono">{row.identity_events.toLocaleString()}</TableCell>{project.events.map((event) => <TableCell key={event}>{eventPair(row, event)}</TableCell>)}</TableRow>)}</TableBody></Table></div>}
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-secondary/30 px-3 py-2"><div><div className="text-sm font-medium">{project.project_name} <span className="font-normal text-muted-foreground">· {project.source_project} · {project.timezone} · {project.from} 至 {project.to}</span></div><p className="mt-0.5 text-xs text-muted-foreground">数据覆盖起点：{project.coverage_started_at ? `${formatProjectTime(project.coverage_started_at, project.timezone)}（首条实时事件入库）` : `尚未收到实时事件；接入配置于 ${formatProjectTime(project.integration_configured_at, project.timezone)}`}</p></div>{project.error ? <Badge variant="danger">查询失败</Badge> : <Badge variant="success">已完成</Badge>}</div>
+      {project.error ? <div className="p-3 text-sm text-destructive">{project.error}</div> : <div className="overflow-x-auto"><Table className="min-w-[1140px]"><TableHeader><TableRow><TableHead>日期</TableHead><TableHead>覆盖状态</TableHead><TableHead>总事件<br /><span className="font-normal text-muted-foreground">神策 / AeroLog</span></TableHead><TableHead>神策合并用户</TableHead><TableHead>AeroLog 原始 Distinct ID</TableHead><TableHead>$SignUp<br /><span className="font-normal text-muted-foreground">身份绑定事件</span></TableHead>{project.events.map((event) => <TableHead key={event}>{event}</TableHead>)}</TableRow></TableHeader><TableBody>{project.rows.map((row) => { const coverage = coverageMeta(row.coverage_status); return <TableRow key={row.date}><TableCell className="font-mono text-xs">{row.date}</TableCell><TableCell><Badge variant={coverage.variant} title={coverage.detail}>{coverage.label}</Badge></TableCell><TableCell>{pair(row.sensors_events, row.aerolog_events, row.coverage_status)}</TableCell><TableCell className="font-mono">{row.sensors_merged_users.toLocaleString()}</TableCell><TableCell className="font-mono">{row.aerolog_distinct_ids.toLocaleString()}</TableCell><TableCell className="font-mono">{row.identity_events.toLocaleString()}</TableCell>{project.events.map((event) => <TableCell key={event}>{eventPair(row, event)}</TableCell>)}</TableRow>; })}</TableBody></Table></div>}
     </div>)}
   </div>;
 }

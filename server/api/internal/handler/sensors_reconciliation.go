@@ -20,15 +20,17 @@ const sensorsAnalyticsPath = "/api/v3/analytics/v1/model/segmentation/report"
 var reconciliationEvents = []string{"$AppStart", "ad_show", "ad_complete", "coin_earned"}
 
 type sensorsReconciliationProject struct {
-	ProjectID     int64                      `json:"project_id"`
-	ProjectName   string                     `json:"project_name"`
-	SourceProject string                     `json:"source_project"`
-	Timezone      string                     `json:"timezone"`
-	Events        []string                   `json:"events"`
-	From          string                     `json:"from"`
-	To            string                     `json:"to"`
-	Error         string                     `json:"error,omitempty"`
-	Rows          []sensorsReconciliationDay `json:"rows"`
+	ProjectID               int64                      `json:"project_id"`
+	ProjectName             string                     `json:"project_name"`
+	SourceProject           string                     `json:"source_project"`
+	Timezone                string                     `json:"timezone"`
+	Events                  []string                   `json:"events"`
+	From                    string                     `json:"from"`
+	To                      string                     `json:"to"`
+	IntegrationConfiguredAt time.Time                  `json:"integration_configured_at"`
+	CoverageStartedAt       *time.Time                 `json:"coverage_started_at,omitempty"`
+	Error                   string                     `json:"error,omitempty"`
+	Rows                    []sensorsReconciliationDay `json:"rows"`
 }
 
 type sensorsReconciliationDay struct {
@@ -40,6 +42,7 @@ type sensorsReconciliationDay struct {
 	AeroLogDistinctIDs uint64            `json:"aerolog_distinct_ids"`
 	SensorsByEvent     map[string]uint64 `json:"sensors_by_event"`
 	AeroLogByEvent     map[string]uint64 `json:"aerolog_by_event"`
+	CoverageStatus     string            `json:"coverage_status"`
 }
 
 type reconciliationIntegration struct {
@@ -49,6 +52,7 @@ type reconciliationIntegration struct {
 	Endpoint         string
 	APIKeyCiphertext string
 	Timezone         string
+	ConfiguredAt     time.Time
 }
 
 type sensorsSegmentationMeasure struct {
@@ -84,7 +88,15 @@ func (h *DataQualityHandler) reconcileSensorsData(c *gin.Context) {
 			ProjectID: integration.ProjectID, ProjectName: integration.ProjectName,
 			SourceProject: integration.SourceProject, Timezone: integration.Timezone,
 			From: start.Format("2006-01-02"), To: end.Format("2006-01-02"),
+			IntegrationConfiguredAt: integration.ConfiguredAt,
 		}
+		coverageStartedAt, err := h.reconciliationCoverageStartedAt(c.Request.Context(), integration.ProjectID)
+		if err != nil {
+			item.Error = "AeroLog 数据覆盖起点读取失败"
+			out = append(out, item)
+			continue
+		}
+		item.CoverageStartedAt = coverageStartedAt
 		events, err := h.availableReconciliationEvents(c.Request.Context(), integration.ProjectID)
 		if err != nil {
 			item.Error = "AeroLog 事件清单读取失败"
@@ -112,7 +124,7 @@ func (h *DataQualityHandler) reconcileSensorsData(c *gin.Context) {
 			out = append(out, item)
 			continue
 		}
-		item.Rows = mergeReconciliationDays(start, end, sensorsRows, aeroRows)
+		item.Rows = mergeReconciliationDays(start, end, sensorsRows, aeroRows, coverageStartedAt, integration.Timezone)
 		out = append(out, item)
 	}
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{
@@ -132,7 +144,7 @@ func reconciliationDateRange(timezone string, days int) (time.Time, time.Time) {
 func (h *DataQualityHandler) visibleReconciliationIntegrations(c *gin.Context) ([]reconciliationIntegration, error) {
 	query := `
 		SELECT p.id, p.name, si.source_project, si.endpoint, si.api_key_ciphertext,
-		       COALESCE(p.timezone,'Asia/Shanghai')
+		       COALESCE(p.timezone,'Asia/Shanghai'), si.created_at
 		FROM projects p JOIN sensors_integrations si ON si.project_id=p.id
 		WHERE si.status=1`
 	args := []any{}
@@ -154,7 +166,7 @@ func (h *DataQualityHandler) visibleReconciliationIntegrations(c *gin.Context) (
 	out := []reconciliationIntegration{}
 	for rows.Next() {
 		var item reconciliationIntegration
-		if err := rows.Scan(&item.ProjectID, &item.ProjectName, &item.SourceProject, &item.Endpoint, &item.APIKeyCiphertext, &item.Timezone); err != nil {
+		if err := rows.Scan(&item.ProjectID, &item.ProjectName, &item.SourceProject, &item.Endpoint, &item.APIKeyCiphertext, &item.Timezone, &item.ConfiguredAt); err != nil {
 			return nil, err
 		}
 		if timezone, ok := normalizeProjectTimezone(item.Timezone); ok {
@@ -165,6 +177,24 @@ func (h *DataQualityHandler) visibleReconciliationIntegrations(c *gin.Context) (
 		out = append(out, item)
 	}
 	return out, rows.Err()
+}
+
+// reconciliationCoverageStartedAt returns first successfully received real-time
+// event. Dates before it must not be treated as ingestion discrepancies.
+func (h *DataQualityHandler) reconciliationCoverageStartedAt(ctx context.Context, projectID int64) (*time.Time, error) {
+	if h.CH == nil {
+		return nil, errors.New("ClickHouse 不可用")
+	}
+	var startedAt *time.Time
+	err := h.CH.QueryRow(ctx, `
+		SELECT minOrNull(received_at)
+		FROM events
+		WHERE project_id=? AND JSONExtractString(properties, '$aerolog_source')='sensorsdata'
+	`, uint32(projectID)).Scan(&startedAt)
+	if err != nil {
+		return nil, err
+	}
+	return startedAt, nil
 }
 
 func (s *sensorsClient) dailySegmentation(ctx context.Context, from, to time.Time, events []string) (map[string]sensorsReconciliationDay, error) {
@@ -318,15 +348,34 @@ func (h *DataQualityHandler) aeroLogDailyReconciliation(ctx context.Context, pro
 	return out, rows.Err()
 }
 
-func mergeReconciliationDays(from, to time.Time, sensors, aerolog map[string]sensorsReconciliationDay) []sensorsReconciliationDay {
+func mergeReconciliationDays(from, to time.Time, sensors, aerolog map[string]sensorsReconciliationDay, coverageStartedAt *time.Time, timezone string) []sensorsReconciliationDay {
 	out := make([]sensorsReconciliationDay, 0)
 	for day := from; !day.After(to); day = day.AddDate(0, 0, 1) {
 		key := day.Format("2006-01-02")
 		s := sensors[key]
 		a := aerolog[key]
-		out = append(out, sensorsReconciliationDay{Date: key, SensorsEvents: s.SensorsEvents, AeroLogEvents: a.AeroLogEvents, IdentityEvents: a.IdentityEvents, SensorsMergedUsers: s.SensorsMergedUsers, AeroLogDistinctIDs: a.AeroLogDistinctIDs, SensorsByEvent: s.SensorsByEvent, AeroLogByEvent: a.AeroLogByEvent})
+		out = append(out, sensorsReconciliationDay{Date: key, SensorsEvents: s.SensorsEvents, AeroLogEvents: a.AeroLogEvents, IdentityEvents: a.IdentityEvents, SensorsMergedUsers: s.SensorsMergedUsers, AeroLogDistinctIDs: a.AeroLogDistinctIDs, SensorsByEvent: s.SensorsByEvent, AeroLogByEvent: a.AeroLogByEvent, CoverageStatus: reconciliationCoverageStatus(key, coverageStartedAt, timezone)})
 	}
 	return out
+}
+
+func reconciliationCoverageStatus(day string, coverageStartedAt *time.Time, timezone string) string {
+	if coverageStartedAt == nil {
+		return "pending"
+	}
+	location, err := time.LoadLocation(timezone)
+	if err != nil {
+		location = time.UTC
+	}
+	started := coverageStartedAt.In(location)
+	startedDay := started.Format("2006-01-02")
+	if day < startedDay {
+		return "not_covered"
+	}
+	if day == startedDay && (started.Hour() != 0 || started.Minute() != 0 || started.Second() != 0 || started.Nanosecond() != 0) {
+		return "partial"
+	}
+	return "covered"
 }
 
 func reconciliationMetricName(event string) string {
