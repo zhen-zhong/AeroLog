@@ -23,6 +23,20 @@ func TestDecodeSegmentationDays(t *testing.T) {
 	}
 }
 
+func TestDecodeSegmentationDetailRows(t *testing.T) {
+	rows, err := decodeSegmentationDays([]byte(`{
+		"metadata_columns":{"date":"DATE","all_events":"DOUBLE","all_users":"DOUBLE","event_ad_show":"DOUBLE"},
+		"detail_rows":[["2026-11-01 00:00:00","12","5","7"]]
+	}`))
+	if err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	row := rows["2026-11-01"]
+	if row.SensorsEvents != 12 || row.SensorsUsers != 5 || row.SensorsByEvent["ad_show"] != 7 {
+		t.Fatalf("unexpected row: %#v", row)
+	}
+}
+
 func TestMergeReconciliationDaysIncludesMissingDays(t *testing.T) {
 	from := mustReconciliationDate(t, "2026-11-01")
 	to := mustReconciliationDate(t, "2026-11-03")

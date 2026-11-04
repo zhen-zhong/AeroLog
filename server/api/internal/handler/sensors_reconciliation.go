@@ -277,6 +277,9 @@ func reconciliationMetricName(event string) string {
 }
 
 func decodeSegmentationDays(raw json.RawMessage) (map[string]sensorsReconciliationDay, error) {
+	if rows := decodeSegmentationDetailRows(raw); len(rows) > 0 {
+		return rows, nil
+	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.UseNumber()
 	var value any
@@ -289,6 +292,104 @@ func decodeSegmentationDays(raw json.RawMessage) (map[string]sensorsReconciliati
 		return nil, errors.New("响应未包含按日统计结果")
 	}
 	return rows, nil
+}
+
+// Sensor Analytics returns metadata_columns and detail_rows. detail_rows is an
+// ordered value array, so retain the metadata object's JSON key order instead
+// of decoding it into a Go map.
+func decodeSegmentationDetailRows(raw json.RawMessage) map[string]sensorsReconciliationDay {
+	var payload struct {
+		MetadataColumns json.RawMessage `json:"metadata_columns"`
+		DetailRows      json.RawMessage `json:"detail_rows"`
+	}
+	if json.Unmarshal(raw, &payload) != nil || len(payload.MetadataColumns) == 0 || len(payload.DetailRows) == 0 {
+		return nil
+	}
+	columns := orderedMetadataColumns(payload.MetadataColumns)
+	if len(columns) == 0 {
+		return nil
+	}
+	var rows []json.RawMessage
+	if json.Unmarshal(payload.DetailRows, &rows) != nil {
+		return nil
+	}
+	out := map[string]sensorsReconciliationDay{}
+	for _, rawRow := range rows {
+		var object map[string]any
+		if json.Unmarshal(rawRow, &object) == nil {
+			if day := segmentationDate(object); day != "" {
+				if row, ok := segmentationRow(day, object); ok {
+					out[day] = row
+				}
+			}
+			continue
+		}
+		decoder := json.NewDecoder(bytes.NewReader(rawRow))
+		decoder.UseNumber()
+		var values []any
+		if decoder.Decode(&values) != nil {
+			continue
+		}
+		object = make(map[string]any, len(columns))
+		for index, column := range columns {
+			if index < len(values) {
+				object[column] = values[index]
+			}
+		}
+		if day := segmentationDate(object); day != "" {
+			if row, ok := segmentationRow(day, object); ok {
+				out[day] = row
+			}
+		}
+	}
+	return out
+}
+
+func orderedMetadataColumns(raw json.RawMessage) []string {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	token, err := decoder.Token()
+	if err != nil {
+		return nil
+	}
+	switch token {
+	case json.Delim('{'):
+		out := []string{}
+		for decoder.More() {
+			key, err := decoder.Token()
+			if err != nil {
+				return nil
+			}
+			name, ok := key.(string)
+			if !ok {
+				return nil
+			}
+			var discard json.RawMessage
+			if decoder.Decode(&discard) != nil {
+				return nil
+			}
+			out = append(out, name)
+		}
+		return out
+	case json.Delim('['):
+		var values []any
+		if err := json.Unmarshal(raw, &values); err != nil {
+			return nil
+		}
+		out := []string{}
+		for _, value := range values {
+			switch item := value.(type) {
+			case string:
+				out = append(out, item)
+			case map[string]any:
+				if name, ok := item["name"].(string); ok {
+					out = append(out, name)
+				}
+			}
+		}
+		return out
+	default:
+		return nil
+	}
 }
 
 func collectSegmentationRows(value any, out map[string]sensorsReconciliationDay) {
