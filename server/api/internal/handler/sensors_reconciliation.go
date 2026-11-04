@@ -24,6 +24,7 @@ type sensorsReconciliationProject struct {
 	ProjectName   string                     `json:"project_name"`
 	SourceProject string                     `json:"source_project"`
 	Timezone      string                     `json:"timezone"`
+	Events        []string                   `json:"events"`
 	From          string                     `json:"from"`
 	To            string                     `json:"to"`
 	Error         string                     `json:"error,omitempty"`
@@ -84,6 +85,13 @@ func (h *DataQualityHandler) reconcileSensorsData(c *gin.Context) {
 			SourceProject: integration.SourceProject, Timezone: integration.Timezone,
 			From: start.Format("2006-01-02"), To: end.Format("2006-01-02"),
 		}
+		events, err := h.availableReconciliationEvents(c.Request.Context(), integration.ProjectID)
+		if err != nil {
+			item.Error = "AeroLog 事件清单读取失败"
+			out = append(out, item)
+			continue
+		}
+		item.Events = events
 		apiKey, err := decryptIntegrationSecret(h.EncryptionKey, integration.APIKeyCiphertext)
 		if err != nil {
 			item.Error = "无法读取已保存的神策 API Key"
@@ -91,14 +99,14 @@ func (h *DataQualityHandler) reconcileSensorsData(c *gin.Context) {
 			continue
 		}
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
-		sensorsRows, err := newSensorsClient(integration.Endpoint, integration.SourceProject, apiKey, h.HTTPClient).dailySegmentation(ctx, start, end)
+		sensorsRows, err := newSensorsClient(integration.Endpoint, integration.SourceProject, apiKey, h.HTTPClient).dailySegmentation(ctx, start, end, events)
 		cancel()
 		if err != nil {
 			item.Error = "神策查询失败：" + safeSensorsError(err)
 			out = append(out, item)
 			continue
 		}
-		aeroRows, err := h.aeroLogDailyReconciliation(c.Request.Context(), integration.ProjectID, integration.Timezone, start, end)
+		aeroRows, err := h.aeroLogDailyReconciliation(c.Request.Context(), integration.ProjectID, integration.Timezone, start, end, events)
 		if err != nil {
 			item.Error = "AeroLog 查询失败"
 			out = append(out, item)
@@ -108,7 +116,7 @@ func (h *DataQualityHandler) reconcileSensorsData(c *gin.Context) {
 		out = append(out, item)
 	}
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{
-		"projects": out, "events": reconciliationEvents,
+		"projects": out,
 	}})
 }
 
@@ -159,12 +167,12 @@ func (h *DataQualityHandler) visibleReconciliationIntegrations(c *gin.Context) (
 	return out, rows.Err()
 }
 
-func (s *sensorsClient) dailySegmentation(ctx context.Context, from, to time.Time) (map[string]sensorsReconciliationDay, error) {
+func (s *sensorsClient) dailySegmentation(ctx context.Context, from, to time.Time, events []string) (map[string]sensorsReconciliationDay, error) {
 	measures := []sensorsSegmentationMeasure{
 		{EventName: "$Anything", Aggregator: "general", Name: "all_events", Filter: map[string]any{}},
 		{EventName: "$Anything", Aggregator: "unique", Name: "all_users", Filter: map[string]any{}},
 	}
-	for _, event := range reconciliationEvents {
+	for _, event := range events {
 		measures = append(measures, sensorsSegmentationMeasure{EventName: event, Aggregator: "general", Name: reconciliationMetricName(event), Filter: map[string]any{}})
 	}
 	body := map[string]any{
@@ -228,21 +236,59 @@ func (s *sensorsClient) postAnalytics(ctx context.Context, body any) (json.RawMe
 	return envelope.Data, nil
 }
 
-func (h *DataQualityHandler) aeroLogDailyReconciliation(ctx context.Context, projectID int64, timezone string, from, to time.Time) (map[string]sensorsReconciliationDay, error) {
+func (h *DataQualityHandler) availableReconciliationEvents(ctx context.Context, projectID int64) ([]string, error) {
+	holders := make([]string, len(reconciliationEvents))
+	args := make([]any, 0, len(reconciliationEvents)+1)
+	args = append(args, uint32(projectID))
+	for index, event := range reconciliationEvents {
+		holders[index] = "?"
+		args = append(args, event)
+	}
+	rows, err := h.CH.Query(ctx, `SELECT DISTINCT event FROM events
+		WHERE project_id=? AND JSONExtractString(properties, '$aerolog_source')='sensorsdata'
+		  AND event IN (`+strings.Join(holders, ",")+`)`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	present := map[string]bool{}
+	for rows.Next() {
+		var event string
+		if err := rows.Scan(&event); err != nil {
+			return nil, err
+		}
+		present[event] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(reconciliationEvents))
+	for _, event := range reconciliationEvents {
+		if present[event] {
+			out = append(out, event)
+		}
+	}
+	return out, nil
+}
+
+func (h *DataQualityHandler) aeroLogDailyReconciliation(ctx context.Context, projectID int64, timezone string, from, to time.Time, events []string) (map[string]sensorsReconciliationDay, error) {
 	if h.CH == nil {
 		return nil, errors.New("ClickHouse 不可用")
 	}
-	eventExpr := make([]string, 0, len(reconciliationEvents))
+	eventExpr := make([]string, 0, len(events))
 	args := []any{"$SignUp", "$SignUp"}
-	for _, event := range reconciliationEvents {
+	for _, event := range events {
 		eventExpr = append(eventExpr, "countIf(event = ?) AS `"+reconciliationMetricName(event)+"`")
 		args = append(args, event)
 	}
 	args = append(args, uint32(projectID), from.Format("2006-01-02"), to.Format("2006-01-02"))
+	metrics := []string{
+		"countIf(event != ?) AS events", "countIf(event = ?) AS identity_events", "uniqExact(distinct_id) AS distinct_ids",
+	}
+	metrics = append(metrics, eventExpr...)
 	rows, err := h.CH.Query(ctx, `
 		SELECT toString(toDate(time, `+clickHouseTimezone(timezone)+`)) AS day,
-		       countIf(event != ?) AS events, countIf(event = ?) AS identity_events,
-		       uniqExact(distinct_id) AS distinct_ids, `+strings.Join(eventExpr, ",")+`
+		       `+strings.Join(metrics, ",")+`
 		FROM events
 		WHERE project_id=? AND JSONExtractString(properties, '$aerolog_source')='sensorsdata'
 		  AND toDate(time, `+clickHouseTimezone(timezone)+`) BETWEEN toDate(?) AND toDate(?)
@@ -254,9 +300,9 @@ func (h *DataQualityHandler) aeroLogDailyReconciliation(ctx context.Context, pro
 	out := map[string]sensorsReconciliationDay{}
 	for rows.Next() {
 		var day string
-		var events, identityEvents, distinctIDs uint64
-		values := make([]uint64, len(reconciliationEvents))
-		dest := []any{&day, &events, &identityEvents, &distinctIDs}
+		var eventCount, identityEvents, distinctIDs uint64
+		values := make([]uint64, len(events))
+		dest := []any{&day, &eventCount, &identityEvents, &distinctIDs}
 		for i := range values {
 			dest = append(dest, &values[i])
 		}
@@ -264,10 +310,10 @@ func (h *DataQualityHandler) aeroLogDailyReconciliation(ctx context.Context, pro
 			return nil, err
 		}
 		byEvent := map[string]uint64{}
-		for i, event := range reconciliationEvents {
+		for i, event := range events {
 			byEvent[event] = values[i]
 		}
-		out[day] = sensorsReconciliationDay{Date: day, AeroLogEvents: events, IdentityEvents: identityEvents, AeroLogDistinctIDs: distinctIDs, AeroLogByEvent: byEvent}
+		out[day] = sensorsReconciliationDay{Date: day, AeroLogEvents: eventCount, IdentityEvents: identityEvents, AeroLogDistinctIDs: distinctIDs, AeroLogByEvent: byEvent}
 	}
 	return out, rows.Err()
 }

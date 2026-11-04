@@ -144,13 +144,13 @@ export interface SensorsReconciliationProject {
     project_name: string;
     source_project: string;
     timezone: "Asia/Shanghai" | "UTC";
+    events: string[];
     from: string;
     to: string;
     error?: string;
     rows: SensorsReconciliationDay[];
 }
 export interface SensorsReconciliation {
-    events: string[];
     projects: SensorsReconciliationProject[];
 }
 export type ProjectStatus = 0 | 1 | 2 | 3;
