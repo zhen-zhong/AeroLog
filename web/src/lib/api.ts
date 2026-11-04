@@ -129,6 +129,29 @@ export interface SensorsQueueHealth {
     dlq_last_hour: number;
     error?: string;
 }
+export interface SensorsReconciliationDay {
+    date: string;
+    sensors_events: number;
+    aerolog_events: number;
+    sensors_users: number;
+    aerolog_users: number;
+    sensors_by_event: Record<string, number>;
+    aerolog_by_event: Record<string, number>;
+}
+export interface SensorsReconciliationProject {
+    project_id: number;
+    project_name: string;
+    source_project: string;
+    timezone: "Asia/Shanghai" | "UTC";
+    error?: string;
+    rows: SensorsReconciliationDay[];
+}
+export interface SensorsReconciliation {
+    from: string;
+    to: string;
+    events: string[];
+    projects: SensorsReconciliationProject[];
+}
 export type ProjectStatus = 0 | 1 | 2 | 3;
 export interface AuthUser {
     id: number;
@@ -588,6 +611,7 @@ export const api = {
     getSensorsIntegrationHealth: (id: number | string) =>
         req<ApiOne<SensorsIntegrationHealth>>(`/projects/${id}/integrations/sensorsdata/health`),
     getSensorsDataQuality: () => req<ApiOne<{ projects: SensorsDataQualityProject[]; queue: SensorsQueueHealth }>>("/data-quality/sensorsdata"),
+    reconcileSensorsData: (days: number) => req<ApiOne<SensorsReconciliation>>(`/data-quality/sensorsdata/reconcile?days=${days}`, { method: "POST" }),
     verifySensorsIntegration: (id: number | string) =>
         req<ApiOne<{ verified: boolean }>>(`/projects/${id}/integrations/sensorsdata/verify`, { method: "POST" }),
     connectSensorsIntegration: (

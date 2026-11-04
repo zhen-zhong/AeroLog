@@ -20,6 +20,7 @@ type DataQualityHandler struct {
 	PG            *pgxpool.Pool
 	CH            driver.Conn
 	PrometheusURL string
+	EncryptionKey string
 	HTTPClient    *http.Client
 }
 
@@ -46,6 +47,7 @@ type sensorsQueueHealth struct {
 
 func (h *DataQualityHandler) Register(r *gin.RouterGroup) {
 	r.GET("/data-quality/sensorsdata", h.sensorsDataQuality)
+	r.POST("/data-quality/sensorsdata/reconcile", h.reconcileSensorsData)
 }
 
 func (h *DataQualityHandler) sensorsDataQuality(c *gin.Context) {

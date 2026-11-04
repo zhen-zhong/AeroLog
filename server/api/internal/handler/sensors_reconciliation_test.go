@@ -1,0 +1,45 @@
+package handler
+
+import (
+	"testing"
+	"time"
+)
+
+func TestDecodeSegmentationDays(t *testing.T) {
+	rows, err := decodeSegmentationDays([]byte(`{
+		"rows":[
+			{"date":"2026-11-01","all_events":12,"all_users":"5","event_ad_show":7},
+			{"by_value":"2026-11-02 00:00:00","all_events":"9","all_users":4,"event_meta_AppStart":3}
+		]
+	}`))
+	if err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if rows["2026-11-01"].SensorsEvents != 12 || rows["2026-11-01"].SensorsUsers != 5 || rows["2026-11-01"].SensorsByEvent["ad_show"] != 7 {
+		t.Fatalf("unexpected first row: %#v", rows["2026-11-01"])
+	}
+	if rows["2026-11-02"].SensorsByEvent["$AppStart"] != 3 {
+		t.Fatalf("unexpected second row: %#v", rows["2026-11-02"])
+	}
+}
+
+func TestMergeReconciliationDaysIncludesMissingDays(t *testing.T) {
+	from := mustReconciliationDate(t, "2026-11-01")
+	to := mustReconciliationDate(t, "2026-11-03")
+	rows := mergeReconciliationDays(from, to,
+		map[string]sensorsReconciliationDay{"2026-11-01": {SensorsEvents: 2}},
+		map[string]sensorsReconciliationDay{"2026-11-03": {AeroLogEvents: 3}},
+	)
+	if len(rows) != 3 || rows[1].Date != "2026-11-02" || rows[2].AeroLogEvents != 3 {
+		t.Fatalf("unexpected rows: %#v", rows)
+	}
+}
+
+func mustReconciliationDate(t *testing.T, value string) time.Time {
+	t.Helper()
+	date, err := time.Parse("2006-01-02", value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return date
+}
