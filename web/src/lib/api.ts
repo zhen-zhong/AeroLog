@@ -133,8 +133,9 @@ export interface SensorsReconciliationDay {
     date: string;
     sensors_events: number;
     aerolog_events: number;
-    sensors_users: number;
-    aerolog_users: number;
+    identity_events: number;
+    sensors_merged_users: number;
+    aerolog_distinct_ids: number;
     sensors_by_event: Record<string, number>;
     aerolog_by_event: Record<string, number>;
 }

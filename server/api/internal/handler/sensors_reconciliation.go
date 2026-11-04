@@ -31,13 +31,14 @@ type sensorsReconciliationProject struct {
 }
 
 type sensorsReconciliationDay struct {
-	Date           string            `json:"date"`
-	SensorsEvents  uint64            `json:"sensors_events"`
-	AeroLogEvents  uint64            `json:"aerolog_events"`
-	SensorsUsers   uint64            `json:"sensors_users"`
-	AeroLogUsers   uint64            `json:"aerolog_users"`
-	SensorsByEvent map[string]uint64 `json:"sensors_by_event"`
-	AeroLogByEvent map[string]uint64 `json:"aerolog_by_event"`
+	Date               string            `json:"date"`
+	SensorsEvents      uint64            `json:"sensors_events"`
+	AeroLogEvents      uint64            `json:"aerolog_events"`
+	IdentityEvents     uint64            `json:"identity_events"`
+	SensorsMergedUsers uint64            `json:"sensors_merged_users"`
+	AeroLogDistinctIDs uint64            `json:"aerolog_distinct_ids"`
+	SensorsByEvent     map[string]uint64 `json:"sensors_by_event"`
+	AeroLogByEvent     map[string]uint64 `json:"aerolog_by_event"`
 }
 
 type reconciliationIntegration struct {
@@ -232,7 +233,7 @@ func (h *DataQualityHandler) aeroLogDailyReconciliation(ctx context.Context, pro
 		return nil, errors.New("ClickHouse 不可用")
 	}
 	eventExpr := make([]string, 0, len(reconciliationEvents))
-	args := make([]any, 0, len(reconciliationEvents)+3)
+	args := []any{"$SignUp", "$SignUp"}
 	for _, event := range reconciliationEvents {
 		eventExpr = append(eventExpr, "countIf(event = ?) AS `"+reconciliationMetricName(event)+"`")
 		args = append(args, event)
@@ -240,7 +241,8 @@ func (h *DataQualityHandler) aeroLogDailyReconciliation(ctx context.Context, pro
 	args = append(args, uint32(projectID), from.Format("2006-01-02"), to.Format("2006-01-02"))
 	rows, err := h.CH.Query(ctx, `
 		SELECT toString(toDate(time, `+clickHouseTimezone(timezone)+`)) AS day,
-		       count() AS events, uniqExact(distinct_id) AS users, `+strings.Join(eventExpr, ",")+`
+		       countIf(event != ?) AS events, countIf(event = ?) AS identity_events,
+		       uniqExact(distinct_id) AS distinct_ids, `+strings.Join(eventExpr, ",")+`
 		FROM events
 		WHERE project_id=? AND JSONExtractString(properties, '$aerolog_source')='sensorsdata'
 		  AND toDate(time, `+clickHouseTimezone(timezone)+`) BETWEEN toDate(?) AND toDate(?)
@@ -252,9 +254,9 @@ func (h *DataQualityHandler) aeroLogDailyReconciliation(ctx context.Context, pro
 	out := map[string]sensorsReconciliationDay{}
 	for rows.Next() {
 		var day string
-		var events, users uint64
+		var events, identityEvents, distinctIDs uint64
 		values := make([]uint64, len(reconciliationEvents))
-		dest := []any{&day, &events, &users}
+		dest := []any{&day, &events, &identityEvents, &distinctIDs}
 		for i := range values {
 			dest = append(dest, &values[i])
 		}
@@ -265,7 +267,7 @@ func (h *DataQualityHandler) aeroLogDailyReconciliation(ctx context.Context, pro
 		for i, event := range reconciliationEvents {
 			byEvent[event] = values[i]
 		}
-		out[day] = sensorsReconciliationDay{Date: day, AeroLogEvents: events, AeroLogUsers: users, AeroLogByEvent: byEvent}
+		out[day] = sensorsReconciliationDay{Date: day, AeroLogEvents: events, IdentityEvents: identityEvents, AeroLogDistinctIDs: distinctIDs, AeroLogByEvent: byEvent}
 	}
 	return out, rows.Err()
 }
@@ -276,7 +278,7 @@ func mergeReconciliationDays(from, to time.Time, sensors, aerolog map[string]sen
 		key := day.Format("2006-01-02")
 		s := sensors[key]
 		a := aerolog[key]
-		out = append(out, sensorsReconciliationDay{Date: key, SensorsEvents: s.SensorsEvents, AeroLogEvents: a.AeroLogEvents, SensorsUsers: s.SensorsUsers, AeroLogUsers: a.AeroLogUsers, SensorsByEvent: s.SensorsByEvent, AeroLogByEvent: a.AeroLogByEvent})
+		out = append(out, sensorsReconciliationDay{Date: key, SensorsEvents: s.SensorsEvents, AeroLogEvents: a.AeroLogEvents, IdentityEvents: a.IdentityEvents, SensorsMergedUsers: s.SensorsMergedUsers, AeroLogDistinctIDs: a.AeroLogDistinctIDs, SensorsByEvent: s.SensorsByEvent, AeroLogByEvent: a.AeroLogByEvent})
 	}
 	return out
 }
@@ -451,7 +453,7 @@ func segmentationRow(day string, value map[string]any) (sensorsReconciliationDay
 	if !eventsOK && !usersOK && len(byEvent) == 0 {
 		return sensorsReconciliationDay{}, false
 	}
-	return sensorsReconciliationDay{Date: day, SensorsEvents: allEvents, SensorsUsers: allUsers, SensorsByEvent: byEvent}, true
+	return sensorsReconciliationDay{Date: day, SensorsEvents: allEvents, SensorsMergedUsers: allUsers, SensorsByEvent: byEvent}, true
 }
 
 func sensorUint(value any) (uint64, bool) {

@@ -1068,6 +1068,12 @@ func (h *AnalyticsHandler) executeQueryTable(ctx context.Context, pid uint32, bo
 		if len(holders) > 0 {
 			where += ` AND event IN (` + joinStrs(holders, ", ") + `)`
 		}
+	} else {
+		// $SignUp is a Sensors Data identity-binding system event. Keep it in
+		// event lists and explicit queries, but omit it from default business
+		// "all events" aggregates to match Sensors Data $Anything.
+		where += ` AND event != ?`
+		whereArgs = append(whereArgs, "$SignUp")
 	}
 	for _, filter := range body.Filters {
 		if filter.Event != "" {

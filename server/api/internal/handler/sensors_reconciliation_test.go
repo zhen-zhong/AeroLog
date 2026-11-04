@@ -15,7 +15,7 @@ func TestDecodeSegmentationDays(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode error: %v", err)
 	}
-	if rows["2026-11-01"].SensorsEvents != 12 || rows["2026-11-01"].SensorsUsers != 5 || rows["2026-11-01"].SensorsByEvent["ad_show"] != 7 {
+	if rows["2026-11-01"].SensorsEvents != 12 || rows["2026-11-01"].SensorsMergedUsers != 5 || rows["2026-11-01"].SensorsByEvent["ad_show"] != 7 {
 		t.Fatalf("unexpected first row: %#v", rows["2026-11-01"])
 	}
 	if rows["2026-11-02"].SensorsByEvent["$AppStart"] != 3 {
@@ -32,7 +32,7 @@ func TestDecodeSegmentationDetailRows(t *testing.T) {
 		t.Fatalf("decode error: %v", err)
 	}
 	row := rows["2026-11-01"]
-	if row.SensorsEvents != 12 || row.SensorsUsers != 5 || row.SensorsByEvent["ad_show"] != 7 {
+	if row.SensorsEvents != 12 || row.SensorsMergedUsers != 5 || row.SensorsByEvent["ad_show"] != 7 {
 		t.Fatalf("unexpected row: %#v", row)
 	}
 }
