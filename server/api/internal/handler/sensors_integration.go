@@ -251,8 +251,9 @@ func (h *SensorsIntegrationHandler) connect(c *gin.Context) {
 	row := h.PG.QueryRow(c, `
 		INSERT INTO sensors_integrations(
 			project_id, source_project_id, source_project, endpoint, application_id, subscriber,
-			subscription_id, api_key_ciphertext, api_key_hint, status, last_error, last_verified_at, created_by
-		) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,1,'',now(),$10)
+			subscription_id, api_key_ciphertext, api_key_hint, status, last_error, last_verified_at, created_by,
+			realtime_coverage_tracking_started_at
+		) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,1,'',now(),$10,now())
 		ON CONFLICT (project_id) DO UPDATE SET
 			source_project_id=EXCLUDED.source_project_id, source_project=EXCLUDED.source_project,
 			endpoint=EXCLUDED.endpoint, application_id=EXCLUDED.application_id, subscriber=EXCLUDED.subscriber,
@@ -263,6 +264,12 @@ func (h *SensorsIntegrationHandler) connect(c *gin.Context) {
 				  OR sensors_integrations.subscription_id IS DISTINCT FROM EXCLUDED.subscription_id
 				THEN NULL
 				ELSE sensors_integrations.realtime_coverage_started_at
+			END,
+			realtime_coverage_tracking_started_at=CASE
+				WHEN sensors_integrations.source_project_id IS DISTINCT FROM EXCLUDED.source_project_id
+				  OR sensors_integrations.subscription_id IS DISTINCT FROM EXCLUDED.subscription_id
+				THEN now()
+				ELSE sensors_integrations.realtime_coverage_tracking_started_at
 			END
 		RETURNING project_id, source_project_id, source_project, endpoint, application_id, subscriber,
 		          subscription_id, api_key_hint, status, last_error, last_verified_at, created_at, updated_at

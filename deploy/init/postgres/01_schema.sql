@@ -114,6 +114,8 @@ CREATE TABLE IF NOT EXISTS sensors_integrations (
 -- Kept in Postgres so ClickHouse event TTL cannot move coverage boundary.
 ALTER TABLE sensors_integrations
     ADD COLUMN IF NOT EXISTS realtime_coverage_started_at TIMESTAMPTZ;
+ALTER TABLE sensors_integrations
+    ADD COLUMN IF NOT EXISTS realtime_coverage_tracking_started_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS idx_sensors_integrations_source
     ON sensors_integrations(source_project_id) WHERE status=1;
 

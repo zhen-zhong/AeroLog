@@ -206,7 +206,8 @@ func (h *DataQualityHandler) reconciliationCoverageStartedAt(ctx context.Context
 	var persisted time.Time
 	err = h.PG.QueryRow(ctx, `
 		UPDATE sensors_integrations
-		SET realtime_coverage_started_at = COALESCE(realtime_coverage_started_at, $2)
+		SET realtime_coverage_started_at = COALESCE(realtime_coverage_started_at, $2),
+		    realtime_coverage_tracking_started_at = COALESCE(realtime_coverage_tracking_started_at, now())
 		WHERE project_id=$1
 		RETURNING realtime_coverage_started_at
 	`, integration.ProjectID, *startedAt).Scan(&persisted)

@@ -283,7 +283,7 @@ func (w *Worker) recordSensorsCoverage(ctx context.Context, tracks []*model.Enve
 		if _, err := w.pgPool.Exec(ctx, `
 			UPDATE sensors_integrations
 			SET realtime_coverage_started_at=COALESCE(realtime_coverage_started_at, now())
-			WHERE project_id=$1
+			WHERE project_id=$1 AND realtime_coverage_tracking_started_at IS NOT NULL
 		`, projectID); err != nil {
 			log.Printf("record sensors coverage project=%d err: %v", projectID, err)
 		}

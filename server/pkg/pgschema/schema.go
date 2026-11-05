@@ -209,6 +209,21 @@ CREATE TABLE IF NOT EXISTS sensors_integrations (
 -- Kept in Postgres so ClickHouse event TTL cannot move coverage boundary.
 ALTER TABLE sensors_integrations
     ADD COLUMN IF NOT EXISTS realtime_coverage_started_at TIMESTAMPTZ;
+ALTER TABLE sensors_integrations
+    ADD COLUMN IF NOT EXISTS realtime_coverage_tracking_started_at TIMESTAMPTZ;
+
+-- v1 initially wrote a consumer restart time for legacy integrations. Clear
+-- it once; reconciliation will backfill their conservative historical start.
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM aerolog_schema_migrations WHERE name = 'sensors_coverage_v2') THEN
+        UPDATE sensors_integrations
+        SET realtime_coverage_started_at = NULL,
+            realtime_coverage_tracking_started_at = NULL;
+        INSERT INTO aerolog_schema_migrations(name) VALUES ('sensors_coverage_v2')
+        ON CONFLICT (name) DO NOTHING;
+    END IF;
+END $$;
 CREATE INDEX IF NOT EXISTS idx_sensors_integrations_source
     ON sensors_integrations(source_project_id) WHERE status=1;
 
