@@ -37,12 +37,13 @@ var (
 
 // App owns the API service runtime dependencies.
 type App struct {
-	cfg        *config.Config
-	pgPool     *pgxpool.Pool
-	chConn     driver.Conn
-	httpServer *http.Server
-	metricsSrv *http.Server
-	queryJobs  *handler.QueryHandler
+	cfg         *config.Config
+	pgPool      *pgxpool.Pool
+	chConn      driver.Conn
+	httpServer  *http.Server
+	metricsSrv  *http.Server
+	queryJobs   *handler.QueryHandler
+	dataQuality *handler.DataQualityHandler
 }
 
 // New builds the API service without starting listeners.
@@ -67,7 +68,7 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 	}
 
 	gin.SetMode(gin.ReleaseMode)
-	router, queryJobs := newRouter(cfg, pool, chConn)
+	router, queryJobs, dataQuality := newRouter(cfg, pool, chConn)
 	return &App{
 		cfg:    cfg,
 		pgPool: pool,
@@ -77,7 +78,8 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 			Handler:           router,
 			ReadHeaderTimeout: 5 * time.Second,
 		},
-		queryJobs: queryJobs,
+		queryJobs:   queryJobs,
+		dataQuality: dataQuality,
 	}, nil
 }
 
@@ -87,6 +89,9 @@ func (a *App) Run(ctx context.Context) error {
 	pgschema.StartRetentionLoop(ctx, a.pgPool, a.cfg.DebugRetentionDays)
 	if a.queryJobs != nil {
 		a.queryJobs.StartJobWorker(ctx)
+	}
+	if a.dataQuality != nil {
+		a.dataQuality.StartReconciliationScheduler(ctx)
 	}
 
 	errCh := make(chan error, 1)
@@ -123,7 +128,7 @@ func (a *App) Shutdown(ctx context.Context) error {
 	return err
 }
 
-func newRouter(cfg *config.Config, pool *pgxpool.Pool, chConn driver.Conn) (*gin.Engine, *handler.QueryHandler) {
+func newRouter(cfg *config.Config, pool *pgxpool.Pool, chConn driver.Conn) (*gin.Engine, *handler.QueryHandler, *handler.DataQualityHandler) {
 	r := gin.New()
 	r.Use(gin.Recovery(), corsMiddleware(cfg.AllowOrigins), metricsMiddleware())
 	r.GET("/healthz", func(c *gin.Context) { c.String(http.StatusOK, "ok") })
@@ -139,7 +144,8 @@ func newRouter(cfg *config.Config, pool *pgxpool.Pool, chConn driver.Conn) (*gin
 	authed := v1.Group("", handler.AuthRequired(pool))
 	auth.RegisterPrivate(authed)
 	(&handler.ProjectHandler{PG: pool}).Register(authed)
-	(&handler.DataQualityHandler{PG: pool, CH: chConn, PrometheusURL: cfg.PrometheusURL, EncryptionKey: cfg.IntegrationKey}).Register(authed)
+	dataQuality := &handler.DataQualityHandler{PG: pool, CH: chConn, PrometheusURL: cfg.PrometheusURL, EncryptionKey: cfg.IntegrationKey}
+	dataQuality.Register(authed)
 
 	projectScoped := authed.Group("", handler.ProjectAccessRequired(pool))
 	(&handler.EventDefHandler{PG: pool}).Register(projectScoped)
@@ -148,7 +154,7 @@ func newRouter(cfg *config.Config, pool *pgxpool.Pool, chConn driver.Conn) (*gin
 	(&handler.SensorsIntegrationHandler{PG: pool, CH: chConn, EncryptionKey: cfg.IntegrationKey, ApplicationName: cfg.SensorsApplication}).Register(projectScoped)
 	analytics.Register(projectScoped)
 	queryJobs.Register(projectScoped)
-	return r, queryJobs
+	return r, queryJobs, dataQuality
 }
 
 type responseEnvelope struct {

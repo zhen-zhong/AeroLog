@@ -85,52 +85,51 @@ func (h *DataQualityHandler) reconcileSensorsData(c *gin.Context) {
 	out := make([]sensorsReconciliationProject, 0, len(integrations))
 	for _, integration := range integrations {
 		start, end := reconciliationDateRange(integration.Timezone, days)
-		item := sensorsReconciliationProject{
-			ProjectID: integration.ProjectID, ProjectName: integration.ProjectName,
-			SourceProject: integration.SourceProject, Timezone: integration.Timezone,
-			From: start.Format("2006-01-02"), To: end.Format("2006-01-02"),
-			IntegrationConfiguredAt: integration.ConfiguredAt,
-		}
-		coverageStartedAt, err := h.reconciliationCoverageStartedAt(c.Request.Context(), integration)
-		if err != nil {
-			item.Error = "AeroLog 数据覆盖起点读取失败"
-			out = append(out, item)
-			continue
-		}
-		item.CoverageStartedAt = coverageStartedAt
-		events, err := h.availableReconciliationEvents(c.Request.Context(), integration.ProjectID)
-		if err != nil {
-			item.Error = "AeroLog 事件清单读取失败"
-			out = append(out, item)
-			continue
-		}
-		item.Events = events
-		apiKey, err := decryptIntegrationSecret(h.EncryptionKey, integration.APIKeyCiphertext)
-		if err != nil {
-			item.Error = "无法读取已保存的神策 API Key"
-			out = append(out, item)
-			continue
-		}
-		ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
-		sensorsRows, err := newSensorsClient(integration.Endpoint, integration.SourceProject, apiKey, h.HTTPClient).dailySegmentation(ctx, start, end, events)
-		cancel()
-		if err != nil {
-			item.Error = "神策查询失败：" + safeSensorsError(err)
-			out = append(out, item)
-			continue
-		}
-		aeroRows, err := h.aeroLogDailyReconciliation(c.Request.Context(), integration.ProjectID, integration.Timezone, start, end, events)
-		if err != nil {
-			item.Error = "AeroLog 查询失败"
-			out = append(out, item)
-			continue
-		}
-		item.Rows = mergeReconciliationDays(start, end, sensorsRows, aeroRows, coverageStartedAt, integration.Timezone)
-		out = append(out, item)
+		out = append(out, h.reconcileIntegration(c.Request.Context(), integration, start, end))
 	}
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{
 		"projects": out,
 	}})
+}
+
+func (h *DataQualityHandler) reconcileIntegration(ctx context.Context, integration reconciliationIntegration, start, end time.Time) sensorsReconciliationProject {
+	item := sensorsReconciliationProject{
+		ProjectID: integration.ProjectID, ProjectName: integration.ProjectName,
+		SourceProject: integration.SourceProject, Timezone: integration.Timezone,
+		From: start.Format("2006-01-02"), To: end.Format("2006-01-02"),
+		IntegrationConfiguredAt: integration.ConfiguredAt,
+	}
+	coverageStartedAt, err := h.reconciliationCoverageStartedAt(ctx, integration)
+	if err != nil {
+		item.Error = "AeroLog 数据覆盖起点读取失败"
+		return item
+	}
+	item.CoverageStartedAt = coverageStartedAt
+	events, err := h.availableReconciliationEvents(ctx, integration.ProjectID)
+	if err != nil {
+		item.Error = "AeroLog 事件清单读取失败"
+		return item
+	}
+	item.Events = events
+	apiKey, err := decryptIntegrationSecret(h.EncryptionKey, integration.APIKeyCiphertext)
+	if err != nil {
+		item.Error = "无法读取已保存的神策 API Key"
+		return item
+	}
+	requestCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	sensorsRows, err := newSensorsClient(integration.Endpoint, integration.SourceProject, apiKey, h.HTTPClient).dailySegmentation(requestCtx, start, end, events)
+	cancel()
+	if err != nil {
+		item.Error = "神策查询失败：" + safeSensorsError(err)
+		return item
+	}
+	aeroRows, err := h.aeroLogDailyReconciliation(ctx, integration.ProjectID, integration.Timezone, start, end, events)
+	if err != nil {
+		item.Error = "AeroLog 查询失败"
+		return item
+	}
+	item.Rows = mergeReconciliationDays(start, end, sensorsRows, aeroRows, coverageStartedAt, integration.Timezone)
+	return item
 }
 
 func reconciliationDateRange(timezone string, days int) (time.Time, time.Time) {

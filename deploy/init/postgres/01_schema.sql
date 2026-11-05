@@ -119,6 +119,23 @@ ALTER TABLE sensors_integrations
 CREATE INDEX IF NOT EXISTS idx_sensors_integrations_source
     ON sensors_integrations(source_project_id) WHERE status=1;
 
+CREATE TABLE IF NOT EXISTS sensors_reconciliation_runs (
+    id              BIGSERIAL PRIMARY KEY,
+    project_id      BIGINT      NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    reconcile_date  DATE        NOT NULL,
+    timezone        VARCHAR(64) NOT NULL,
+    status          VARCHAR(16) NOT NULL DEFAULT 'running',
+    coverage_status VARCHAR(32) NOT NULL DEFAULT 'pending',
+    has_anomaly     BOOLEAN     NOT NULL DEFAULT false,
+    result          JSONB,
+    error_message   TEXT        NOT NULL DEFAULT '',
+    started_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    finished_at     TIMESTAMPTZ,
+    UNIQUE(project_id, reconcile_date)
+);
+CREATE INDEX IF NOT EXISTS idx_sensors_reconciliation_runs_project
+    ON sensors_reconciliation_runs(project_id, reconcile_date DESC);
+
 -- 属性元数据：event='' 为全局默认规则，event='<eventName>' 为事件专属规则
 CREATE TABLE IF NOT EXISTS property_definitions (
     id           BIGSERIAL PRIMARY KEY,

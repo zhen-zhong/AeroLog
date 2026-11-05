@@ -421,4 +421,21 @@ CREATE TABLE IF NOT EXISTS analytics_jobs (
 );
 CREATE INDEX IF NOT EXISTS idx_analytics_jobs_project
     ON analytics_jobs(project_id, status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS sensors_reconciliation_runs (
+    id              BIGSERIAL PRIMARY KEY,
+    project_id      BIGINT      NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    reconcile_date  DATE        NOT NULL,
+    timezone        VARCHAR(64) NOT NULL,
+    status          VARCHAR(16) NOT NULL DEFAULT 'running',
+    coverage_status VARCHAR(32) NOT NULL DEFAULT 'pending',
+    has_anomaly     BOOLEAN     NOT NULL DEFAULT false,
+    result          JSONB,
+    error_message   TEXT        NOT NULL DEFAULT '',
+    started_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    finished_at     TIMESTAMPTZ,
+    UNIQUE(project_id, reconcile_date)
+);
+CREATE INDEX IF NOT EXISTS idx_sensors_reconciliation_runs_project
+    ON sensors_reconciliation_runs(project_id, reconcile_date DESC);
 `
