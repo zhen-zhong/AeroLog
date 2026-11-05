@@ -257,7 +257,13 @@ func (h *SensorsIntegrationHandler) connect(c *gin.Context) {
 			source_project_id=EXCLUDED.source_project_id, source_project=EXCLUDED.source_project,
 			endpoint=EXCLUDED.endpoint, application_id=EXCLUDED.application_id, subscriber=EXCLUDED.subscriber,
 			subscription_id=EXCLUDED.subscription_id, api_key_ciphertext=EXCLUDED.api_key_ciphertext,
-			api_key_hint=EXCLUDED.api_key_hint, status=1, last_error='', last_verified_at=now(), updated_at=now()
+			api_key_hint=EXCLUDED.api_key_hint, status=1, last_error='', last_verified_at=now(), updated_at=now(),
+			realtime_coverage_started_at=CASE
+				WHEN sensors_integrations.source_project_id IS DISTINCT FROM EXCLUDED.source_project_id
+				  OR sensors_integrations.subscription_id IS DISTINCT FROM EXCLUDED.subscription_id
+				THEN NULL
+				ELSE sensors_integrations.realtime_coverage_started_at
+			END
 		RETURNING project_id, source_project_id, source_project, endpoint, application_id, subscriber,
 		          subscription_id, api_key_hint, status, last_error, last_verified_at, created_at, updated_at
 	`, c.Param("id"), sourceProjectID, project, endpoint, applicationID, subscriber, subscriptionID, ciphertext, keyHint, CurrentUserID(c))

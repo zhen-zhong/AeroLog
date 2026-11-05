@@ -64,6 +64,21 @@ func TestReconciliationCoverageStatusUsesProjectTimezone(t *testing.T) {
 	}
 }
 
+func TestInitialCoverageStartedAtUsesConservativeLaterTime(t *testing.T) {
+	configuredAt := time.Date(2026, 11, 3, 3, 18, 0, 0, time.UTC)
+	earlierObservedAt := configuredAt.Add(-time.Hour)
+	laterObservedAt := configuredAt.Add(10 * time.Minute)
+	if got := initialCoverageStartedAt(configuredAt, &earlierObservedAt); got == nil || !got.Equal(configuredAt) {
+		t.Fatalf("expected configured time, got %v", got)
+	}
+	if got := initialCoverageStartedAt(configuredAt, &laterObservedAt); got == nil || !got.Equal(laterObservedAt) {
+		t.Fatalf("expected first observed time, got %v", got)
+	}
+	if got := initialCoverageStartedAt(configuredAt, nil); got != nil {
+		t.Fatalf("expected nil, got %v", got)
+	}
+}
+
 func TestReconciliationDateRangeUsesProjectTimezone(t *testing.T) {
 	from, to := reconciliationDateRange("Asia/Shanghai", 3)
 	if from.Location().String() != "Asia/Shanghai" || to.Sub(from) < 47*time.Hour || to.Sub(from) > 49*time.Hour {

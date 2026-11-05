@@ -46,13 +46,14 @@ type sensorsReconciliationDay struct {
 }
 
 type reconciliationIntegration struct {
-	ProjectID        int64
-	ProjectName      string
-	SourceProject    string
-	Endpoint         string
-	APIKeyCiphertext string
-	Timezone         string
-	ConfiguredAt     time.Time
+	ProjectID         int64
+	ProjectName       string
+	SourceProject     string
+	Endpoint          string
+	APIKeyCiphertext  string
+	Timezone          string
+	ConfiguredAt      time.Time
+	CoverageStartedAt *time.Time
 }
 
 type sensorsSegmentationMeasure struct {
@@ -90,7 +91,7 @@ func (h *DataQualityHandler) reconcileSensorsData(c *gin.Context) {
 			From: start.Format("2006-01-02"), To: end.Format("2006-01-02"),
 			IntegrationConfiguredAt: integration.ConfiguredAt,
 		}
-		coverageStartedAt, err := h.reconciliationCoverageStartedAt(c.Request.Context(), integration.ProjectID)
+		coverageStartedAt, err := h.reconciliationCoverageStartedAt(c.Request.Context(), integration)
 		if err != nil {
 			item.Error = "AeroLog 数据覆盖起点读取失败"
 			out = append(out, item)
@@ -144,7 +145,7 @@ func reconciliationDateRange(timezone string, days int) (time.Time, time.Time) {
 func (h *DataQualityHandler) visibleReconciliationIntegrations(c *gin.Context) ([]reconciliationIntegration, error) {
 	query := `
 		SELECT p.id, p.name, si.source_project, si.endpoint, si.api_key_ciphertext,
-		       COALESCE(p.timezone,'Asia/Shanghai'), si.created_at
+		       COALESCE(p.timezone,'Asia/Shanghai'), si.created_at, si.realtime_coverage_started_at
 		FROM projects p JOIN sensors_integrations si ON si.project_id=p.id
 		WHERE si.status=1`
 	args := []any{}
@@ -166,7 +167,7 @@ func (h *DataQualityHandler) visibleReconciliationIntegrations(c *gin.Context) (
 	out := []reconciliationIntegration{}
 	for rows.Next() {
 		var item reconciliationIntegration
-		if err := rows.Scan(&item.ProjectID, &item.ProjectName, &item.SourceProject, &item.Endpoint, &item.APIKeyCiphertext, &item.Timezone, &item.ConfiguredAt); err != nil {
+		if err := rows.Scan(&item.ProjectID, &item.ProjectName, &item.SourceProject, &item.Endpoint, &item.APIKeyCiphertext, &item.Timezone, &item.ConfiguredAt, &item.CoverageStartedAt); err != nil {
 			return nil, err
 		}
 		if timezone, ok := normalizeProjectTimezone(item.Timezone); ok {
@@ -179,22 +180,51 @@ func (h *DataQualityHandler) visibleReconciliationIntegrations(c *gin.Context) (
 	return out, rows.Err()
 }
 
-// reconciliationCoverageStartedAt returns first successfully received real-time
-// event. Dates before it must not be treated as ingestion discrepancies.
-func (h *DataQualityHandler) reconciliationCoverageStartedAt(ctx context.Context, projectID int64) (*time.Time, error) {
+// reconciliationCoverageStartedAt returns durable coverage state. Existing
+// integrations are initialized once from the conservative later of integration
+// configuration and first observed source event.
+func (h *DataQualityHandler) reconciliationCoverageStartedAt(ctx context.Context, integration reconciliationIntegration) (*time.Time, error) {
+	if integration.CoverageStartedAt != nil {
+		return integration.CoverageStartedAt, nil
+	}
 	if h.CH == nil {
 		return nil, errors.New("ClickHouse 不可用")
 	}
-	var startedAt *time.Time
+	var firstObservedAt *time.Time
 	err := h.CH.QueryRow(ctx, `
 		SELECT minOrNull(received_at)
 		FROM events
 		WHERE project_id=? AND JSONExtractString(properties, '$aerolog_source')='sensorsdata'
-	`, uint32(projectID)).Scan(&startedAt)
+	`, uint32(integration.ProjectID)).Scan(&firstObservedAt)
 	if err != nil {
 		return nil, err
 	}
-	return startedAt, nil
+	startedAt := initialCoverageStartedAt(integration.ConfiguredAt, firstObservedAt)
+	if startedAt == nil {
+		return nil, nil
+	}
+	var persisted time.Time
+	err = h.PG.QueryRow(ctx, `
+		UPDATE sensors_integrations
+		SET realtime_coverage_started_at = COALESCE(realtime_coverage_started_at, $2)
+		WHERE project_id=$1
+		RETURNING realtime_coverage_started_at
+	`, integration.ProjectID, *startedAt).Scan(&persisted)
+	if err != nil {
+		return nil, err
+	}
+	return &persisted, nil
+}
+
+func initialCoverageStartedAt(configuredAt time.Time, firstObservedAt *time.Time) *time.Time {
+	if firstObservedAt == nil {
+		return nil
+	}
+	startedAt := configuredAt
+	if firstObservedAt.After(startedAt) {
+		startedAt = *firstObservedAt
+	}
+	return &startedAt
 }
 
 func (s *sensorsClient) dailySegmentation(ctx context.Context, from, to time.Time, events []string) (map[string]sensorsReconciliationDay, error) {

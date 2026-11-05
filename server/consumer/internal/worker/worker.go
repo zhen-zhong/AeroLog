@@ -261,7 +261,33 @@ func (w *Worker) flushBatch(ctx context.Context, batch []*model.EnvelopedEvent) 
 	if err := w.sink.WriteProfiles(ctx, profiles); err != nil {
 		return err
 	}
+	w.recordSensorsCoverage(ctx, tracks)
 	return nil
+}
+
+// recordSensorsCoverage stores the first batch that completed every durable
+// write. It intentionally does not fail a completed Kafka batch: retrying
+// after ClickHouse has accepted it could duplicate events.
+func (w *Worker) recordSensorsCoverage(ctx context.Context, tracks []*model.EnvelopedEvent) {
+	if w.pgPool == nil {
+		return
+	}
+	projectIDs := map[uint32]struct{}{}
+	for _, event := range tracks {
+		if event == nil || event.Event.Properties["$aerolog_source"] != "sensorsdata" {
+			continue
+		}
+		projectIDs[event.ProjectID] = struct{}{}
+	}
+	for projectID := range projectIDs {
+		if _, err := w.pgPool.Exec(ctx, `
+			UPDATE sensors_integrations
+			SET realtime_coverage_started_at=COALESCE(realtime_coverage_started_at, now())
+			WHERE project_id=$1
+		`, projectID); err != nil {
+			log.Printf("record sensors coverage project=%d err: %v", projectID, err)
+		}
+	}
 }
 
 // toDLQ stores an original Kafka payload in Postgres before its offset is committed.
