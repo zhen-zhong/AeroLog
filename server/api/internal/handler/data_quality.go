@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
@@ -23,6 +24,8 @@ type DataQualityHandler struct {
 	EncryptionKey   string
 	WeComWebhookURL string
 	HTTPClient      *http.Client
+	alertMu         sync.Mutex
+	alertStates     map[string]bool
 }
 
 type sensorsQualityProject struct {

@@ -303,6 +303,18 @@ services:
       - internal
     mem_limit: 220m
 
+  node-exporter:
+    image: quay.io/prometheus/node-exporter:v1.8.2
+    restart: unless-stopped
+    command:
+      - --path.rootfs=/host
+    pid: host
+    volumes:
+      - /:/host:ro,rslave
+    networks:
+      - internal
+    mem_limit: 80m
+
   grafana:
     image: grafana/grafana:11.0.0
     restart: unless-stopped

@@ -92,6 +92,7 @@ func (a *App) Run(ctx context.Context) error {
 	}
 	if a.dataQuality != nil {
 		a.dataQuality.StartReconciliationScheduler(ctx)
+		a.dataQuality.StartOperationalAlertMonitor(ctx)
 	}
 
 	errCh := make(chan error, 1)
