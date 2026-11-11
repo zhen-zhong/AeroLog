@@ -33,7 +33,7 @@ async function summarize(question, data) {
       temperature: 0.2,
       max_tokens: 700,
       messages: [
-        { role: 'system', content: '你是 AeroLog 数据分析助手。只能根据提供的 JSON 数据回答，不得编造数据。用简短中文 Markdown：先时间范围，再总次数、去重用户数、主要事件，最后一句数据解读。若事件为空，明确说明没有匹配的广告事件。' },
+        { role: 'system', content: '你是 AeroLog 运维与数据助手。只能根据提供的 JSON 数据回答，不得编造数据。用简短中文 Markdown 整理结果。skill=server_status 时列 CPU、内存、磁盘、API、采集服务状态；skill=kafka_status 时列消费者、lag、DLQ；广告数据时列时间范围、总次数、去重用户数、主要事件。缺失或 unavailable 必须明确说明。' },
         { role: 'user', content: `问题：${question}\n\n受限查询结果：${JSON.stringify(data)}` },
       ],
     }),
