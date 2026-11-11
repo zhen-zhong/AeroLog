@@ -80,6 +80,13 @@ docker compose up -d --build
 docker compose --profile sensorsdata up -d --build
 ```
 
+首次启动 Grafana 前，宿主机数据目录必须可由 Grafana 容器 UID `472` 写入：
+
+```bash
+install -d -m 755 /var/lib/aerolog/grafana
+chown -R 472:472 /var/lib/aerolog/grafana
+```
+
 部署代码：
 
 ```bash
