@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -79,7 +80,7 @@ func (s *inspector) diskUsage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"checked_at":  time.Now().UTC().Format(time.RFC3339),
-		"scope":       "只读白名单目录；逻辑文件大小，符号链接不跟随",
+		"scope":       "只读白名单目录；实际分配磁盘块，硬链接去重，符号链接不跟随",
 		"directories": data,
 	})
 }
@@ -93,8 +94,9 @@ func (s *inspector) cachedScan(ctx context.Context) []directorySize {
 	scanCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	data := make([]directorySize, 0, len(allowedDirectories))
+	seen := map[[2]uint64]struct{}{}
 	for _, path := range allowedDirectories {
-		data = append(data, s.scanDirectory(scanCtx, path))
+		data = append(data, s.scanDirectory(scanCtx, path, seen))
 	}
 	sort.Slice(data, func(i, j int) bool { return data[i].Bytes > data[j].Bytes })
 	s.cache.at = time.Now()
@@ -102,7 +104,7 @@ func (s *inspector) cachedScan(ctx context.Context) []directorySize {
 	return data
 }
 
-func (s *inspector) scanDirectory(ctx context.Context, path string) directorySize {
+func (s *inspector) scanDirectory(ctx context.Context, path string, seen map[[2]uint64]struct{}) directorySize {
 	item := directorySize{Path: path, Completed: true}
 	root := filepath.Join(s.root, path)
 	if _, err := os.Stat(root); err != nil {
@@ -118,7 +120,7 @@ func (s *inspector) scanDirectory(ctx context.Context, path string) directorySiz
 		}
 		if entry.Type().IsRegular() {
 			if info, err := entry.Info(); err == nil {
-				item.Bytes += info.Size()
+				item.Bytes += allocatedBytes(info, seen)
 			}
 		}
 		return nil
@@ -127,4 +129,20 @@ func (s *inspector) scanDirectory(ctx context.Context, path string) directorySiz
 		item.Completed = false
 	}
 	return item
+}
+
+// allocatedBytes reports physical blocks rather than logical file length. Docker
+// overlay layers contain sparse files and hard links, which otherwise inflate
+// directory totals far beyond host disk usage.
+func allocatedBytes(info os.FileInfo, seen map[[2]uint64]struct{}) int64 {
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return info.Size()
+	}
+	key := [2]uint64{uint64(stat.Dev), uint64(stat.Ino)}
+	if _, exists := seen[key]; exists {
+		return 0
+	}
+	seen[key] = struct{}{}
+	return stat.Blocks * 512
 }
