@@ -1,202 +1,141 @@
 # AeroLog 运行时服务说明
 
-本文从**容器视角**梳理 AeroLog 在生产环境（`<deployment-root>/deploy/production/docker-compose.yml`）启动的全部 11 个容器及其角色、依赖、排查路径。外部反向代理独立管理，不属于该编排。
+本文说明生产编排 [`deploy/production/docker-compose.yml`](../deploy/production/docker-compose.yml) 中的服务、数据链路与排查方式。
 
-> 与 [`architecture.md`](./architecture.md) 互补：`architecture.md` 描述设计架构与模块边界；本文聚焦"线上跑着的具体容器是什么、出问题去哪看"。
+当前 Compose 定义 **16 个服务**；神策消费者通过 `sensorsdata` profile 启动。公网登录代理 `aerolog-login-proxy` 独立运行，配置见 [`deploy/production/nginx.login-proxy.conf`](../deploy/production/nginx.login-proxy.conf)，不属于 Compose。
 
-## 1. 服务拓扑总览
+## 1. 总体链路
 
-```
-              ┌─────────────────────┐
-   外部用户 ──→│  Nginx :80 (公网)   │
-              └──────────┬──────────┘
-                         │
-        ┌────────────────┼─────────────────┬──────────────┐
-        ▼                ▼                 ▼              ▼
-       Web              API             Collector    Grafana / Console
-      (页面)          (业务接口)       (埋点接收)    (运维面板)
-                       │                    │
-                       │ 读写               │ 投递
-                       ▼                    ▼
-        ┌──────┐  ┌──────┐  ┌──────┐    ┌──────────┐
-        │ PG   │  │Redis │  │  CH  │    │ Redpanda │
-        │元数据│  │ 缓存 │  │ 事件 │    │ 消息队列  │
-        └──────┘  └──────┘  └──────┘    └────┬─────┘
-                                ▲             │ 消费
-                                │             │
-                                └─── Consumer ┘
-                                 (读队列写CH)
+```text
+自研 SDK ──► Collector ──► Redpanda ──► Consumer ───────► ClickHouse
+                                               │
+神策 Kafka ─────────────────────────► Sensors Consumer ──┤
+神策用户属性 Kafka ────────────────► Profile Consumer ───┤
+                                               │
+浏览器 ──► 登录代理 ──► Web / API ────────────────┬─────┘
+                                                   ▼
+                              PostgreSQL（项目、权限、配置、定义）
 
-       Prometheus ──抓指标── (api / collector / consumer)
-            └── 数据源 → Grafana
+企业微信 AI 机器人 ──► 固定只读 Skill ──► API / Prometheus / Host Inspector
+Prometheus ◄── API / Collector / Consumer / Node Exporter ──► Grafana
 ```
 
-## 2. 容器一览
+两类数据源均进入 ClickHouse，但神策记录带 `$aerolog_source=sensorsdata`、神策项目标识与接入覆盖时间；分析、对账和权限均以 AeroLog 项目为边界。
 
-按数据流方向 + 重要程度分组。
+## 2. 服务一览
 
-### 2.1 入口层（暴露公网）
+### 2.1 应用与接入
 
-| 容器 | 镜像 | 角色 | 端口 |
-|---|---|---|---|
-| **aerolog-nginx-1** | `nginx:1.27-alpine` | 唯一对外入口，反向代理 + Basic Auth | `80:80` ✅ |
-
-`nginx.conf` 路径分流：
-
-| 前缀 | 转发到 | 备注 |
+| 服务 | 角色 | 网络 / 入口 |
 |---|---|---|
-| `/` | `aerolog-web-1` | Next.js 控制台 |
-| `/api/v1/*` | `aerolog-api-1` | 业务 API |
-| `/collect/v1/*` | `aerolog-collector-1` | SDK 埋点入口 |
-| `/queue/*` | `aerolog-redpanda-console-1` | 加 Basic Auth |
-| `/monitor/*` | `aerolog-grafana-1` | 加 Basic Auth |
+| `web` | Next.js 控制台、项目管理、分析页面 | 仅 `internal`；由登录代理转发 `/` |
+| `api` | Go API：认证、项目、分析、神策配置、对账、企业微信内部查询 | `internal` + `api-egress`；由登录代理转发 `/api/` |
+| `collector` | 自研 SDK 接收、鉴权、限流、写入 Redpanda | `internal` + `kafka-ingress`；由登录代理转发 `/collect/` |
+| `consumer` | 消费自研埋点，ETL 后写入 ClickHouse | 后台服务 |
+| `sensors-consumer` | 消费神策事件 `FLATTEN_JSON`，映射后写入 ClickHouse | `sensorsdata` profile；后台服务 |
+| `sensors-profile-consumer` | 消费神策用户属性，按源项目路由与 UPSERT | `sensorsdata` profile；后台服务 |
 
-> ⚠️ 不要直接对外开放 `3000`（Grafana）、`9092`/`9644`/`8088`（Redpanda 原生）这些端口；统一从 Nginx 走。
+神策消费者不会消费自研 SDK 的 `events.raw`；路由依据神策 `project_id` 与已启用的 `sensors_integrations` 映射。解析或写入失败进入 DLQ，成功写入后才提交 Kafka offset。
 
-### 2.2 应用层
+### 2.2 机器人与宿主机巡检
 
-| 容器 | 语言 | 作用 | Nginx 路径 |
-|---|---|---|---|
-| **aerolog-web-1** | Next.js | 控制台 + 营销落地页 | `/` |
-| **aerolog-api-1** | Go | 登录、项目、分析查询 | `/api/v1/*` |
-| **aerolog-collector-1** | Go | SDK 埋点接收，投递到 Redpanda | `/collect/v1/*` |
-| **aerolog-consumer-1** | Go | 消费 Redpanda 写入 ClickHouse | 无（后台） |
-
-源码位置：`server/api`、`server/collector`、`server/consumer`、`web/`。
-
-### 2.3 数据层
-
-| 容器 | 类型 | 存什么 |
+| 服务 | 角色 | 权限边界 |
 |---|---|---|
-| **aerolog-postgres-1** | 关系型数据库 | 用户、项目、权限、漏斗/留存定义等元数据 |
-| **aerolog-clickhouse-1** | 列式分析数据库 | 事件明细（用户行为日志），聚合查询主战场 |
-| **aerolog-redis-1** | 内存 KV 缓存 | 会话、限流计数、临时缓存 |
+| `wecom-aibot` | 企业微信智能机器人长连接。AI 先规划固定 Skill，再由 API 执行只读查询并整理结果。 | 仅可访问 API 与 AI 服务；密钥仅来自 `.env` |
+| `host-inspector` | 返回白名单目录的占用聚合，供 `directory_usage` Skill 使用。 | 只读挂载宿主机根目录、`cap_drop: ALL`、无 Docker Socket、仅 `internal` |
 
-> 三者分工：**PG 管"业务实体"，CH 管"事件流水"，Redis 管"临时状态"**——分析平台标准三件套。
+当前可用 Skill：`ads_summary`、`server_status`、`kafka_status`、`disk_usage`、`directory_usage`。AI 不能生成 SQL、执行 Shell 或请求任意路径。AI 规划超时后会使用受限规则兜底；AI 整理超时后返回固定格式结果。
 
-持久化目录：
+### 2.3 数据与消息层
 
-```
-<data-root>/{postgres,redis,clickhouse}
-```
-
-### 2.4 消息队列层
-
-| 容器 | 角色 | 暴露 |
+| 服务 | 作用 | 持久化位置 |
 |---|---|---|
-| **aerolog-redpanda-1** | Kafka 兼容消息队列 | 内网 `9092`，不暴露 |
-| **aerolog-redpanda-console-1** | Topic / 消费组可视化面板 | 通过 `/queue/`（Basic Auth） |
+| `postgres` | 用户、会话、成员、项目、神策接入、报表、查询任务、审计与对账元数据 | `/var/lib/aerolog/postgres` |
+| `clickhouse` | 事件、用户行为与分析查询 | `/var/lib/aerolog/clickhouse` |
+| `redis` | 会话、缓存、限流状态 | `/var/lib/aerolog/redis` |
+| `redpanda` | Kafka 兼容消息队列 | `/var/lib/aerolog/redpanda` |
+| `redpanda-console` | Topic、消费者组与积压查看 | 仅 `internal` |
 
-**为什么用消息队列？** Collector 拿到 SDK 上报后**不直接写库**，而是丢进 Redpanda：
+Redpanda 对容器使用 `redpanda:9092`。神策订阅使用专用外部 listener `9092`，必须同时受云安全组和宿主机防火墙来源白名单保护，不能开放给任意公网地址。
 
-- 突发流量不会打爆 ClickHouse
-- Consumer 可以批量消费，写入更高效
-- Consumer 挂了消息不会丢，重启继续消费
+### 2.4 监控层
 
-### 2.5 监控层
-
-| 容器 | 角色 | 暴露 |
-|---|---|---|
-| **aerolog-prometheus-1** | 时序数据库，每 15 s 抓 api/collector/consumer 指标，保留 7 天 | 内网 `9090` |
-| **aerolog-grafana-1** | 监控仪表盘，把 Prometheus 数据画图 | `/monitor/`（Basic Auth） |
-
-> 监控层看的是**系统指标**（QPS、错误率、内存、延迟），不是用户行为；用户行为分析在 Web 控制台。
-
-## 3. 启动依赖与顺序
-
-`docker-compose.yml` 的 `depends_on + healthcheck` 保证启动顺序：
-
-```
-postgres / redis / clickhouse / redpanda  (基础设施，需 healthy)
-        ↓
-api / collector / consumer / redpanda-console / web  (应用层)
-        ↓
-nginx                                      (入口层)
-        ↓
-prometheus / grafana                       (监控层，可独立)
-```
-
-整体冷启 ≈ 30–60 秒（取决于 ClickHouse 与 Redpanda 健康检查通过的速度）。
-
-## 4. 资源占用经验值
-
-```bash
-sudo docker stats --no-stream
-```
-
-| 容器 | 经验占用 | 备注 |
-|---|---|---|
-| clickhouse | 600MB – 1GB | 最大单户，事件量增加会涨 |
-| redpanda | 500MB – 1GB | 默认配置较吃内存 |
-| postgres | 50MB – 200MB | 元数据量小 |
-| prometheus | 200MB – 400MB | 7 天保留 |
-| grafana | 100MB – 200MB | |
-| api / collector / consumer | 30MB – 100MB / 个 | Go 服务低开销 |
-| web | 100MB – 200MB | Next.js 生产模式 |
-| nginx / redis | 10MB – 50MB | 几乎可忽略 |
-
-合计约 **1.6 – 2.5 GiB**，3.6 GiB 机器尚有余量但不充裕。要省内存先动 ClickHouse 与 Redpanda 的资源限制。
-
-## 5. 排查路径速查表
-
-| 现象 | 优先查看的容器日志 |
+| 服务 | 作用 |
 |---|---|
-| 网站 502 / 打不开 | `nginx`、`web` |
-| 登录失败 / 接口 500 | `api`、`postgres` |
-| 埋点没入库 | `collector` → `redpanda` → `consumer` |
-| 分析查询慢 / 报错 | `api`、`clickhouse` |
-| 消息积压 | `/queue/` 看 Topic 与 Consumer Group |
-| 接口慢但不报错 | `grafana` 看 P95 / 错误率面板 |
-| 监控面板没数据 | `prometheus` Targets，再查 `api/collector/consumer` 是否暴露 `/metrics` |
+| `prometheus` | 抓取 API、Collector、Consumer、神策消费者和 Node Exporter 指标，保留 7 天 |
+| `node-exporter` | 宿主机 CPU、内存、磁盘等指标 |
+| `grafana` | Prometheus 可视化仪表盘 |
 
-通用日志命令：
+企业微信告警由 API 运行期监控发送，可覆盖神策消费者、Kafka lag、DLQ、ClickHouse 写入与神策对账异常。告警 Webhook 不写入仓库。
+
+## 3. 启动方式
 
 ```bash
-cd <deployment-root>/deploy/production
-sudo docker compose logs -f <服务名> --tail=100
+cd /opt/aerolog/deploy/production
+
+# 常规服务
+docker compose up -d --build
+
+# 包含神策事件与用户属性消费者
+docker compose --profile sensorsdata up -d --build
 ```
 
-## 6. 常用运维命令
+部署代码：
 
 ```bash
-# 查看全部容器状态
-sudo docker compose ps
-
-# 查看资源占用
-sudo docker stats --no-stream
-
-# 重启单个服务
-sudo docker compose restart api
-
-# 重建变更后的镜像（git pull 后必做）
-sudo docker compose build
-sudo docker compose up -d
-
-# 健康检查三连
-curl -I http://127.0.0.1/
-curl http://127.0.0.1/api/healthz
-curl -I http://127.0.0.1/queue/      # 期望 401（未认证）
+cd /opt/aerolog
+git pull --ff-only origin main
+cd deploy/production
+docker compose --profile sensorsdata up -d --build
 ```
 
-## 7. 端口与网络
+若 API 被 `Recreate`，需重启独立登录代理，使其重新解析 API 容器地址：
 
-> 详见 [`production-deployment.md`](./production-deployment.md) §1–§2。
+```bash
+docker restart aerolog-login-proxy
+```
 
-- 常规对外入口由独立反向代理管理。神策实时订阅专用 `9092` 仅对云安全组和主机防火墙白名单中的源 IP 开放。
-- 内网容器互相通过 Docker 网络 `aerolog-net` 用容器名互访（如 `postgres:5432`、`redpanda:9092`）
-- Prometheus / Grafana / 数据库等**不**在公网暴露，仅 `127.0.0.1` 本地可访问
+## 4. 常用排查
 
-## 8. 与 SDK 的对接关系
+```bash
+cd /opt/aerolog/deploy/production
 
-SDK 应在初始化时显式配置私有部署地址，例如 `https://analytics.example.com/collect`。
+# 服务状态与资源
+docker compose --profile sensorsdata ps
+docker stats --no-stream
 
-请求路径：`${serverUrl}/v1/track?token=...` → Nginx `/collect/v1/*` → `aerolog-collector-1`。
+# 数据链路日志
+docker compose logs -f collector consumer --tail=100
+docker compose --profile sensorsdata logs -f sensors-consumer sensors-profile-consumer --tail=100
 
-详见 [`production-deployment.md`](./production-deployment.md) §2.1。
+# 企业微信机器人与 API
+docker compose logs -f wecom-aibot api --tail=100
 
-## 9. 相关文档
+# 宿主机目录巡检
+docker compose logs -f host-inspector --tail=100
+```
 
-- [`architecture.md`](./architecture.md) — 设计架构与模块边界
-- [`production-deployment.md`](./production-deployment.md) — 生产部署与维护手册
-- [`observability.md`](./observability.md) — 监控指标设计
-- [`protocol.md`](./protocol.md) — SDK 上报协议
+| 现象 | 排查顺序 |
+|---|---|
+| 网站 `502` | `api` 是否存活 → 重启 `aerolog-login-proxy` → 检查 `web` |
+| 自研埋点未入库 | `collector` → Redpanda Topic / consumer group → `consumer` → ClickHouse |
+| 神策数据未入库 | Kafka `9092` 连通性 → 神策订阅应用状态 → `sensors-consumer` / `sensors-profile-consumer` → DLQ → ClickHouse |
+| 神策对账差异 | 先查看数据覆盖起点与“部分覆盖”标识，再检查项目时区、事件映射与订阅生效时间 |
+| 企业微信机器人无回复 | `wecom-aibot` 是否认证 → AI 规划/整理超时日志 → API 内部 Token → 对应 Skill 依赖 |
+| 磁盘空间异常 | `directory_usage` Skill 或 `host-inspector` 日志；不要让机器人执行任意目录命令 |
+
+## 5. 网络与密钥规则
+
+- `internal` 是 Docker 内部网络；PostgreSQL、ClickHouse、Redis、Prometheus、Grafana、Redpanda Console 不直接暴露公网。
+- `api-egress` 仅供神策 OpenAPI、企业微信、AI 服务等受控出网调用。
+- `kafka-ingress` 承担外部 Kafka / 神策订阅链路；公网访问必须使用来源白名单。
+- `.env` 保存数据库密码、神策 API Key、企业微信 Bot 凭据、AI Key、内部 Token；不得提交、不得打印日志。
+- 公网入口规则仅保留在登录代理配置中；生产配置不应写死服务器 IP、域名、账号或密钥。
+
+## 6. 相关文档
+
+- [`architecture.md`](./architecture.md)：平台分层架构与容量演进
+- [`production-deployment.md`](./production-deployment.md)：生产部署与维护
+- [`observability.md`](./observability.md)：监控指标
+- [`protocol.md`](./protocol.md)：SDK 上报协议
+- [`todo.md`](./todo.md)：当前待办与暂缓范围
