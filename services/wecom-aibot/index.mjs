@@ -1,4 +1,5 @@
 import AiBot, { generateReqId } from '@wecom/aibot-node-sdk'
+import http from 'node:http'
 
 const required = ['AEROLOG_WECOM_BOT_ID', 'AEROLOG_WECOM_BOT_SECRET', 'AEROLOG_WECOM_BOT_INTERNAL_TOKEN', 'AEROLOG_AI_BASE_URL', 'AEROLOG_AI_API_KEY', 'AEROLOG_AI_MODEL']
 const missing = required.filter((key) => !process.env[key])
@@ -6,10 +7,131 @@ if (missing.length) throw new Error(`missing config: ${missing.join(', ')}`)
 
 const apiURL = process.env.AEROLOG_WECOM_BOT_API_URL || 'http://api:8082'
 const aiBaseURL = process.env.AEROLOG_AI_BASE_URL.replace(/\/$/, '').replace(/\/v1$/, '')
+const metricsPort = Number(process.env.AEROLOG_WECOM_BOT_METRICS_PORT || '9106')
+
+const durationBuckets = [0.1, 0.25, 0.5, 1, 2, 5, 8, 15, 20, 30]
+const counters = new Map()
+const gauges = new Map()
+const histograms = new Map()
+
+function metricLabels(labels = {}) {
+  return Object.entries(labels).filter(([, value]) => value !== undefined).sort(([left], [right]) => left.localeCompare(right))
+}
+
+function metricKey(name, labels) {
+  return `${name}|${JSON.stringify(metricLabels(labels))}`
+}
+
+function formatLabels(labels = {}) {
+  const pairs = metricLabels(labels)
+  if (!pairs.length) return ''
+  return `{${pairs.map(([key, value]) => `${key}="${String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n')}"`).join(',')}}`
+}
+
+function increment(name, labels, value = 1) {
+  const key = metricKey(name, labels)
+  const item = counters.get(key) || { name, labels: metricLabels(labels), value: 0 }
+  item.value += value
+  counters.set(key, item)
+}
+
+function setGauge(name, labels, value) {
+  gauges.set(metricKey(name, labels), { name, labels: metricLabels(labels), value })
+}
+
+function observe(name, labels, seconds) {
+  const key = metricKey(name, labels)
+  const item = histograms.get(key) || { name, labels: metricLabels(labels), count: 0, sum: 0, buckets: durationBuckets.map(() => 0) }
+  item.count += 1
+  item.sum += seconds
+  durationBuckets.forEach((bucket, index) => {
+    if (seconds <= bucket) item.buckets[index] += 1
+  })
+  histograms.set(key, item)
+}
+
+function renderMetrics() {
+  const lines = [
+    '# HELP aerolog_wecom_bot_requests_total 企业微信机器人处理完成的请求数',
+    '# TYPE aerolog_wecom_bot_requests_total counter',
+    '# HELP aerolog_wecom_bot_stage_errors_total 企业微信机器人各阶段错误数',
+    '# TYPE aerolog_wecom_bot_stage_errors_total counter',
+    '# HELP aerolog_wecom_bot_fallbacks_total 企业微信机器人兜底次数',
+    '# TYPE aerolog_wecom_bot_fallbacks_total counter',
+    '# HELP aerolog_wecom_bot_websocket_authenticated 企业微信 WebSocket 是否已认证',
+    '# TYPE aerolog_wecom_bot_websocket_authenticated gauge',
+    '# HELP aerolog_wecom_bot_requests_inflight 企业微信机器人处理中请求数',
+    '# TYPE aerolog_wecom_bot_requests_inflight gauge',
+    '# HELP aerolog_wecom_bot_stage_duration_seconds 企业微信机器人阶段耗时',
+    '# TYPE aerolog_wecom_bot_stage_duration_seconds histogram',
+  ]
+  for (const item of counters.values()) lines.push(`${item.name}${formatLabels(Object.fromEntries(item.labels))} ${item.value}`)
+  for (const item of gauges.values()) lines.push(`${item.name}${formatLabels(Object.fromEntries(item.labels))} ${item.value}`)
+  for (const item of histograms.values()) {
+    const labels = Object.fromEntries(item.labels)
+    durationBuckets.forEach((bucket, index) => lines.push(`${item.name}_bucket${formatLabels({ ...labels, le: bucket })} ${item.buckets[index]}`))
+    lines.push(`${item.name}_bucket${formatLabels({ ...labels, le: '+Inf' })} ${item.count}`)
+    lines.push(`${item.name}_sum${formatLabels(labels)} ${item.sum}`)
+    lines.push(`${item.name}_count${formatLabels(labels)} ${item.count}`)
+  }
+  return `${lines.join('\n')}\n`
+}
+
+function errorKind(error) {
+  const message = error instanceof Error ? error.message.toLowerCase() : ''
+  if (message.includes('timeout') || message.includes('aborted')) return 'timeout'
+  if (message.includes('unauthorized')) return 'unauthorized'
+  if (message.includes('skill')) return 'skill'
+  return 'error'
+}
+
+function logEvent(event, fields = {}) {
+  console.log(JSON.stringify({ timestamp: new Date().toISOString(), component: 'wecom-aibot', event, ...fields }))
+}
+
+function elapsedSeconds(startedAt) {
+  return Math.max(0, (performance.now() - startedAt) / 1000)
+}
+
+function recordStage(stage, result, startedAt, extra = {}) {
+  const seconds = elapsedSeconds(startedAt)
+  observe('aerolog_wecom_bot_stage_duration_seconds', { stage, result }, seconds)
+  return { seconds, ...extra }
+}
+
+function startMetricsServer() {
+  if (!Number.isInteger(metricsPort) || metricsPort < 1 || metricsPort > 65535) throw new Error('invalid AEROLOG_WECOM_BOT_METRICS_PORT')
+  const server = http.createServer((request, response) => {
+    if (request.url === '/metrics') {
+      response.writeHead(200, { 'Content-Type': 'text/plain; version=0.0.4; charset=utf-8', 'Cache-Control': 'no-store' })
+      response.end(renderMetrics())
+      return
+    }
+    if (request.url === '/healthz') {
+      response.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' })
+      response.end('ok\n')
+      return
+    }
+    response.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' })
+    response.end('not found\n')
+  })
+  server.listen(metricsPort, '0.0.0.0', () => logEvent('metrics_listening', { port: metricsPort }))
+}
+
+setGauge('aerolog_wecom_bot_websocket_authenticated', {}, 0)
+setGauge('aerolog_wecom_bot_requests_inflight', {}, 0)
+
+const sdkLogger = {
+  debug: () => {},
+  info: () => {},
+  warn: (message) => logEvent('wecom_sdk_warning', { reason: errorKind(new Error(String(message))) }),
+  error: (message) => logEvent('wecom_sdk_error', { reason: errorKind(new Error(String(message))) }),
+}
 const bot = new AiBot.WSClient({
   botId: process.env.AEROLOG_WECOM_BOT_ID,
   secret: process.env.AEROLOG_WECOM_BOT_SECRET,
   maxReconnectAttempts: -1,
+  logger: sdkLogger,
 })
 
 const skillNames = new Set(['ads_summary', 'server_status', 'kafka_status', 'disk_usage', 'directory_usage'])
@@ -145,34 +267,99 @@ async function summarize(question, data) {
   return payload?.choices?.[0]?.message?.content?.trim() || 'AI 未返回内容'
 }
 
-bot.on('authenticated', () => console.log('wecom aibot authenticated'))
+bot.on('authenticated', () => {
+  setGauge('aerolog_wecom_bot_websocket_authenticated', {}, 1)
+  logEvent('wecom_authenticated')
+})
+bot.on('disconnected', () => {
+  setGauge('aerolog_wecom_bot_websocket_authenticated', {}, 0)
+  logEvent('wecom_disconnected')
+})
 bot.on('message.text', async (frame) => {
   const content = frame.body?.text?.content?.trim()
   if (!content) return
+  const messageID = typeof frame.body?.msgid === 'string' ? frame.body.msgid : 'unknown'
+  const requestStartedAt = performance.now()
+  const inflight = (gauges.get(metricKey('aerolog_wecom_bot_requests_inflight', {}))?.value || 0) + 1
+  setGauge('aerolog_wecom_bot_requests_inflight', {}, inflight)
+  logEvent('request_received', { message_id: messageID })
   const streamID = generateReqId('aerolog')
+  let skill = 'unknown'
+  let planFallback = false
+  let summaryFallback = false
   try {
+    const initialReplyStartedAt = performance.now()
     await bot.replyStream(frame, streamID, '正在理解问题并查询 AeroLog 数据…', false)
+    recordStage('initial_reply', 'success', initialReplyStartedAt)
     let plan
+    const planningStartedAt = performance.now()
     try {
       plan = await planSkill(content)
+      recordStage('plan', 'success', planningStartedAt)
     } catch (error) {
-      console.warn('AI 查询规划失败，使用规则兜底', error instanceof Error ? error.message : error)
+      const reason = errorKind(error)
+      recordStage('plan', 'error', planningStartedAt)
+      increment('aerolog_wecom_bot_stage_errors_total', { stage: 'plan', reason })
       plan = fallbackPlan(content)
+      planFallback = true
+      increment('aerolog_wecom_bot_fallbacks_total', { stage: 'plan', reason })
+      logEvent('plan_fallback', { message_id: messageID, reason, skill: plan.skill })
     }
-    const data = await queryAnalytics(content, plan)
+    skill = plan.skill
+    const queryStartedAt = performance.now()
+    let data
+    try {
+      data = await queryAnalytics(content, plan)
+      recordStage('query', 'success', queryStartedAt)
+    } catch (error) {
+      const reason = errorKind(error)
+      recordStage('query', 'error', queryStartedAt)
+      increment('aerolog_wecom_bot_stage_errors_total', { stage: 'query', reason })
+      throw error
+    }
     let answer
+    const summaryStartedAt = performance.now()
     try {
       answer = await summarize(content, data)
+      recordStage('summary', 'success', summaryStartedAt)
     } catch (error) {
-      console.warn('AI 数据整理失败，使用固定格式', error instanceof Error ? error.message : error)
+      const reason = errorKind(error)
+      recordStage('summary', 'error', summaryStartedAt)
+      increment('aerolog_wecom_bot_stage_errors_total', { stage: 'summary', reason })
       answer = fallbackSummary(data)
+      summaryFallback = true
+      increment('aerolog_wecom_bot_fallbacks_total', { stage: 'summary', reason })
+      logEvent('summary_fallback', { message_id: messageID, reason, skill })
     }
+    const finalReplyStartedAt = performance.now()
     await bot.replyStream(frame, streamID, answer, true)
+    recordStage('final_reply', 'success', finalReplyStartedAt)
+    increment('aerolog_wecom_bot_requests_total', { result: 'success', skill })
+    logEvent('request_completed', { message_id: messageID, skill, plan_fallback: planFallback, summary_fallback: summaryFallback, duration_ms: Math.round(elapsedSeconds(requestStartedAt) * 1000) })
   } catch (error) {
-    console.error('wecom bot request failed', error instanceof Error ? error.message : error)
-    await bot.replyStream(frame, streamID, `查询失败：${error instanceof Error ? error.message : '未知错误'}`, true)
+    const reason = errorKind(error)
+    increment('aerolog_wecom_bot_requests_total', { result: 'error', skill })
+    increment('aerolog_wecom_bot_stage_errors_total', { stage: 'request', reason })
+    logEvent('request_failed', { message_id: messageID, skill, reason, duration_ms: Math.round(elapsedSeconds(requestStartedAt) * 1000) })
+    try {
+      const replyStartedAt = performance.now()
+      await bot.replyStream(frame, streamID, `查询失败：${reason === 'timeout' ? '请求超时，请稍后重试' : '服务暂时不可用，请稍后重试'}`, true)
+      recordStage('error_reply', 'success', replyStartedAt)
+    } catch (replyError) {
+      const replyReason = errorKind(replyError)
+      increment('aerolog_wecom_bot_stage_errors_total', { stage: 'error_reply', reason: replyReason })
+      logEvent('error_reply_failed', { message_id: messageID, reason: replyReason })
+    }
+  } finally {
+    const remaining = Math.max(0, (gauges.get(metricKey('aerolog_wecom_bot_requests_inflight', {}))?.value || 1) - 1)
+    setGauge('aerolog_wecom_bot_requests_inflight', {}, remaining)
   }
 })
+startMetricsServer()
 bot.connect()
 
-process.on('SIGTERM', () => { bot.disconnect(); process.exit(0) })
+process.on('SIGTERM', () => {
+  setGauge('aerolog_wecom_bot_websocket_authenticated', {}, 0)
+  bot.disconnect()
+  process.exit(0)
+})

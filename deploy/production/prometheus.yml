@@ -40,6 +40,12 @@ scrape_configs:
           service: sensors-profile-consumer
           source: sensorsdata
 
+  - job_name: aerolog-wecom-aibot
+    static_configs:
+      - targets: ["wecom-aibot:9106"]
+        labels:
+          service: wecom-aibot
+
   - job_name: prometheus
     static_configs:
       - targets: ["localhost:9090"]

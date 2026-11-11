@@ -50,6 +50,7 @@ services:
     env_file: ${AEROLOG_ENV_FILE:-.env}
     environment:
       AEROLOG_WECOM_BOT_API_URL: http://api:8082
+      AEROLOG_WECOM_BOT_METRICS_PORT: "9106"
     depends_on:
       - api
     networks:

@@ -44,7 +44,7 @@ Prometheus ◄── API / Collector / Consumer / Node Exporter ──► Grafan
 | `wecom-aibot` | 企业微信智能机器人长连接。AI 先规划固定 Skill，再由 API 执行只读查询并整理结果。 | 仅可访问 API 与 AI 服务；密钥仅来自 `.env` |
 | `host-inspector` | 返回白名单目录的占用聚合，供 `directory_usage` Skill 使用。 | 只读挂载宿主机根目录、`cap_drop: ALL`、无 Docker Socket、仅 `internal` |
 
-当前可用 Skill：`ads_summary`、`server_status`、`kafka_status`、`disk_usage`、`directory_usage`。AI 不能生成 SQL、执行 Shell 或请求任意路径。AI 规划超时后会使用受限规则兜底；AI 整理超时后返回固定格式结果。
+当前可用 Skill：`ads_summary`、`server_status`、`kafka_status`、`disk_usage`、`directory_usage`。AI 不能生成 SQL、执行 Shell 或请求任意路径。AI 规划超时后会使用受限规则兜底；AI 整理超时后返回固定格式结果。机器人向 Prometheus 暴露阶段耗时、成功/失败、兜底次数、在途请求与连接认证状态；结构化日志只记录消息 ID、Skill、耗时与错误类别，不记录聊天正文。
 
 ### 2.3 数据与消息层
 
