@@ -26,7 +26,16 @@ func (h *WeComBotHandler) Register(r *gin.RouterGroup) {
 }
 
 type wecomBotQuery struct {
-	Question string `json:"question"`
+	Question string              `json:"question"`
+	Skill    string              `json:"skill,omitempty"`
+	Params   wecomBotSkillParams `json:"params,omitempty"`
+}
+
+// wecomBotSkillParams 是机器人规划后允许传入的受限参数。
+// 服务端会按 Skill 再次校验，不允许把任意查询条件传给数据层。
+type wecomBotSkillParams struct {
+	TimeRange string `json:"time_range,omitempty"`
+	Hours     int    `json:"hours,omitempty"`
 }
 
 type wecomBotEvent struct {
@@ -45,7 +54,7 @@ func (h *WeComBotHandler) analytics(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"err": "question required"})
 		return
 	}
-	result, err := h.executeSkill(c, body.Question)
+	result, err := h.executeSkill(c, body)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
 		return

@@ -22,7 +22,13 @@ type WeComSkillDefinition struct {
 type wecomSkill struct {
 	definition WeComSkillDefinition
 	match      func(question string) bool
-	execute    func(ctx context.Context, question string) (gin.H, error)
+	execute    func(ctx context.Context, input wecomSkillInput) (gin.H, error)
+}
+
+// wecomSkillInput 只承载已校验的固定 Skill 与有限参数。
+type wecomSkillInput struct {
+	Question string
+	Params   wecomBotSkillParams
 }
 
 func (h *WeComBotHandler) registeredSkills() []wecomSkill {
@@ -31,11 +37,11 @@ func (h *WeComBotHandler) registeredSkills() []wecomSkill {
 		{definition: WeComSkillDefinition{Name: "disk_usage", Description: "查询服务器各挂载点磁盘空间占用", Aliases: []string{"磁盘", "磁碟", "空间占用", "磁盘占用"}}, match: matchesAny("磁盘", "磁碟", "空间占用", "磁盘占用"), execute: h.executeDiskUsage},
 		{definition: WeComSkillDefinition{Name: "server_status", Description: "查询服务器资源和核心服务存活状态", Aliases: []string{"服务器", "主机", "server"}}, match: matchesAny("服务器", "主机", "server"), execute: h.executeServerStatus},
 		{definition: WeComSkillDefinition{Name: "kafka_status", Description: "查询神策 Kafka 消费者、lag 和死信队列", Aliases: []string{"kafka", "消息队列", "积压", "dlq"}}, match: matchesAny("kafka", "消息队列", "积压", "dlq"), execute: h.executeKafkaStatus},
-		{definition: WeComSkillDefinition{Name: "ads_summary", Description: "查询项目当天或昨天广告事件汇总", Aliases: []string{"广告", "ad_show", "广告数据"}}, match: matchesAny("广告", "ad_show", "广告数据"), execute: h.executeAdsSummary},
+		{definition: WeComSkillDefinition{Name: "ads_summary", Description: "查询项目广告事件汇总", Aliases: []string{"广告", "ad_show", "广告数据"}}, match: matchesAny("广告", "ad_show", "广告数据"), execute: h.executeAdsSummary},
 	}
 }
 
-func (h *WeComBotHandler) executeDirectoryUsage(ctx context.Context, _ string) (gin.H, error) {
+func (h *WeComBotHandler) executeDirectoryUsage(ctx context.Context, _ wecomSkillInput) (gin.H, error) {
 	if h.HostInspectorURL == "" || h.HostInspectorToken == "" {
 		return nil, errors.New("目录巡检服务未配置")
 	}
@@ -84,16 +90,26 @@ func matchesAny(words ...string) func(string) bool {
 	}
 }
 
-func (h *WeComBotHandler) executeSkill(ctx context.Context, question string) (gin.H, error) {
+func (h *WeComBotHandler) executeSkill(ctx context.Context, request wecomBotQuery) (gin.H, error) {
+	input := wecomSkillInput{Question: request.Question, Params: request.Params}
 	for _, skill := range h.registeredSkills() {
-		if skill.match(question) {
-			return skill.execute(ctx, question)
+		if request.Skill != "" {
+			if request.Skill == skill.definition.Name {
+				return skill.execute(ctx, input)
+			}
+			continue
 		}
+		if skill.match(request.Question) {
+			return skill.execute(ctx, input)
+		}
+	}
+	if request.Skill != "" {
+		return nil, errors.New("不支持的 Skill")
 	}
 	return nil, errors.New("未匹配可用 Skill；可查询服务器状态、Kafka 状态或项目广告数据")
 }
 
-func (h *WeComBotHandler) executeServerStatus(ctx context.Context, _ string) (gin.H, error) {
+func (h *WeComBotHandler) executeServerStatus(ctx context.Context, _ wecomSkillInput) (gin.H, error) {
 	if h.Monitor == nil {
 		return nil, errors.New("服务器监控不可用")
 	}
@@ -115,7 +131,7 @@ func (h *WeComBotHandler) executeServerStatus(ctx context.Context, _ string) (gi
 	return metrics, nil
 }
 
-func (h *WeComBotHandler) executeDiskUsage(ctx context.Context, _ string) (gin.H, error) {
+func (h *WeComBotHandler) executeDiskUsage(ctx context.Context, _ wecomSkillInput) (gin.H, error) {
 	if h.Monitor == nil {
 		return nil, errors.New("服务器监控不可用")
 	}
@@ -141,7 +157,7 @@ func (h *WeComBotHandler) executeDiskUsage(ctx context.Context, _ string) (gin.H
 	}, nil
 }
 
-func (h *WeComBotHandler) executeKafkaStatus(ctx context.Context, _ string) (gin.H, error) {
+func (h *WeComBotHandler) executeKafkaStatus(ctx context.Context, _ wecomSkillInput) (gin.H, error) {
 	if h.Monitor == nil {
 		return nil, errors.New("Kafka 监控不可用")
 	}
@@ -157,7 +173,7 @@ func (h *WeComBotHandler) executeKafkaStatus(ctx context.Context, _ string) (gin
 	}, nil
 }
 
-func (h *WeComBotHandler) executeAdsSummary(ctx context.Context, question string) (gin.H, error) {
+func (h *WeComBotHandler) executeAdsSummary(ctx context.Context, input wecomSkillInput) (gin.H, error) {
 	type project struct {
 		ID       uint32
 		Name     string
@@ -171,7 +187,7 @@ func (h *WeComBotHandler) executeAdsSummary(ctx context.Context, question string
 	var matched []project
 	for rows.Next() {
 		var p project
-		if rows.Scan(&p.ID, &p.Name, &p.Timezone) == nil && strings.Contains(strings.ToLower(question), strings.ToLower(p.Name)) {
+		if rows.Scan(&p.ID, &p.Name, &p.Timezone) == nil && strings.Contains(strings.ToLower(input.Question), strings.ToLower(p.Name)) {
 			matched = append(matched, p)
 		}
 	}
@@ -185,9 +201,23 @@ func (h *WeComBotHandler) executeAdsSummary(ctx context.Context, question string
 	}
 	now := time.Now().In(loc)
 	start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
-	if strings.Contains(question, "昨天") || strings.Contains(strings.ToLower(question), "yesterday") {
+	timeRange := input.Params.TimeRange
+	if timeRange == "" && (strings.Contains(input.Question, "昨天") || strings.Contains(strings.ToLower(input.Question), "yesterday")) {
+		timeRange = "yesterday"
+	}
+	switch timeRange {
+	case "", "today":
+		// 默认查询项目时区的当天数据，兼容未升级的调用方。
+	case "yesterday":
 		start = start.AddDate(0, 0, -1)
 		now = start.Add(24 * time.Hour)
+	case "last_hours":
+		if input.Params.Hours < 1 || input.Params.Hours > 168 {
+			return nil, errors.New("近几小时仅支持 1 到 168 小时")
+		}
+		start = now.Add(-time.Duration(input.Params.Hours) * time.Hour)
+	default:
+		return nil, errors.New("不支持的广告数据时间范围")
 	}
 	const query = `SELECT event, count() AS c, uniqExact(distinct_id) AS u FROM events WHERE project_id = ? AND time >= ? AND time < ? AND lower(event) LIKE '%ad%' GROUP BY event ORDER BY c DESC LIMIT 20`
 	result, err := h.CH.Query(ctx, query, p.ID, start.UTC(), now.UTC())
@@ -204,5 +234,5 @@ func (h *WeComBotHandler) executeAdsSummary(ctx context.Context, question string
 			events = append(events, item)
 		}
 	}
-	return gin.H{"skill": "ads_summary", "project_name": p.Name, "timezone": p.Timezone, "from": start.Format("2006-01-02 15:04:05 MST"), "to": now.Format("2006-01-02 15:04:05 MST"), "metric": "广告事件（事件名包含 ad）", "total_count": total, "events": events}, nil
+	return gin.H{"skill": "ads_summary", "project_name": p.Name, "timezone": p.Timezone, "time_range": timeRange, "hours": input.Params.Hours, "from": start.Format("2006-01-02 15:04:05 MST"), "to": now.Format("2006-01-02 15:04:05 MST"), "metric": "广告事件（事件名包含 ad）", "total_count": total, "events": events}, nil
 }
