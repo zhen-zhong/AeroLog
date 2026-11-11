@@ -18,6 +18,7 @@ type Config struct {
 	SensorsApplication string
 	PrometheusURL      string
 	WeComWebhookURL    string
+	WeComBotToken      string
 }
 
 type ClickHouseConf struct {
@@ -45,6 +46,7 @@ func FromEnv() *Config {
 		SensorsApplication: getEnv("AEROLOG_SENSORS_APPLICATION_NAME", ""),
 		PrometheusURL:      strings.TrimRight(getEnv("AEROLOG_PROMETHEUS_URL", "http://prometheus:9090"), "/"),
 		WeComWebhookURL:    strings.TrimSpace(getEnv("AEROLOG_WECOM_WEBHOOK_URL", "")),
+		WeComBotToken:      strings.TrimSpace(getEnv("AEROLOG_WECOM_BOT_INTERNAL_TOKEN", "")),
 	}
 }
 

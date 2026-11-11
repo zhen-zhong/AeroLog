@@ -43,6 +43,21 @@ services:
       - api-egress
     mem_limit: 192m
 
+  wecom-aibot:
+    build:
+      context: ../..
+      dockerfile: deploy/production/Dockerfile.wecom-aibot
+    restart: unless-stopped
+    env_file: ${AEROLOG_ENV_FILE:-.env}
+    environment:
+      AEROLOG_WECOM_BOT_API_URL: http://api:8082
+    depends_on:
+      - api
+    networks:
+      - internal
+      - api-egress
+    mem_limit: 128m
+
   collector:
     build:
       context: ../..
