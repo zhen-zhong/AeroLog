@@ -206,6 +206,17 @@ function fallbackPlan(question) {
   throw new Error('未识别可查询的 Skill')
 }
 
+// directOperationalPlan 处理确定的只读运维问法，避免等待不必要的 AI 规划。
+function directOperationalPlan(question) {
+  const lower = question.toLowerCase()
+  if (/(\/usr|\/opt|\/var\/lib\/docker|\/var\/lib\/aerolog|\/var\/log|\/var\/cache|\/tmp|\/home|usr目录|opt目录|docker目录)/.test(lower)) return { skill: 'directory_usage_detail', params: {} }
+  if (/目录|哪些占用|占用空间/.test(lower)) return { skill: 'directory_usage', params: {} }
+  if (/磁盘|磁碟|空间占用|磁盘占用/.test(lower)) return { skill: 'disk_usage', params: {} }
+  if (/kafka|消息队列|积压|dlq/.test(lower)) return { skill: 'kafka_status', params: {} }
+  if (/服务器|主机|server/.test(lower)) return { skill: 'server_status', params: {} }
+  return null
+}
+
 async function planSkill(question) {
   const response = await fetch(`${aiBaseURL}/v1/chat/completions`, {
     method: 'POST',
@@ -238,6 +249,18 @@ function fallbackSummary(data) {
       ? data.directories.map((item) => `- ${item.path}：${formatBytes(item.bytes)}${item.completed ? '' : '（扫描未完成）'}`).join('\n')
       : '- 没有可统计的一级子项'
     return `**${data.path} 目录明细**\n\n${directories}\n\n仅统计白名单目录的一级子项。`
+  }
+  if (data?.skill === 'directory_usage') {
+    const directories = Array.isArray(data.directories) && data.directories.length
+      ? data.directories.map((item) => `- ${item.path}：${formatBytes(item.bytes)}${item.completed ? '' : '（扫描未完成）'}`).join('\n')
+      : '- 没有可统计的目录'
+    return `**服务器目录占用**\n\n${directories}\n\n${data.scope || '仅统计只读白名单目录。'}`
+  }
+  if (data?.skill === 'disk_usage') {
+    const filesystems = Array.isArray(data.filesystems) && data.filesystems.length
+      ? data.filesystems.map((item) => `- ${item.mountpoint || item.mount_point || item.path}：${item.used_percent ?? item.usage_percent ?? '未知'}%`).join('\n')
+      : '- 没有可统计的挂载点'
+    return `**磁盘空间占用**\n\n${filesystems}`
   }
   return `查询完成，AI 整理超时。原始结果：\n\n\`\`\`json\n${JSON.stringify(data, null, 2)}\n\`\`\``
 }
@@ -308,17 +331,23 @@ bot.on('message.text', async (frame) => {
     recordStage('initial_reply', 'success', initialReplyStartedAt)
     let plan
     const planningStartedAt = performance.now()
-    try {
-      plan = await planSkill(content)
-      recordStage('plan', 'success', planningStartedAt)
-    } catch (error) {
-      const reason = errorKind(error)
-      recordStage('plan', 'error', planningStartedAt)
-      increment('aerolog_wecom_bot_stage_errors_total', { stage: 'plan', reason })
-      plan = fallbackPlan(content)
-      planFallback = true
-      increment('aerolog_wecom_bot_fallbacks_total', { stage: 'plan', reason })
-      logEvent('plan_fallback', { message_id: messageID, reason, skill: plan.skill })
+    plan = directOperationalPlan(content)
+    if (plan) {
+      recordStage('plan', 'rule', planningStartedAt)
+      logEvent('plan_rule', { message_id: messageID, skill: plan.skill })
+    } else {
+      try {
+        plan = await planSkill(content)
+        recordStage('plan', 'success', planningStartedAt)
+      } catch (error) {
+        const reason = errorKind(error)
+        recordStage('plan', 'error', planningStartedAt)
+        increment('aerolog_wecom_bot_stage_errors_total', { stage: 'plan', reason })
+        plan = fallbackPlan(content)
+        planFallback = true
+        increment('aerolog_wecom_bot_fallbacks_total', { stage: 'plan', reason })
+        logEvent('plan_fallback', { message_id: messageID, reason, skill: plan.skill })
+      }
     }
     skill = plan.skill
     const queryStartedAt = performance.now()
@@ -334,17 +363,22 @@ bot.on('message.text', async (frame) => {
     }
     let answer
     const summaryStartedAt = performance.now()
-    try {
-      answer = await summarize(content, data)
-      recordStage('summary', 'success', summaryStartedAt)
-    } catch (error) {
-      const reason = errorKind(error)
-      recordStage('summary', 'error', summaryStartedAt)
-      increment('aerolog_wecom_bot_stage_errors_total', { stage: 'summary', reason })
+    if (directOperationalPlan(content)) {
       answer = fallbackSummary(data)
-      summaryFallback = true
-      increment('aerolog_wecom_bot_fallbacks_total', { stage: 'summary', reason })
-      logEvent('summary_fallback', { message_id: messageID, reason, skill })
+      recordStage('summary', 'rule', summaryStartedAt)
+    } else {
+      try {
+        answer = await summarize(content, data)
+        recordStage('summary', 'success', summaryStartedAt)
+      } catch (error) {
+        const reason = errorKind(error)
+        recordStage('summary', 'error', summaryStartedAt)
+        increment('aerolog_wecom_bot_stage_errors_total', { stage: 'summary', reason })
+        answer = fallbackSummary(data)
+        summaryFallback = true
+        increment('aerolog_wecom_bot_fallbacks_total', { stage: 'summary', reason })
+        logEvent('summary_fallback', { message_id: messageID, reason, skill })
+      }
     }
     const finalReplyStartedAt = performance.now()
     await bot.replyStream(frame, streamID, answer, true)
