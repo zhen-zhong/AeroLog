@@ -139,7 +139,24 @@ docker compose logs -f host-inspector --tail=100
 - `.env` 保存数据库密码、神策 API Key、企业微信 Bot 凭据、AI Key、内部 Token；不得提交、不得打印日志。
 - 公网入口规则仅保留在登录代理配置中；生产配置不应写死服务器 IP、域名、账号或密钥。
 
-## 6. 相关文档
+## 6. 企业微信 AI 机器人使用
+
+在企业微信群中 `@AeroLog-ai-bot` 后直接提问。广告查询必须包含唯一 AeroLog 项目名；时间支持“今天”“昨天”“近/最近 N 小时”。
+
+```text
+@AeroLog-ai-bot 近三个小时的RbowDrama广告数据整理一下发我
+@AeroLog-ai-bot 今天HaloDrama的广告数据
+@AeroLog-ai-bot 昨天Talevra的ad_show数据
+
+@AeroLog-ai-bot 服务器现在状态
+@AeroLog-ai-bot Kafka积压和DLQ情况
+@AeroLog-ai-bot 磁盘空间占用情况
+@AeroLog-ai-bot 哪些目录占用空间最大
+```
+
+机器人仅调用固定只读 Skill；不支持任意 SQL、Shell、文件读取、目录扫描或删除操作。可在 Grafana 的 `AeroLog WeCom Bot` 面板查看连接状态、请求结果、阶段耗时、错误与兜底情况。
+
+## 7. 相关文档
 
 - [`architecture.md`](./architecture.md)：平台分层架构与容量演进
 - [`production-deployment.md`](./production-deployment.md)：生产部署与维护
