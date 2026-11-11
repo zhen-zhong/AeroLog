@@ -152,6 +152,7 @@ docker compose logs -f host-inspector --tail=100
 @AeroLog-ai-bot Kafka积压和DLQ情况
 @AeroLog-ai-bot 磁盘空间占用情况
 @AeroLog-ai-bot 哪些目录占用空间最大
+@AeroLog-ai-bot /usr目录里什么占用最大
 ```
 
 机器人仅调用固定只读 Skill；不支持任意 SQL、Shell、文件读取、目录扫描或删除操作。可在 Grafana 的 `AeroLog WeCom Bot` 面板查看连接状态、请求结果、阶段耗时、错误与兜底情况。

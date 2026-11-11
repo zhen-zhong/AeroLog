@@ -134,13 +134,13 @@ const bot = new AiBot.WSClient({
   logger: sdkLogger,
 })
 
-const skillNames = new Set(['ads_summary', 'server_status', 'kafka_status', 'disk_usage', 'directory_usage'])
+const skillNames = new Set(['ads_summary', 'server_status', 'kafka_status', 'disk_usage', 'directory_usage', 'directory_usage_detail'])
 const timeRanges = new Set(['today', 'yesterday', 'last_hours'])
 
 const plannerPrompt = `你是 AeroLog 只读查询规划器。根据用户问题，仅输出一个 JSON 对象，不要 Markdown、解释或 SQL。
-可选 skill 仅有：ads_summary、server_status、kafka_status、disk_usage、directory_usage。
+可选 skill 仅有：ads_summary、server_status、kafka_status、disk_usage、directory_usage、directory_usage_detail。
 ads_summary 用于指定项目的广告、ad_show、广告数据；params 必须包含 time_range：today、yesterday 或 last_hours。用户说“近/最近 N 小时”时，必须使用 {"time_range":"last_hours","hours":N}；未指定时间时用 today。其他 skill 的 params 必须是 {}。
-server_status 用于服务器或主机资源与服务状态；kafka_status 用于 Kafka、消息队列、积压、DLQ；disk_usage 用于挂载点磁盘占用；directory_usage 用于哪些目录/文件占空间。
+server_status 用于服务器或主机资源与服务状态；kafka_status 用于 Kafka、消息队列、积压、DLQ；disk_usage 用于挂载点磁盘占用；directory_usage 用于哪些目录/文件占空间；directory_usage_detail 仅用于询问 /usr、/opt、/var/lib/docker、/var/lib/aerolog、/var/log、/var/cache、/tmp、/home 内部什么占空间。
 无法匹配时输出 {"skill":"unknown","params":{}}。`
 
 function parsePlan(content) {
@@ -189,6 +189,7 @@ function parseHours(value) {
 // fallbackPlan 在 AI 规划超时时处理已支持的固定问法，避免查询链路整体失败。
 function fallbackPlan(question) {
   const lower = question.toLowerCase()
+  if (/(\/usr|\/opt|\/var\/lib\/docker|\/var\/lib\/aerolog|\/var\/log|\/var\/cache|\/tmp|\/home|usr目录|opt目录|docker目录)/.test(lower)) return { skill: 'directory_usage_detail', params: {} }
   if (/目录|哪些占用|占用空间/.test(lower)) return { skill: 'directory_usage', params: {} }
   if (/磁盘|磁碟|空间占用|磁盘占用/.test(lower)) return { skill: 'disk_usage', params: {} }
   if (/kafka|消息队列|积压|dlq/.test(lower)) return { skill: 'kafka_status', params: {} }
@@ -232,7 +233,21 @@ function fallbackSummary(data) {
       : '- 无广告事件'
     return `**${data.project_name} 广告数据**\n\n- 数据时间：${data.from} ～ ${data.to}\n- 广告事件总次数：${data.total_count}\n\n**主要事件**\n${events}`
   }
+  if (data?.skill === 'directory_usage_detail') {
+    const directories = Array.isArray(data.directories) && data.directories.length
+      ? data.directories.map((item) => `- ${item.path}：${formatBytes(item.bytes)}${item.completed ? '' : '（扫描未完成）'}`).join('\n')
+      : '- 没有可统计的一级子项'
+    return `**${data.path} 目录明细**\n\n${directories}\n\n仅统计白名单目录的一级子项。`
+  }
   return `查询完成，AI 整理超时。原始结果：\n\n\`\`\`json\n${JSON.stringify(data, null, 2)}\n\`\`\``
+}
+
+function formatBytes(bytes) {
+  const value = Number(bytes) || 0
+  if (value < 1024) return `${value} B`
+  const units = ['KB', 'MB', 'GB', 'TB']
+  const index = Math.min(Math.floor(Math.log(value) / Math.log(1024)) - 1, units.length - 1)
+  return `${(value / (1024 ** (index + 1))).toFixed(value >= 1024 ** 3 ? 2 : 1)} ${units[index]}`
 }
 
 async function queryAnalytics(question, plan) {
@@ -256,7 +271,7 @@ async function summarize(question, data) {
       temperature: 0.2,
       max_tokens: 700,
       messages: [
-        { role: 'system', content: '你是 AeroLog 运维与数据助手。只能根据提供的 JSON 数据回答，不得编造数据。用简短中文 Markdown 整理结果。skill=server_status 时列 CPU、内存、磁盘、API、采集服务状态；skill=disk_usage 时按使用率降序列出挂载点；skill=directory_usage 时按 bytes 降序列出目录及大小，并说明只扫描白名单目录；skill=kafka_status 时列消费者、lag、DLQ；广告数据时列时间范围、总次数、去重用户数、主要事件。缺失或 unavailable 必须明确说明。' },
+        { role: 'system', content: '你是 AeroLog 运维与数据助手。只能根据提供的 JSON 数据回答，不得编造数据。用简短中文 Markdown 整理结果。skill=server_status 时列 CPU、内存、磁盘、API、采集服务状态；skill=disk_usage 时按使用率降序列出挂载点；skill=directory_usage 时按 bytes 降序列出目录及大小；skill=directory_usage_detail 时按 bytes 降序列出指定目录一级子项及大小，并说明只统计白名单一级子项；skill=kafka_status 时列消费者、lag、DLQ；广告数据时列时间范围、总次数、去重用户数、主要事件。缺失或 unavailable 必须明确说明。' },
         { role: 'user', content: `问题：${question}\n\n受限查询结果：${JSON.stringify(data)}` },
       ],
     }),

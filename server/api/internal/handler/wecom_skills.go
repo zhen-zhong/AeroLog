@@ -30,6 +30,7 @@ type wecomSkillInput struct {
 
 func (h *WeComBotHandler) registeredSkills() []wecomSkill {
 	return []wecomSkill{
+		{definition: WeComSkillDefinition{Name: "directory_usage_detail", Description: "查询白名单目录的一级子项占用", Aliases: []string{"/usr", "/opt", "/var/lib/docker", "目录里"}}, match: matchesAny("/usr", "/opt", "/var/lib/docker", "/var/lib/aerolog", "/var/log", "/var/cache", "/tmp", "/home"), execute: h.executeDirectoryUsageDetail},
 		{definition: WeComSkillDefinition{Name: "directory_usage", Description: "查询服务器白名单目录的占用空间", Aliases: []string{"目录", "哪些占用", "占用空间"}}, match: matchesAny("目录", "哪些占用", "占用空间"), execute: h.executeDirectoryUsage},
 		{definition: WeComSkillDefinition{Name: "disk_usage", Description: "查询服务器各挂载点磁盘空间占用", Aliases: []string{"磁盘", "磁碟", "空间占用", "磁盘占用"}}, match: matchesAny("磁盘", "磁碟", "空间占用", "磁盘占用"), execute: h.executeDiskUsage},
 		{definition: WeComSkillDefinition{Name: "server_status", Description: "查询服务器资源和核心服务存活状态", Aliases: []string{"服务器", "主机", "server"}}, match: matchesAny("服务器", "主机", "server"), execute: h.executeServerStatus},

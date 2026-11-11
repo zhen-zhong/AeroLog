@@ -40,9 +40,15 @@ type inspector struct {
 	root  string
 	mu    sync.Mutex
 	cache struct {
-		at   time.Time
-		data []directorySize
+		at      time.Time
+		data    []directorySize
+		details map[string]directoryDetailCache
 	}
+}
+
+type directoryDetailCache struct {
+	at   time.Time
+	data []directorySize
 }
 
 func main() {
@@ -58,6 +64,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", service.health)
 	mux.HandleFunc("/v1/disk-usage", service.diskUsage)
+	mux.HandleFunc("/v1/directory-usage", service.directoryUsage)
 	addr := os.Getenv("AEROLOG_HOST_INSPECTOR_ADDR")
 	if addr == "" {
 		addr = ":8086"
@@ -72,8 +79,7 @@ func (s *inspector) health(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *inspector) diskUsage(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet || subtle.ConstantTimeCompare([]byte(r.Header.Get(tokenHeader)), []byte(s.token)) != 1 {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	if !s.authorized(w, r) {
 		return
 	}
 	data := s.cachedScan(r.Context())
@@ -83,6 +89,33 @@ func (s *inspector) diskUsage(w http.ResponseWriter, r *http.Request) {
 		"scope":       "只读白名单目录；实际分配磁盘块，硬链接去重，符号链接不跟随",
 		"directories": data,
 	})
+}
+
+func (s *inspector) directoryUsage(w http.ResponseWriter, r *http.Request) {
+	if !s.authorized(w, r) {
+		return
+	}
+	path := strings.TrimSpace(r.URL.Query().Get("path"))
+	if !isAllowedDirectory(path) {
+		http.Error(w, "path is not allowed", http.StatusBadRequest)
+		return
+	}
+	data := s.cachedDetail(r.Context(), path)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"checked_at":  time.Now().UTC().Format(time.RFC3339),
+		"path":        path,
+		"scope":       "仅白名单目录的一级子项；实际分配磁盘块，硬链接去重，符号链接不跟随",
+		"directories": data,
+	})
+}
+
+func (s *inspector) authorized(w http.ResponseWriter, r *http.Request) bool {
+	if r.Method == http.MethodGet && subtle.ConstantTimeCompare([]byte(r.Header.Get(tokenHeader)), []byte(s.token)) == 1 {
+		return true
+	}
+	http.Error(w, "unauthorized", http.StatusUnauthorized)
+	return false
 }
 
 func (s *inspector) cachedScan(ctx context.Context) []directorySize {
@@ -102,6 +135,65 @@ func (s *inspector) cachedScan(ctx context.Context) []directorySize {
 	s.cache.at = time.Now()
 	s.cache.data = data
 	return data
+}
+
+func (s *inspector) cachedDetail(ctx context.Context, path string) []directorySize {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if cached, ok := s.cache.details[path]; ok && time.Since(cached.at) < 10*time.Minute {
+		return cached.data
+	}
+	scanCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	data := s.scanDirectoryChildren(scanCtx, path)
+	if s.cache.details == nil {
+		s.cache.details = make(map[string]directoryDetailCache)
+	}
+	s.cache.details[path] = directoryDetailCache{at: time.Now(), data: data}
+	return data
+}
+
+func (s *inspector) scanDirectoryChildren(ctx context.Context, path string) []directorySize {
+	root := filepath.Join(s.root, path)
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return []directorySize{{Path: path, Completed: false}}
+	}
+	seen := map[[2]uint64]struct{}{}
+	data := make([]directorySize, 0, len(entries)+1)
+	directFiles := directorySize{Path: path + "/(直接文件)", Completed: true}
+	for _, entry := range entries {
+		if ctx.Err() != nil {
+			directFiles.Completed = false
+			break
+		}
+		childPath := filepath.Join(path, entry.Name())
+		if entry.IsDir() {
+			data = append(data, s.scanDirectory(ctx, childPath, seen))
+			continue
+		}
+		if entry.Type().IsRegular() {
+			if info, err := entry.Info(); err == nil {
+				directFiles.Bytes += allocatedBytes(info, seen)
+			} else {
+				directFiles.Completed = false
+			}
+		}
+	}
+	if directFiles.Bytes > 0 || !directFiles.Completed {
+		data = append(data, directFiles)
+	}
+	sort.Slice(data, func(i, j int) bool { return data[i].Bytes > data[j].Bytes })
+	return data
+}
+
+func isAllowedDirectory(path string) bool {
+	for _, allowed := range allowedDirectories {
+		if path == allowed {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *inspector) scanDirectory(ctx context.Context, path string, seen map[[2]uint64]struct{}) directorySize {
