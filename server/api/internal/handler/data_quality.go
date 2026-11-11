@@ -49,6 +49,11 @@ type sensorsQueueHealth struct {
 	Error       string  `json:"error,omitempty"`
 }
 
+type prometheusVectorValue struct {
+	Metric map[string]string
+	Value  float64
+}
+
 func (h *DataQualityHandler) Register(r *gin.RouterGroup) {
 	r.GET("/data-quality/sensorsdata", h.sensorsDataQuality)
 	r.POST("/data-quality/sensorsdata/reconcile", h.reconcileSensorsData)
@@ -220,6 +225,14 @@ func (h *DataQualityHandler) sharedQueueHealth(ctx context.Context) sensorsQueue
 }
 
 func (h *DataQualityHandler) prometheusNumber(ctx context.Context, query string) (float64, error) {
+	values, err := h.prometheusVector(ctx, query)
+	if err != nil || len(values) == 0 {
+		return 0, err
+	}
+	return values[0].Value, nil
+}
+
+func (h *DataQualityHandler) prometheusVector(ctx context.Context, query string) ([]prometheusVectorValue, error) {
 	client := h.HTTPClient
 	if client == nil {
 		client = &http.Client{Timeout: 3 * time.Second}
@@ -227,33 +240,48 @@ func (h *DataQualityHandler) prometheusNumber(ctx context.Context, query string)
 	endpoint := h.PrometheusURL + "/api/v1/query?query=" + url.QueryEscape(query)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return 0, pgx.ErrNoRows
+		return nil, pgx.ErrNoRows
 	}
 	var payload struct {
 		Status string `json:"status"`
 		Data   struct {
 			Result []struct {
-				Value []json.RawMessage `json:"value"`
+				Metric map[string]string `json:"metric"`
+				Value  []json.RawMessage `json:"value"`
 			} `json:"result"`
 		} `json:"data"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return 0, err
+		return nil, err
 	}
-	if payload.Status != "success" || len(payload.Data.Result) == 0 || len(payload.Data.Result[0].Value) < 2 {
-		return 0, pgx.ErrNoRows
+	if payload.Status != "success" || len(payload.Data.Result) == 0 {
+		return nil, pgx.ErrNoRows
 	}
-	var raw string
-	if err := json.Unmarshal(payload.Data.Result[0].Value[1], &raw); err != nil {
-		return 0, err
+	values := make([]prometheusVectorValue, 0, len(payload.Data.Result))
+	for _, item := range payload.Data.Result {
+		if len(item.Value) < 2 {
+			continue
+		}
+		var raw string
+		if err := json.Unmarshal(item.Value[1], &raw); err != nil {
+			return nil, err
+		}
+		value, err := strconv.ParseFloat(raw, 64)
+		if err != nil {
+			return nil, err
+		}
+		values = append(values, prometheusVectorValue{Metric: item.Metric, Value: value})
 	}
-	return strconv.ParseFloat(raw, 64)
+	if len(values) == 0 {
+		return nil, pgx.ErrNoRows
+	}
+	return values, nil
 }

@@ -25,6 +25,7 @@ type wecomSkill struct {
 
 func (h *WeComBotHandler) registeredSkills() []wecomSkill {
 	return []wecomSkill{
+		{definition: WeComSkillDefinition{Name: "disk_usage", Description: "查询服务器各挂载点磁盘空间占用", Aliases: []string{"磁盘", "磁碟", "空间占用", "磁盘占用"}}, match: matchesAny("磁盘", "磁碟", "空间占用", "磁盘占用"), execute: h.executeDiskUsage},
 		{definition: WeComSkillDefinition{Name: "server_status", Description: "查询服务器资源和核心服务存活状态", Aliases: []string{"服务器", "主机", "server"}}, match: matchesAny("服务器", "主机", "server"), execute: h.executeServerStatus},
 		{definition: WeComSkillDefinition{Name: "kafka_status", Description: "查询神策 Kafka 消费者、lag 和死信队列", Aliases: []string{"kafka", "消息队列", "积压", "dlq"}}, match: matchesAny("kafka", "消息队列", "积压", "dlq"), execute: h.executeKafkaStatus},
 		{definition: WeComSkillDefinition{Name: "ads_summary", Description: "查询项目当天或昨天广告事件汇总", Aliases: []string{"广告", "ad_show", "广告数据"}}, match: matchesAny("广告", "ad_show", "广告数据"), execute: h.executeAdsSummary},
@@ -72,6 +73,32 @@ func (h *WeComBotHandler) executeServerStatus(ctx context.Context, _ string) (gi
 		}
 	}
 	return metrics, nil
+}
+
+func (h *WeComBotHandler) executeDiskUsage(ctx context.Context, _ string) (gin.H, error) {
+	if h.Monitor == nil {
+		return nil, errors.New("服务器监控不可用")
+	}
+	const query = `topk(10, 100 * (1 - node_filesystem_avail_bytes{job="aerolog-node",fstype!~"tmpfs|overlay|squashfs"} / node_filesystem_size_bytes{job="aerolog-node",fstype!~"tmpfs|overlay|squashfs"}))`
+	values, err := h.Monitor.prometheusVector(ctx, query)
+	if err != nil {
+		return nil, errors.New("暂时无法读取磁盘空间")
+	}
+	mounts := make([]gin.H, 0, len(values))
+	for _, value := range values {
+		mounts = append(mounts, gin.H{
+			"mountpoint":   value.Metric["mountpoint"],
+			"device":       value.Metric["device"],
+			"fstype":       value.Metric["fstype"],
+			"used_percent": value.Value,
+		})
+	}
+	return gin.H{
+		"skill":      "disk_usage",
+		"checked_at": time.Now().In(time.FixedZone("UTC+8", 8*3600)).Format("2006-01-02 15:04:05 UTC+08:00"),
+		"scope":      "挂载点文件系统，不含目录级明细",
+		"mounts":     mounts,
+	}, nil
 }
 
 func (h *WeComBotHandler) executeKafkaStatus(ctx context.Context, _ string) (gin.H, error) {
