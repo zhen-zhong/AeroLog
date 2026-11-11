@@ -11,8 +11,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// WeComSkillDefinition is metadata for a fixed, read-only bot capability.
-// New skills register here instead of modifying the message transport layer.
+// WeComSkillDefinition 是固定只读机器人能力的元数据。
+// 新增 Skill 在此注册，无需修改消息传输层。
 type WeComSkillDefinition struct {
 	Name        string   `json:"name"`
 	Description string   `json:"description"`

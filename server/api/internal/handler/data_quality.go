@@ -16,7 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// DataQualityHandler returns source-specific project ingestion health plus shared Kafka pipeline health.
+// DataQualityHandler 返回数据源项目的接入健康度及共享 Kafka 链路健康度。
 type DataQualityHandler struct {
 	PG              *pgxpool.Pool
 	CH              driver.Conn

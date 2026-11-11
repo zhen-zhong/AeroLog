@@ -10,8 +10,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// WeComBotHandler only exposes fixed, read-only analytics to the internal bot
-// service. It never accepts AI-generated SQL.
+// WeComBotHandler 仅向内部机器人服务暴露固定的只读数据查询，
+// 不接受 AI 生成的 SQL。
 type WeComBotHandler struct {
 	PG                 *pgxpool.Pool
 	CH                 driver.Conn

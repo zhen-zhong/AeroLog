@@ -38,8 +38,7 @@ services:
         condition: service_healthy
     networks:
       - internal
-      # Sensors Data OpenAPI verification needs outbound access while API-to-DB
-      # traffic remains on the internal-only network.
+      # 神策 OpenAPI 校验需要出网；API 到数据库的流量仍保留在仅内部网络。
       - api-egress
     mem_limit: 192m
 
@@ -58,8 +57,7 @@ services:
       - api-egress
     mem_limit: 128m
 
-  # Read-only host filesystem inspector. It exposes only fixed aggregate
-  # directory sizes to the API over the internal Docker network.
+  # 只读宿主机文件系统巡检服务，仅通过 Docker 内网向 API 提供固定目录聚合大小。
   host-inspector:
     build:
       context: ../..
@@ -94,8 +92,7 @@ services:
     environment:
       AEROLOG_ADDR: ":8081"
       AEROLOG_METRICS_ADDR: ":9101"
-      # Default uses the bundled Redpanda. Set AEROLOG_KAFKA_BROKERS in the
-      # private .env to reuse a managed Kafka cluster instead.
+      # 默认使用内置 Redpanda。若需复用托管 Kafka 集群，在私有 .env 设置 AEROLOG_KAFKA_BROKERS。
       AEROLOG_KAFKA_BROKERS: ${AEROLOG_KAFKA_BROKERS:-redpanda:9092}
       AEROLOG_PG_DSN: postgres://aerolog:${POSTGRES_PASSWORD}@postgres:5432/aerolog?sslmode=disable
       AEROLOG_REDIS_ADDR: redis:6379
@@ -106,8 +103,7 @@ services:
         condition: service_healthy
     networks:
       - internal
-      # Gives the service an egress route when AEROLOG_KAFKA_BROKERS points
-      # to a managed Kafka outside Docker's internal-only network.
+      # 当 AEROLOG_KAFKA_BROKERS 指向 Docker 内部网络外的托管 Kafka 时，为服务提供出网路由。
       - kafka-ingress
     mem_limit: 144m
 
@@ -120,8 +116,7 @@ services:
     restart: unless-stopped
     env_file: ${AEROLOG_ENV_FILE:-.env}
     environment:
-      # Default uses the bundled Redpanda. Set AEROLOG_KAFKA_BROKERS in the
-      # private .env to reuse a managed Kafka cluster instead.
+      # 默认使用内置 Redpanda。若需复用托管 Kafka 集群，在私有 .env 设置 AEROLOG_KAFKA_BROKERS。
       AEROLOG_KAFKA_BROKERS: ${AEROLOG_KAFKA_BROKERS:-redpanda:9092}
       AEROLOG_CH_ADDR: clickhouse:9000
       AEROLOG_CH_DB: aerolog
@@ -136,14 +131,11 @@ services:
         condition: service_healthy
     networks:
       - internal
-      # Gives the service an egress route when AEROLOG_KAFKA_BROKERS points
-      # to a managed Kafka outside Docker's internal-only network.
+      # 当 AEROLOG_KAFKA_BROKERS 指向 Docker 内部网络外的托管 Kafka 时，为服务提供出网路由。
       - kafka-ingress
     mem_limit: 176m
 
-  # Optional Sensors Data Kafka importer. It is deliberately profile-gated so
-  # a deployment cannot consume external data before a local target project is
-  # explicitly configured.
+  # 可选神策 Kafka 导入器。刻意使用 profile 隔离，避免未配置本地目标项目时就消费外部数据。
   sensors-consumer:
     build:
       context: ../..
@@ -159,8 +151,7 @@ services:
       AEROLOG_GROUP_ID: ${AEROLOG_SENSORS_GROUP_ID:-aerolog-sensors-consumer}
       AEROLOG_INPUT_FORMAT: sensors_flatten_json
       AEROLOG_SENSORS_TARGET_PROJECT_ID: ${AEROLOG_SENSORS_TARGET_PROJECT_ID:-0}
-      # Synchronous, bounded writes keep Kafka offsets uncommitted while
-      # ClickHouse is unavailable, providing backpressure instead of loss.
+      # 有界同步写入：ClickHouse 不可用时不提交 Kafka offset，通过背压避免数据丢失。
       AEROLOG_CONSUMER_BATCH_SIZE: ${AEROLOG_CONSUMER_BATCH_SIZE:-200}
       AEROLOG_CONSUMER_BATCH_MS: ${AEROLOG_CONSUMER_BATCH_MS:-5000}
       AEROLOG_CONSUMER_WRITE_TIMEOUT_MS: ${AEROLOG_CONSUMER_WRITE_TIMEOUT_MS:-15000}
@@ -182,8 +173,7 @@ services:
       - kafka-ingress
     mem_limit: 176m
 
-  # Optional Sensors Data profile importer. Keep its consumer group and topic
-  # separate from event ingestion so profile delays never block events.
+  # 可选神策用户属性导入器。消费者组和 Topic 与事件接入分离，避免属性延迟阻塞事件。
   sensors-profile-consumer:
     build:
       context: ../..
@@ -266,13 +256,11 @@ services:
       - --overprovisioned
       - --node-id=0
       - --check=false
-      # Keep the AeroLog pipeline on the Docker-only listener. The external
-      # listener is exclusively for Sensors Data's Kafka subscription.
+      # AeroLog 链路仅使用 Docker 内部监听器；外部监听器仅供神策 Kafka 订阅使用。
       - --kafka-addr=INTERNAL://0.0.0.0:9092,EXTERNAL://0.0.0.0:19092
       - --advertise-kafka-addr=INTERNAL://redpanda:9092,EXTERNAL://${AEROLOG_KAFKA_EXTERNAL_ADVERTISED_ADDR:-kafka.example.com}:9092
     ports:
-      # Bind IPv4 only. Access is restricted by the cloud security group and
-      # deploy/production/scripts/apply-kafka-firewall.sh on the host.
+      # 仅绑定 IPv4。访问受云安全组及宿主机 deploy/production/scripts/apply-kafka-firewall.sh 限制。
       - "${AEROLOG_KAFKA_BIND_ADDR:-0.0.0.0}:9092:19092"
     volumes:
       - /var/lib/aerolog/redpanda:/var/lib/redpanda/data
@@ -283,8 +271,7 @@ services:
       retries: 18
     networks:
       - internal
-      # A dedicated non-internal network publishes the bundled Kafka listener
-      # and supplies egress for Collector/Consumer when using managed Kafka.
+      # 专用非内部网络发布内置 Kafka 监听器，并为使用托管 Kafka 的 Collector/Consumer 提供出网能力。
       - kafka-ingress
     mem_limit: 900m
 
@@ -324,8 +311,7 @@ services:
       retries: 18
     networks:
       - internal
-    # Sensors Data realtime ingestion can exceed the 768MB baseline during
-    # merges and analytical reads. Keep enough headroom to avoid OOM restarts.
+    # 神策实时接入在合并和分析读取时可能超过 768MB 基线，保留足够内存余量避免 OOM 重启。
     mem_limit: 2g
 
   prometheus:
@@ -381,5 +367,5 @@ networks:
   internal:
     internal: true
   kafka-ingress:
-  # Dedicated outbound path for API integrations such as Sensors Data OpenAPI.
+  # API 集成（如神策 OpenAPI）的专用出网通道。
   api-egress:

@@ -131,9 +131,8 @@ func (s *inspector) scanDirectory(ctx context.Context, path string, seen map[[2]
 	return item
 }
 
-// allocatedBytes reports physical blocks rather than logical file length. Docker
-// overlay layers contain sparse files and hard links, which otherwise inflate
-// directory totals far beyond host disk usage.
+// allocatedBytes 返回实际分配磁盘块，而非逻辑文件长度。Docker overlay
+// 层包含稀疏文件和硬链接；若直接累计逻辑大小，会使目录总量远大于实际磁盘占用。
 func allocatedBytes(info os.FileInfo, seen map[[2]uint64]struct{}) int64 {
 	stat, ok := info.Sys().(*syscall.Stat_t)
 	if !ok {
