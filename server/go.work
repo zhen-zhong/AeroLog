@@ -4,5 +4,6 @@ use (
 	./api
 	./collector
 	./consumer
+	./hostinspector
 	./pkg
 )

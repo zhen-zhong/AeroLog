@@ -13,10 +13,12 @@ import (
 // WeComBotHandler only exposes fixed, read-only analytics to the internal bot
 // service. It never accepts AI-generated SQL.
 type WeComBotHandler struct {
-	PG      *pgxpool.Pool
-	CH      driver.Conn
-	Token   string
-	Monitor *DataQualityHandler
+	PG                 *pgxpool.Pool
+	CH                 driver.Conn
+	Token              string
+	Monitor            *DataQualityHandler
+	HostInspectorURL   string
+	HostInspectorToken string
 }
 
 func (h *WeComBotHandler) Register(r *gin.RouterGroup) {

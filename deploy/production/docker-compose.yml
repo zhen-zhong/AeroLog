@@ -58,6 +58,31 @@ services:
       - api-egress
     mem_limit: 128m
 
+  # Read-only host filesystem inspector. It exposes only fixed aggregate
+  # directory sizes to the API over the internal Docker network.
+  host-inspector:
+    build:
+      context: ../..
+      dockerfile: deploy/production/Dockerfile.go
+      args:
+        SERVICE: hostinspector
+    restart: unless-stopped
+    user: "0:0"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    env_file: ${AEROLOG_ENV_FILE:-.env}
+    environment:
+      AEROLOG_HOST_ROOT: /host
+      AEROLOG_HOST_INSPECTOR_ADDR: ":8086"
+    volumes:
+      - /:/host:ro,rslave
+    networks:
+      - internal
+    mem_limit: 96m
+
   collector:
     build:
       context: ../..

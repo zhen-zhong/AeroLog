@@ -2,7 +2,9 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
 	"strings"
 	"time"
 
@@ -25,11 +27,49 @@ type wecomSkill struct {
 
 func (h *WeComBotHandler) registeredSkills() []wecomSkill {
 	return []wecomSkill{
+		{definition: WeComSkillDefinition{Name: "directory_usage", Description: "查询服务器白名单目录的占用空间", Aliases: []string{"目录", "哪些占用", "占用空间"}}, match: matchesAny("目录", "哪些占用", "占用空间"), execute: h.executeDirectoryUsage},
 		{definition: WeComSkillDefinition{Name: "disk_usage", Description: "查询服务器各挂载点磁盘空间占用", Aliases: []string{"磁盘", "磁碟", "空间占用", "磁盘占用"}}, match: matchesAny("磁盘", "磁碟", "空间占用", "磁盘占用"), execute: h.executeDiskUsage},
 		{definition: WeComSkillDefinition{Name: "server_status", Description: "查询服务器资源和核心服务存活状态", Aliases: []string{"服务器", "主机", "server"}}, match: matchesAny("服务器", "主机", "server"), execute: h.executeServerStatus},
 		{definition: WeComSkillDefinition{Name: "kafka_status", Description: "查询神策 Kafka 消费者、lag 和死信队列", Aliases: []string{"kafka", "消息队列", "积压", "dlq"}}, match: matchesAny("kafka", "消息队列", "积压", "dlq"), execute: h.executeKafkaStatus},
 		{definition: WeComSkillDefinition{Name: "ads_summary", Description: "查询项目当天或昨天广告事件汇总", Aliases: []string{"广告", "ad_show", "广告数据"}}, match: matchesAny("广告", "ad_show", "广告数据"), execute: h.executeAdsSummary},
 	}
+}
+
+func (h *WeComBotHandler) executeDirectoryUsage(ctx context.Context, _ string) (gin.H, error) {
+	if h.HostInspectorURL == "" || h.HostInspectorToken == "" {
+		return nil, errors.New("目录巡检服务未配置")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, h.HostInspectorURL+"/v1/disk-usage", nil)
+	if err != nil {
+		return nil, errors.New("创建目录巡检请求失败")
+	}
+	req.Header.Set("X-AeroLog-Host-Inspector-Token", h.HostInspectorToken)
+	client := &http.Client{Timeout: 25 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, errors.New("目录巡检服务不可用")
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, errors.New("目录巡检服务返回异常")
+	}
+	var payload struct {
+		CheckedAt   string `json:"checked_at"`
+		Scope       string `json:"scope"`
+		Directories []struct {
+			Path      string `json:"path"`
+			Bytes     int64  `json:"bytes"`
+			Completed bool   `json:"completed"`
+		} `json:"directories"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return nil, errors.New("目录巡检数据无效")
+	}
+	directories := make([]gin.H, 0, len(payload.Directories))
+	for _, item := range payload.Directories {
+		directories = append(directories, gin.H{"path": item.Path, "bytes": item.Bytes, "completed": item.Completed})
+	}
+	return gin.H{"skill": "directory_usage", "checked_at": payload.CheckedAt, "scope": payload.Scope, "directories": directories}, nil
 }
 
 func matchesAny(words ...string) func(string) bool {
