@@ -43,6 +43,46 @@ function parsePlan(content) {
   return { skill, params: { time_range: params.time_range } }
 }
 
+function parseHours(value) {
+  if (/^\d+$/.test(value)) return Number(value)
+  const digits = { 零: 0, 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 }
+  let total = 0
+  let current = 0
+  for (const char of value) {
+    if (char === '十') {
+      total += (current || 1) * 10
+      current = 0
+    } else if (char === '百') {
+      total += (current || 1) * 100
+      current = 0
+    } else if (Object.hasOwn(digits, char)) {
+      current = digits[char]
+    } else {
+      return 0
+    }
+  }
+  return total + current
+}
+
+// fallbackPlan 在 AI 规划超时时处理已支持的固定问法，避免查询链路整体失败。
+function fallbackPlan(question) {
+  const lower = question.toLowerCase()
+  if (/目录|哪些占用|占用空间/.test(lower)) return { skill: 'directory_usage', params: {} }
+  if (/磁盘|磁碟|空间占用|磁盘占用/.test(lower)) return { skill: 'disk_usage', params: {} }
+  if (/kafka|消息队列|积压|dlq/.test(lower)) return { skill: 'kafka_status', params: {} }
+  if (/服务器|主机|server/.test(lower)) return { skill: 'server_status', params: {} }
+  if (/广告|ad_show|广告数据/.test(lower)) {
+    const matched = lower.match(/(?:近|最近)\s*([0-9]+|[零一二两三四五六七八九十百]+)\s*个?小时/)
+    if (matched) {
+      const hours = parseHours(matched[1])
+      if (Number.isInteger(hours) && hours >= 1 && hours <= 168) return { skill: 'ads_summary', params: { time_range: 'last_hours', hours } }
+    }
+    if (/昨天|yesterday/.test(lower)) return { skill: 'ads_summary', params: { time_range: 'yesterday' } }
+    return { skill: 'ads_summary', params: { time_range: 'today' } }
+  }
+  throw new Error('未识别可查询的 Skill')
+}
+
 async function planSkill(question) {
   const response = await fetch(`${aiBaseURL}/v1/chat/completions`, {
     method: 'POST',
@@ -56,11 +96,21 @@ async function planSkill(question) {
         { role: 'user', content: question },
       ],
     }),
-    signal: AbortSignal.timeout(30000),
+    signal: AbortSignal.timeout(8000),
   })
   const payload = await response.json()
   if (!response.ok) throw new Error(payload?.error?.message || 'AI 查询规划失败')
   return parsePlan(payload?.choices?.[0]?.message?.content?.trim() || '')
+}
+
+function fallbackSummary(data) {
+  if (data?.skill === 'ads_summary') {
+    const events = Array.isArray(data.events) && data.events.length
+      ? data.events.map((item) => `- ${item.event}：${item.count} 次，${item.users} 去重用户`).join('\n')
+      : '- 无广告事件'
+    return `**${data.project_name} 广告数据**\n\n- 数据时间：${data.from} ～ ${data.to}\n- 广告事件总次数：${data.total_count}\n\n**主要事件**\n${events}`
+  }
+  return `查询完成，AI 整理超时。原始结果：\n\n\`\`\`json\n${JSON.stringify(data, null, 2)}\n\`\`\``
 }
 
 async function queryAnalytics(question, plan) {
@@ -88,7 +138,7 @@ async function summarize(question, data) {
         { role: 'user', content: `问题：${question}\n\n受限查询结果：${JSON.stringify(data)}` },
       ],
     }),
-    signal: AbortSignal.timeout(30000),
+    signal: AbortSignal.timeout(20000),
   })
   const payload = await response.json()
   if (!response.ok) throw new Error(payload?.error?.message || 'AI 请求失败')
@@ -102,9 +152,22 @@ bot.on('message.text', async (frame) => {
   const streamID = generateReqId('aerolog')
   try {
     await bot.replyStream(frame, streamID, '正在理解问题并查询 AeroLog 数据…', false)
-    const plan = await planSkill(content)
+    let plan
+    try {
+      plan = await planSkill(content)
+    } catch (error) {
+      console.warn('AI 查询规划失败，使用规则兜底', error instanceof Error ? error.message : error)
+      plan = fallbackPlan(content)
+    }
     const data = await queryAnalytics(content, plan)
-    await bot.replyStream(frame, streamID, await summarize(content, data), true)
+    let answer
+    try {
+      answer = await summarize(content, data)
+    } catch (error) {
+      console.warn('AI 数据整理失败，使用固定格式', error instanceof Error ? error.message : error)
+      answer = fallbackSummary(data)
+    }
+    await bot.replyStream(frame, streamID, answer, true)
   } catch (error) {
     console.error('wecom bot request failed', error instanceof Error ? error.message : error)
     await bot.replyStream(frame, streamID, `查询失败：${error instanceof Error ? error.message : '未知错误'}`, true)
