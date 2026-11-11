@@ -30,16 +30,17 @@ function parsePlan(content) {
   } catch {
     throw new Error('AI 返回的查询计划格式无效')
   }
-  if (!skillNames.has(plan?.skill)) throw new Error('未识别可查询的 Skill')
+  const skill = plan?.skill ?? plan?.tool
+  if (!skillNames.has(skill)) throw new Error('未识别可查询的 Skill')
   const params = plan?.params && typeof plan.params === 'object' && !Array.isArray(plan.params) ? plan.params : {}
-  if (plan.skill !== 'ads_summary') return { skill: plan.skill, params: {} }
+  if (skill !== 'ads_summary') return { skill, params: {} }
   if (!timeRanges.has(params.time_range)) throw new Error('广告数据时间范围无效')
   if (params.time_range === 'last_hours') {
     const hours = Number(params.hours)
     if (!Number.isInteger(hours) || hours < 1 || hours > 168) throw new Error('近几小时仅支持 1 到 168 小时')
-    return { skill: plan.skill, params: { time_range: params.time_range, hours } }
+    return { skill, params: { time_range: params.time_range, hours } }
   }
-  return { skill: plan.skill, params: { time_range: params.time_range } }
+  return { skill, params: { time_range: params.time_range } }
 }
 
 async function planSkill(question) {
