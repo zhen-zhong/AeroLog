@@ -1,0 +1,70 @@
+{
+  "title": "AeroLog WeCom Bot",
+  "uid": "aerolog-wecom-bot",
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "templating": { "list": [] },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "企业微信连接认证",
+      "gridPos": { "x": 0, "y": 0, "w": 6, "h": 4 },
+      "targets": [{ "expr": "max(aerolog_wecom_bot_websocket_authenticated)", "refId": "A" }],
+      "fieldConfig": { "defaults": { "mappings": [{ "type": "value", "options": { "0": { "text": "未认证", "color": "red" }, "1": { "text": "已认证", "color": "green" } } }] } }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "处理中请求",
+      "gridPos": { "x": 6, "y": 0, "w": 6, "h": 4 },
+      "targets": [{ "expr": "max(aerolog_wecom_bot_requests_inflight)", "refId": "A" }]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "请求失败 / 15m",
+      "gridPos": { "x": 12, "y": 0, "w": 6, "h": 4 },
+      "targets": [{ "expr": "sum(increase(aerolog_wecom_bot_requests_total{result=\"error\"}[15m]))", "refId": "A" }]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "兜底次数 / 15m",
+      "gridPos": { "x": 18, "y": 0, "w": 6, "h": 4 },
+      "targets": [{ "expr": "sum(increase(aerolog_wecom_bot_fallbacks_total[15m]))", "refId": "A" }]
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "请求完成速率（按 Skill / 结果）",
+      "gridPos": { "x": 0, "y": 4, "w": 12, "h": 8 },
+      "targets": [{ "expr": "sum by (skill, result) (rate(aerolog_wecom_bot_requests_total[5m]))", "legendFormat": "{{skill}} · {{result}}", "refId": "A" }]
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "阶段 p95 耗时",
+      "gridPos": { "x": 12, "y": 4, "w": 12, "h": 8 },
+      "targets": [{ "expr": "histogram_quantile(0.95, sum by (le, stage, result) (rate(aerolog_wecom_bot_stage_duration_seconds_bucket[5m])))", "legendFormat": "{{stage}} · {{result}}", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+    {
+      "id": 20,
+      "type": "timeseries",
+      "title": "阶段错误速率",
+      "gridPos": { "x": 0, "y": 12, "w": 12, "h": 8 },
+      "targets": [{ "expr": "sum by (stage, reason) (rate(aerolog_wecom_bot_stage_errors_total[5m]))", "legendFormat": "{{stage}} · {{reason}}", "refId": "A" }]
+    },
+    {
+      "id": 21,
+      "type": "timeseries",
+      "title": "兜底速率",
+      "gridPos": { "x": 12, "y": 12, "w": 12, "h": 8 },
+      "targets": [{ "expr": "sum by (stage, reason) (rate(aerolog_wecom_bot_fallbacks_total[5m]))", "legendFormat": "{{stage}} · {{reason}}", "refId": "A" }]
+    }
+  ]
+}
