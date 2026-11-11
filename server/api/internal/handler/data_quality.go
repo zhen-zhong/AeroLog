@@ -17,11 +17,12 @@ import (
 
 // DataQualityHandler returns source-specific project ingestion health plus shared Kafka pipeline health.
 type DataQualityHandler struct {
-	PG            *pgxpool.Pool
-	CH            driver.Conn
-	PrometheusURL string
-	EncryptionKey string
-	HTTPClient    *http.Client
+	PG              *pgxpool.Pool
+	CH              driver.Conn
+	PrometheusURL   string
+	EncryptionKey   string
+	WeComWebhookURL string
+	HTTPClient      *http.Client
 }
 
 type sensorsQualityProject struct {
@@ -48,6 +49,19 @@ type sensorsQueueHealth struct {
 func (h *DataQualityHandler) Register(r *gin.RouterGroup) {
 	r.GET("/data-quality/sensorsdata", h.sensorsDataQuality)
 	r.POST("/data-quality/sensorsdata/reconcile", h.reconcileSensorsData)
+	r.POST("/data-quality/wecom/test", h.testWeCom)
+}
+
+func (h *DataQualityHandler) testWeCom(c *gin.Context) {
+	if !IsPlatformAdmin(c) {
+		c.JSON(http.StatusForbidden, gin.H{"err": "仅平台管理员可发送测试告警"})
+		return
+	}
+	if err := h.sendWeComAlert(c.Request.Context(), "AeroLog 企业微信告警测试", []string{"机器人连接正常", "时间：" + time.Now().In(time.FixedZone("UTC+8", 8*3600)).Format("2006-01-02 15:04:05 UTC+08:00")}); err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"err": "企业微信告警发送失败"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"sent": true}})
 }
 
 func (h *DataQualityHandler) sensorsDataQuality(c *gin.Context) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"strings"
 	"time"
@@ -70,6 +71,31 @@ func (h *DataQualityHandler) runScheduledReconciliations(ctx context.Context) {
 		}
 		result := h.reconcileIntegration(ctx, integration, start, start)
 		h.saveScheduledReconciliation(ctx, integration.ProjectID, start, result)
+		h.notifyScheduledReconciliation(ctx, start, result)
+	}
+}
+
+func (h *DataQualityHandler) notifyScheduledReconciliation(ctx context.Context, day time.Time, result sensorsReconciliationProject) {
+	if result.Error == "" && (len(result.Rows) == 0 || !reconciliationHasAnomaly(result.Rows[0])) {
+		return
+	}
+	lines := []string{
+		"项目：" + result.ProjectName + "（" + result.SourceProject + "）",
+		"日期：" + day.Format("2006-01-02") + " · " + result.Timezone,
+	}
+	if result.Error != "" {
+		lines = append(lines, "状态：对账失败", "原因："+result.Error)
+	} else {
+		row := result.Rows[0]
+		lines = append(lines,
+			"状态：完整覆盖数据存在差异",
+			fmt.Sprintf("总事件：神策 %d / AeroLog %d", row.SensorsEvents, row.AeroLogEvents),
+		)
+	}
+	notifyCtx, cancel := context.WithTimeout(ctx, 6*time.Second)
+	defer cancel()
+	if err := h.sendWeComAlert(notifyCtx, "AeroLog 神策数据告警", lines); err != nil {
+		log.Printf("send WeCom reconciliation alert project=%d err: %v", result.ProjectID, err)
 	}
 }
 
