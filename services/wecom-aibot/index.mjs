@@ -165,6 +165,11 @@ function parsePlan(content) {
   return { skill, params: { time_range: params.time_range } }
 }
 
+function reportedTokenUsage(payload) {
+  const totalTokens = Number(payload?.usage?.total_tokens)
+  return Number.isInteger(totalTokens) && totalTokens >= 0 ? totalTokens : null
+}
+
 function parseHours(value) {
   if (/^\d+$/.test(value)) return Number(value)
   const digits = { 零: 0, 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 }
@@ -234,7 +239,7 @@ async function planSkill(question) {
   })
   const payload = await response.json()
   if (!response.ok) throw new Error(payload?.error?.message || 'AI 查询规划失败')
-  return parsePlan(payload?.choices?.[0]?.message?.content?.trim() || '')
+  return { plan: parsePlan(payload?.choices?.[0]?.message?.content?.trim() || ''), tokens: reportedTokenUsage(payload) }
 }
 
 function fallbackSummary(data) {
@@ -314,7 +319,14 @@ async function summarize(question, data) {
   })
   const payload = await response.json()
   if (!response.ok) throw new Error(payload?.error?.message || 'AI 请求失败')
-  return payload?.choices?.[0]?.message?.content?.trim() || 'AI 未返回内容'
+  return { answer: payload?.choices?.[0]?.message?.content?.trim() || 'AI 未返回内容', tokens: reportedTokenUsage(payload) }
+}
+
+function withResponseMeta(answer, elapsed, fixedSkill, tokens, tokensKnown) {
+  const tokenText = fixedSkill
+    ? '0（固定 Skill，未调用 AI）'
+    : tokensKnown ? String(tokens) : '未知（AI 服务未返回完整用量）'
+  return `${answer}\n\n---\n- 耗时：${elapsed.toFixed(1)} 秒\n- AI Token：${tokenText}`
 }
 
 bot.on('authenticated', () => {
@@ -337,21 +349,28 @@ bot.on('message.text', async (frame) => {
   let skill = 'unknown'
   let planFallback = false
   let summaryFallback = false
+  let aiTokens = 0
+  let aiTokensKnown = true
   try {
     const initialReplyStartedAt = performance.now()
     await bot.replyStream(frame, streamID, '正在理解问题并查询 AeroLog 数据…', false)
     recordStage('initial_reply', 'success', initialReplyStartedAt)
     let plan
     const planningStartedAt = performance.now()
-    plan = directOperationalPlan(content)
-    if (plan) {
+    const operationalPlan = directOperationalPlan(content)
+    plan = operationalPlan
+    if (operationalPlan) {
       recordStage('plan', 'rule', planningStartedAt)
       logEvent('plan_rule', { message_id: messageID, skill: plan.skill })
     } else {
       try {
-        plan = await planSkill(content)
+        const planned = await planSkill(content)
+        plan = planned.plan
+        if (planned.tokens === null) aiTokensKnown = false
+        else aiTokens += planned.tokens
         recordStage('plan', 'success', planningStartedAt)
       } catch (error) {
+        aiTokensKnown = false
         const reason = errorKind(error)
         recordStage('plan', 'error', planningStartedAt)
         increment('aerolog_wecom_bot_stage_errors_total', { stage: 'plan', reason })
@@ -375,14 +394,18 @@ bot.on('message.text', async (frame) => {
     }
     let answer
     const summaryStartedAt = performance.now()
-    if (directOperationalPlan(content)) {
+    if (operationalPlan) {
       answer = fallbackSummary(data)
       recordStage('summary', 'rule', summaryStartedAt)
     } else {
       try {
-        answer = await summarize(content, data)
+        const summarized = await summarize(content, data)
+        answer = summarized.answer
+        if (summarized.tokens === null) aiTokensKnown = false
+        else aiTokens += summarized.tokens
         recordStage('summary', 'success', summaryStartedAt)
       } catch (error) {
+        aiTokensKnown = false
         const reason = errorKind(error)
         recordStage('summary', 'error', summaryStartedAt)
         increment('aerolog_wecom_bot_stage_errors_total', { stage: 'summary', reason })
@@ -392,6 +415,7 @@ bot.on('message.text', async (frame) => {
         logEvent('summary_fallback', { message_id: messageID, reason, skill })
       }
     }
+    answer = withResponseMeta(answer, elapsedSeconds(requestStartedAt), Boolean(operationalPlan), aiTokens, aiTokensKnown)
     const finalReplyStartedAt = performance.now()
     await bot.replyStream(frame, streamID, answer, true)
     recordStage('final_reply', 'success', finalReplyStartedAt)
