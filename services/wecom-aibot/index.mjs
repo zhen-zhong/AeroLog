@@ -255,6 +255,17 @@ function directOperationalPlan(question) {
   return null
 }
 
+// directTrendPlan 处理核心指标与留存的确定问法，避免模型选错白名单指标。
+function directTrendPlan(question) {
+  const lower = question.toLowerCase()
+  if (/留存|次日留存|day1/.test(lower)) return { skill: 'retention_trend', params: { days: parseDays(lower) } }
+  if (/人均.*广告|广告.*人均/.test(lower)) return { skill: 'report_trend', params: { metric: 'ad_impressions_per_user', days: parseDays(lower), chart: requestedChart(lower) } }
+  if (/广告收入|金币/.test(lower)) return { skill: 'report_trend', params: { metric: 'ad_coin_revenue', days: parseDays(lower), chart: requestedChart(lower) } }
+  if (/新增用户|新用户/.test(lower)) return { skill: 'report_trend', params: { metric: 'new_users', days: parseDays(lower), chart: requestedChart(lower) } }
+  if (/广告展示次数|广告展示.*图|ad_show.*图/.test(lower)) return { skill: 'report_trend', params: { metric: 'ad_impressions', days: parseDays(lower), chart: requestedChart(lower) } }
+  return null
+}
+
 async function planSkill(question) {
   const response = await fetch(`${aiBaseURL}/v1/chat/completions`, {
     method: 'POST',
@@ -416,9 +427,9 @@ bot.on('message.text', async (frame) => {
     recordStage('initial_reply', 'success', initialReplyStartedAt)
     let plan
     const planningStartedAt = performance.now()
-    const operationalPlan = directOperationalPlan(content)
-    plan = operationalPlan
-    if (operationalPlan) {
+    const rulePlan = directOperationalPlan(content) || directTrendPlan(content)
+    plan = rulePlan
+    if (rulePlan) {
       recordStage('plan', 'rule', planningStartedAt)
       logEvent('plan_rule', { message_id: messageID, skill: plan.skill })
     } else {
@@ -474,7 +485,7 @@ bot.on('message.text', async (frame) => {
         logEvent('summary_fallback', { message_id: messageID, reason, skill })
       }
     }
-    answer = withResponseMeta(answer, elapsedSeconds(requestStartedAt), Boolean(operationalPlan), aiTokens, aiTokensKnown)
+    answer = withResponseMeta(answer, elapsedSeconds(requestStartedAt), Boolean(rulePlan), aiTokens, aiTokensKnown)
     const finalReplyStartedAt = performance.now()
     await bot.replyStream(frame, streamID, answer, true, chartMessageItem(data))
     recordStage('final_reply', 'success', finalReplyStartedAt)
