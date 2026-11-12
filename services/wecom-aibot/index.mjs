@@ -326,7 +326,8 @@ function withResponseMeta(answer, elapsed, fixedSkill, tokens, tokensKnown) {
   const tokenText = fixedSkill
     ? '0（固定 Skill，未调用 AI）'
     : tokensKnown ? String(tokens) : '未知（AI 服务未返回完整用量）'
-  return `${answer}\n\n---\n- 耗时：${elapsed.toFixed(1)} 秒\n- AI Token：${tokenText}`
+  const elapsedMilliseconds = Math.max(0, Math.round(elapsed * 1000))
+  return `${answer}\n\n> <font color="comment">耗时：${elapsedMilliseconds} ms · AI Token：${tokenText}</font>`
 }
 
 bot.on('authenticated', () => {
