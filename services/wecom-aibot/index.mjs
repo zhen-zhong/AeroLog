@@ -245,8 +245,8 @@ async function planSkill(question) {
 function fallbackSummary(data) {
   if (data?.skill === 'ads_summary') {
     const events = Array.isArray(data.events) && data.events.length
-      ? data.events.map((item) => `• ${item.event}：${item.count} 次，${item.users} 去重用户`).join('\n')
-      : '• 无广告事件'
+      ? data.events.map((item) => `- ${item.event}：${item.count} 次，${item.users} 去重用户`).join('\n')
+      : '- 无广告事件'
     return `**${data.project_name} 广告数据**\n\n- 数据时间：${data.from} ～ ${data.to}\n- 广告事件总次数：${data.total_count}\n\n**主要事件**\n${events}`
   }
   if (data?.skill === 'directory_usage_detail') {
@@ -311,7 +311,7 @@ async function summarize(question, data) {
       temperature: 0.2,
       max_tokens: 700,
       messages: [
-        { role: 'system', content: '你是 AeroLog 运维与数据助手。只能根据提供的 JSON 数据回答，不得编造数据。用简短中文纯文本整理结果，不使用 Markdown、星号、反引号、HTML 标签或代码块。需要列举内容时，每项以 Unicode 项目符号“• ”开头。skill=server_status 时列 CPU、内存、磁盘、API、采集服务状态；skill=disk_usage 时按使用率降序列出挂载点；skill=directory_usage 时按 bytes 降序列出目录及大小；skill=directory_usage_detail 时按 bytes 降序列出指定目录一级子项及大小，并说明只统计白名单一级子项；skill=kafka_status 时列消费者、lag、DLQ；广告数据时列时间范围、总次数、去重用户数、主要事件。缺失或 unavailable 必须明确说明。' },
+        { role: 'system', content: '你是 AeroLog 运维与数据助手。只能根据提供的 JSON 数据回答，不得编造数据。用简短中文纯文本整理结果，不使用星号、反引号、HTML 标签或代码块。需要列举内容时，每项统一以“- ”开头，不要使用 Unicode 项目符号。skill=server_status 时列 CPU、内存、磁盘、API、采集服务状态；skill=disk_usage 时按使用率降序列出挂载点；skill=directory_usage 时按 bytes 降序列出目录及大小；skill=directory_usage_detail 时按 bytes 降序列出指定目录一级子项及大小，并说明只统计白名单一级子项；skill=kafka_status 时列消费者、lag、DLQ；广告数据时列时间范围、总次数、去重用户数、主要事件。缺失或 unavailable 必须明确说明。' },
         { role: 'user', content: `问题：${question}\n\n受限查询结果：${JSON.stringify(data)}` },
       ],
     }),
