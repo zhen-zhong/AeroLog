@@ -262,7 +262,19 @@ function fallbackSummary(data) {
       : '- 没有可统计的挂载点'
     return `**磁盘空间占用**\n\n${filesystems}`
   }
+  if (data?.skill === 'server_status') {
+    return `**服务器状态**\n\n- 检测时间：${data.checked_at || '未知'}\n- API：${data.api_up === 1 ? '正常' : '异常'}\n- Collector：${data.collector_up === 1 ? '正常' : '异常'}\n- CPU：${formatPercent(data.cpu_percent)}\n- 内存：${formatPercent(data.memory_percent)}\n- 磁盘：${formatPercent(data.disk_percent)}`
+  }
+  if (data?.skill === 'kafka_status') {
+    const error = data.error ? `\n- 错误：${data.error}` : ''
+    return `**Kafka 状态**\n\n- 检测时间：${data.checked_at || '未知'}\n- 服务：${data.available ? '正常' : '异常'}\n- 消费者：${data.consumers_up ?? '未知'}\n- 积压：${data.kafka_lag ?? '未知'}\n- 最近 1 小时 DLQ：${data.dlq_last_hour ?? '未知'}${error}`
+  }
   return `查询完成，AI 整理超时。原始结果：\n\n\`\`\`json\n${JSON.stringify(data, null, 2)}\n\`\`\``
+}
+
+function formatPercent(value) {
+  const number = Number(value)
+  return Number.isFinite(number) ? `${number.toFixed(1)}%` : '未知'
 }
 
 function formatBytes(bytes) {
