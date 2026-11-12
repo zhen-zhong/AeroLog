@@ -1,5 +1,4 @@
 import AiBot, { generateReqId } from '@wecom/aibot-node-sdk'
-import { createHash } from 'node:crypto'
 import http from 'node:http'
 import { renderTrendChartPng } from './chart.mjs'
 
@@ -393,10 +392,19 @@ function usesFixedResponse(skill) {
   return new Set(['server_status', 'kafka_status', 'disk_usage', 'directory_usage', 'directory_usage_detail', 'report_trend', 'retention_trend']).has(skill)
 }
 
-function chartMessageItem(data) {
+function chartImage(data) {
   const image = renderTrendChartPng(data?.chart)
-  if (!image) return undefined
-  return [{ msgtype: 'image', image: { base64: image.toString('base64'), md5: createHash('md5').update(image).digest('hex') } }]
+  return image || null
+}
+
+// sendChartImage 将趋势图作为独立媒体消息发送，避免部分客户端忽略流式图文附件。
+async function sendChartImage(frame, image) {
+  if (!image) return false
+  const recipient = frame.body?.chatid || frame.body?.from?.userid
+  if (!recipient) return false
+  const uploaded = await bot.uploadMedia(image, { type: 'image', filename: 'aerolog-trend.png' })
+  await bot.sendMediaMessage(recipient, 'image', uploaded.media_id)
+  return true
 }
 
 bot.on('authenticated', () => {
@@ -487,8 +495,22 @@ bot.on('message.text', async (frame) => {
     }
     answer = withResponseMeta(answer, elapsedSeconds(requestStartedAt), Boolean(rulePlan), aiTokens, aiTokensKnown)
     const finalReplyStartedAt = performance.now()
-    await bot.replyStream(frame, streamID, answer, true, chartMessageItem(data))
+    await bot.replyStream(frame, streamID, answer, true)
     recordStage('final_reply', 'success', finalReplyStartedAt)
+    const image = chartImage(data)
+    if (image) {
+      const chartStartedAt = performance.now()
+      try {
+        const sent = await sendChartImage(frame, image)
+        recordStage('chart_reply', sent ? 'success' : 'skipped', chartStartedAt)
+        logEvent(sent ? 'chart_reply_sent' : 'chart_reply_skipped', { message_id: messageID, skill, bytes: image.length })
+      } catch (error) {
+        const reason = errorKind(error)
+        recordStage('chart_reply', 'error', chartStartedAt)
+        increment('aerolog_wecom_bot_stage_errors_total', { stage: 'chart_reply', reason })
+        logEvent('chart_reply_failed', { message_id: messageID, skill, reason })
+      }
+    }
     increment('aerolog_wecom_bot_requests_total', { result: 'success', skill })
     logEvent('request_completed', { message_id: messageID, skill, plan_fallback: planFallback, summary_fallback: summaryFallback, duration_ms: Math.round(elapsedSeconds(requestStartedAt) * 1000) })
   } catch (error) {
