@@ -1,5 +1,7 @@
 import AiBot, { generateReqId } from '@wecom/aibot-node-sdk'
+import { createHash } from 'node:crypto'
 import http from 'node:http'
+import { renderTrendChartPng } from './chart.mjs'
 
 const required = ['AEROLOG_WECOM_BOT_ID', 'AEROLOG_WECOM_BOT_SECRET', 'AEROLOG_WECOM_BOT_INTERNAL_TOKEN', 'AEROLOG_AI_BASE_URL', 'AEROLOG_AI_API_KEY', 'AEROLOG_AI_MODEL']
 const missing = required.filter((key) => !process.env[key])
@@ -134,13 +136,16 @@ const bot = new AiBot.WSClient({
   logger: sdkLogger,
 })
 
-const skillNames = new Set(['ads_summary', 'server_status', 'kafka_status', 'disk_usage', 'directory_usage', 'directory_usage_detail'])
+const skillNames = new Set(['ads_summary', 'server_status', 'kafka_status', 'disk_usage', 'directory_usage', 'directory_usage_detail', 'report_trend', 'retention_trend'])
 const timeRanges = new Set(['today', 'yesterday', 'last_hours'])
+const trendMetrics = new Set(['new_users', 'ad_impressions', 'ad_impressions_per_user', 'ad_coin_revenue'])
+const chartTypes = new Set(['line', 'bar'])
 
 const plannerPrompt = `你是 AeroLog 只读查询规划器。根据用户问题，仅输出一个 JSON 对象，不要 Markdown、解释或 SQL。
-可选 skill 仅有：ads_summary、server_status、kafka_status、disk_usage、directory_usage、directory_usage_detail。
+可选 skill 仅有：ads_summary、server_status、kafka_status、disk_usage、directory_usage、directory_usage_detail、report_trend、retention_trend。
 ads_summary 用于指定项目的广告、ad_show、广告数据；params 必须包含 time_range：today、yesterday 或 last_hours。用户说“近/最近 N 小时”时，必须使用 {"time_range":"last_hours","hours":N}；未指定时间时用 today。其他 skill 的 params 必须是 {}。
 server_status 用于服务器或主机资源与服务状态；kafka_status 用于 Kafka、消息队列、积压、DLQ；disk_usage 用于挂载点磁盘占用；directory_usage 用于哪些目录/文件占空间；directory_usage_detail 仅用于询问 /usr、/opt、/var/lib/docker、/var/lib/aerolog、/var/log、/var/cache、/tmp、/home 内部什么占空间。
+report_trend 用于指定项目的新增用户、广告展示次数、人均广告展示、广告收入（金）的按天图表；params 必须为 {"metric":"new_users|ad_impressions|ad_impressions_per_user|ad_coin_revenue","days":1至30整数,"chart":"line|bar"}。未说明天数时 days=7，未说明图表时 chart=line。retention_trend 用于指定项目的新用户留存趋势图；params 必须为 {"days":1至30整数}，未说明天数时 days=7。
 无法匹配时输出 {"skill":"unknown","params":{}}。`
 
 function parsePlan(content) {
@@ -155,14 +160,26 @@ function parsePlan(content) {
   const skill = plan?.skill ?? plan?.tool
   if (!skillNames.has(skill)) throw new Error('未识别可查询的 Skill')
   const params = plan?.params && typeof plan.params === 'object' && !Array.isArray(plan.params) ? plan.params : {}
-  if (skill !== 'ads_summary') return { skill, params: {} }
-  if (!timeRanges.has(params.time_range)) throw new Error('广告数据时间范围无效')
-  if (params.time_range === 'last_hours') {
-    const hours = Number(params.hours)
-    if (!Number.isInteger(hours) || hours < 1 || hours > 168) throw new Error('近几小时仅支持 1 到 168 小时')
-    return { skill, params: { time_range: params.time_range, hours } }
+  if (skill === 'ads_summary') {
+    if (!timeRanges.has(params.time_range)) throw new Error('广告数据时间范围无效')
+    if (params.time_range === 'last_hours') {
+      const hours = Number(params.hours)
+      if (!Number.isInteger(hours) || hours < 1 || hours > 168) throw new Error('近几小时仅支持 1 到 168 小时')
+      return { skill, params: { time_range: params.time_range, hours } }
+    }
+    return { skill, params: { time_range: params.time_range } }
   }
-  return { skill, params: { time_range: params.time_range } }
+  if (skill === 'report_trend') {
+    const days = Number(params.days)
+    if (!trendMetrics.has(params.metric) || !Number.isInteger(days) || days < 1 || days > 30 || !chartTypes.has(params.chart)) throw new Error('趋势图参数无效')
+    return { skill, params: { metric: params.metric, days, chart: params.chart } }
+  }
+  if (skill === 'retention_trend') {
+    const days = Number(params.days)
+    if (!Number.isInteger(days) || days < 1 || days > 30) throw new Error('留存趋势天数无效')
+    return { skill, params: { days } }
+  }
+  return { skill, params: {} }
 }
 
 function reportedTokenUsage(payload) {
@@ -191,6 +208,17 @@ function parseHours(value) {
   return total + current
 }
 
+function parseDays(question) {
+  const matched = question.match(/(?:近|最近)?\s*([0-9]+|[零一二两三四五六七八九十百]+)\s*(?:日|天)/)
+  if (!matched) return 7
+  const days = parseHours(matched[1])
+  return Number.isInteger(days) && days >= 1 && days <= 30 ? days : 7
+}
+
+function requestedChart(question) {
+  return /柱状图|柱图/.test(question) ? 'bar' : 'line'
+}
+
 // fallbackPlan 在 AI 规划超时时处理已支持的固定问法，避免查询链路整体失败。
 function fallbackPlan(question) {
   const lower = question.toLowerCase()
@@ -199,6 +227,11 @@ function fallbackPlan(question) {
   if (/磁盘|磁碟|空间占用|磁盘占用/.test(lower)) return { skill: 'disk_usage', params: {} }
   if (/kafka|消息队列|积压|dlq/.test(lower)) return { skill: 'kafka_status', params: {} }
   if (/服务器|主机|server/.test(lower)) return { skill: 'server_status', params: {} }
+  if (/留存|次日留存|day1/.test(lower)) return { skill: 'retention_trend', params: { days: parseDays(lower) } }
+  if (/人均.*广告|广告.*人均/.test(lower)) return { skill: 'report_trend', params: { metric: 'ad_impressions_per_user', days: parseDays(lower), chart: requestedChart(lower) } }
+  if (/广告收入|金币/.test(lower)) return { skill: 'report_trend', params: { metric: 'ad_coin_revenue', days: parseDays(lower), chart: requestedChart(lower) } }
+  if (/新增用户|新用户/.test(lower)) return { skill: 'report_trend', params: { metric: 'new_users', days: parseDays(lower), chart: requestedChart(lower) } }
+  if (/广告展示|ad_show/.test(lower)) return { skill: 'report_trend', params: { metric: 'ad_impressions', days: parseDays(lower), chart: requestedChart(lower) } }
   if (/广告|ad_show|广告数据/.test(lower)) {
     const matched = lower.match(/(?:近|最近)\s*([0-9]+|[零一二两三四五六七八九十百]+)\s*个?小时/)
     if (matched) {
@@ -274,12 +307,26 @@ function fallbackSummary(data) {
     const error = data.error ? `\n- 错误：${data.error}` : ''
     return `**Kafka 状态**\n\n- 检测时间：${data.checked_at || '未知'}\n- 服务：${data.available ? '正常' : '异常'}\n- 消费者：${data.consumers_up ?? '未知'}\n- 积压：${data.kafka_lag ?? '未知'}\n- 最近 1 小时 DLQ：${data.dlq_last_hour ?? '未知'}${error}`
   }
+  if (data?.skill === 'report_trend') {
+    const latest = Array.isArray(data.points) && data.points.length ? data.points[data.points.length - 1] : null
+    return `**${data.project_name} · ${data.metric}**\n\n- 数据时间：${data.from} ～ ${data.to}\n- 累计值：${formatMetricValue(data.total)}\n- 最新值：${latest ? `${latest.label}，${formatMetricValue(latest.value)}` : '无数据'}\n- 图表：${data.chart?.type === 'bar' ? '柱状图' : '折线图'}`
+  }
+  if (data?.skill === 'retention_trend') {
+    const dayOne = Array.isArray(data.points) ? data.points.find((point) => point.label === 'Day1') : null
+    return `**${data.project_name} · 新用户留存**\n\n- 同期范围：${data.from} ～ ${data.to}\n- Day1 留存：${dayOne ? formatPercent(dayOne.value) : '无数据'}\n- 图表：折线图`
+  }
   return `查询完成，AI 整理超时。原始结果：\n\n\`\`\`json\n${JSON.stringify(data, null, 2)}\n\`\`\``
 }
 
 function formatPercent(value) {
   const number = Number(value)
   return Number.isFinite(number) ? `${number.toFixed(1)}%` : '未知'
+}
+
+function formatMetricValue(value) {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return '未知'
+  return number.toLocaleString('zh-CN', { maximumFractionDigits: 2 })
 }
 
 function formatBytes(bytes) {
@@ -329,6 +376,16 @@ function withResponseMeta(answer, elapsed, fixedSkill, tokens, tokensKnown) {
   const elapsedMilliseconds = Math.max(0, Math.round(elapsed * 1000))
   const plainAnswer = answer.replace(/\*\*/g, '')
   return `${plainAnswer}\n\n· 耗时：${elapsedMilliseconds} ms · Token 消耗：${tokenText}`
+}
+
+function usesFixedResponse(skill) {
+  return new Set(['server_status', 'kafka_status', 'disk_usage', 'directory_usage', 'directory_usage_detail', 'report_trend', 'retention_trend']).has(skill)
+}
+
+function chartMessageItem(data) {
+  const image = renderTrendChartPng(data?.chart)
+  if (!image) return undefined
+  return [{ msgtype: 'image', image: { base64: image.toString('base64'), md5: createHash('md5').update(image).digest('hex') } }]
 }
 
 bot.on('authenticated', () => {
@@ -396,7 +453,7 @@ bot.on('message.text', async (frame) => {
     }
     let answer
     const summaryStartedAt = performance.now()
-    if (operationalPlan) {
+    if (usesFixedResponse(plan.skill)) {
       answer = fallbackSummary(data)
       recordStage('summary', 'rule', summaryStartedAt)
     } else {
@@ -419,7 +476,7 @@ bot.on('message.text', async (frame) => {
     }
     answer = withResponseMeta(answer, elapsedSeconds(requestStartedAt), Boolean(operationalPlan), aiTokens, aiTokensKnown)
     const finalReplyStartedAt = performance.now()
-    await bot.replyStream(frame, streamID, answer, true)
+    await bot.replyStream(frame, streamID, answer, true, chartMessageItem(data))
     recordStage('final_reply', 'success', finalReplyStartedAt)
     increment('aerolog_wecom_bot_requests_total', { result: 'success', skill })
     logEvent('request_completed', { message_id: messageID, skill, plan_fallback: planFallback, summary_fallback: summaryFallback, duration_ms: Math.round(elapsedSeconds(requestStartedAt) * 1000) })
@@ -430,7 +487,11 @@ bot.on('message.text', async (frame) => {
     logEvent('request_failed', { message_id: messageID, skill, reason, duration_ms: Math.round(elapsedSeconds(requestStartedAt) * 1000) })
     try {
       const replyStartedAt = performance.now()
-      await bot.replyStream(frame, streamID, `查询失败：${reason === 'timeout' ? '请求超时，请稍后重试' : '服务暂时不可用，请稍后重试'}`, true)
+      const message = reason === 'timeout'
+        ? '查询失败：请求超时，请稍后重试'
+        : reason === 'skill' ? '查询失败：暂不支持该查询方式，请说明项目名、指标与时间范围'
+          : '查询失败：服务暂时不可用，请稍后重试'
+      await bot.replyStream(frame, streamID, message, true)
       recordStage('error_reply', 'success', replyStartedAt)
     } catch (replyError) {
       const replyReason = errorKind(replyError)

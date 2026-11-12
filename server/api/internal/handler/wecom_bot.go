@@ -15,6 +15,7 @@ import (
 type WeComBotHandler struct {
 	PG                 *pgxpool.Pool
 	CH                 driver.Conn
+	Analytics          *AnalyticsHandler
 	Token              string
 	Monitor            *DataQualityHandler
 	HostInspectorURL   string
@@ -36,6 +37,9 @@ type wecomBotQuery struct {
 type wecomBotSkillParams struct {
 	TimeRange string `json:"time_range,omitempty"`
 	Hours     int    `json:"hours,omitempty"`
+	Metric    string `json:"metric,omitempty"`
+	Days      int    `json:"days,omitempty"`
+	Chart     string `json:"chart,omitempty"`
 }
 
 type wecomBotEvent struct {

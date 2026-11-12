@@ -2,5 +2,5 @@ FROM node:20-alpine
 WORKDIR /app
 COPY services/wecom-aibot/package.json services/wecom-aibot/package-lock.json ./
 RUN npm ci --omit=dev
-COPY services/wecom-aibot/index.mjs ./
+COPY services/wecom-aibot/index.mjs services/wecom-aibot/chart.mjs ./
 CMD ["node", "index.mjs"]

@@ -41,10 +41,10 @@ Prometheus ◄── API / Collector / Consumer / Node Exporter ──► Grafan
 
 | 服务 | 角色 | 权限边界 |
 |---|---|---|
-| `wecom-aibot` | 企业微信智能机器人长连接。广告等分析问题由 AI 规划固定 Skill；确定的运维问题直接走规则与固定格式。 | 仅可访问 API 与 AI 服务；密钥仅来自 `.env` |
+| `wecom-aibot` | 企业微信智能机器人长连接。广告与趋势分析由 AI 规划固定 Skill；确定的运维问题直接走规则与固定格式。趋势图在容器内生成 PNG，经企业微信图文回复发送。 | 仅可访问 API 与 AI 服务；密钥仅来自 `.env` |
 | `host-inspector` | 返回白名单目录的占用聚合，供 `directory_usage` Skill 使用。 | 只读挂载宿主机根目录、`cap_drop: ALL`、无 Docker Socket、仅 `internal` |
 
-当前可用 Skill：`ads_summary`、`server_status`、`kafka_status`、`disk_usage`、`directory_usage`、`directory_usage_detail`。AI 不能生成 SQL、执行 Shell 或请求任意路径。目录、磁盘、服务器、Kafka 等确定运维问法跳过 AI 规划和整理，直接调用固定只读 Skill 与对应固定模板；广告等分析问题 AI 规划超时后使用受限规则兜底，AI 整理超时后返回固定格式结果。机器人向 Prometheus 暴露阶段耗时、成功/失败、兜底次数、在途请求与连接认证状态；结构化日志只记录消息 ID、Skill、耗时与错误类别，不记录聊天正文。
+当前可用 Skill：`ads_summary`、`report_trend`、`retention_trend`、`server_status`、`kafka_status`、`disk_usage`、`directory_usage`、`directory_usage_detail`。`report_trend` 固定支持新增用户、广告展示次数、人均广告展示、广告收入（金）；`retention_trend` 固定使用 `$AppStart → $AppStart`。AI 不能生成 SQL、执行 Shell 或请求任意路径。目录、磁盘、服务器、Kafka 等确定运维问法跳过 AI 规划和整理，直接调用固定只读 Skill 与对应固定模板；分析问题 AI 规划超时后使用受限规则兜底，AI 整理超时后返回固定格式结果。机器人向 Prometheus 暴露阶段耗时、成功/失败、兜底次数、在途请求与连接认证状态；结构化日志只记录消息 ID、Skill、耗时与错误类别，不记录聊天正文。
 
 ### 2.3 数据与消息层
 
@@ -147,6 +147,11 @@ docker compose logs -f host-inspector --tail=100
 @AeroLog-ai-bot 近三个小时的RbowDrama广告数据整理一下发我
 @AeroLog-ai-bot 今天HaloDrama的广告数据
 @AeroLog-ai-bot 昨天Talevra的ad_show数据
+@AeroLog-ai-bot 近7日RbowDrama新增用户折线图
+@AeroLog-ai-bot 近30日HaloDrama广告展示次数柱状图
+@AeroLog-ai-bot 近7日RbowDrama人均广告展示折线图
+@AeroLog-ai-bot 近7日RbowDrama广告收入折线图
+@AeroLog-ai-bot 近7日RbowDrama留存趋势图
 
 @AeroLog-ai-bot 服务器现在状态
 @AeroLog-ai-bot Kafka积压和DLQ情况
@@ -155,7 +160,7 @@ docker compose logs -f host-inspector --tail=100
 @AeroLog-ai-bot /usr目录里什么占用最大
 ```
 
-机器人仅调用固定只读 Skill；不支持任意 SQL、Shell、文件读取、目录扫描或删除操作。每条正常回复末尾显示处理耗时与 Token 消耗：固定运维 Skill 为 `0（固定 Skill，未调用 AI）`；AI 服务未返回完整用量时显示未知。可在 Grafana 的 `AeroLog WeCom Bot` 面板查看连接状态、请求结果、阶段耗时、错误与兜底情况。
+机器人仅调用固定只读 Skill；不支持任意 SQL、Shell、文件读取、目录扫描或删除操作。趋势图由本地 PNG 渲染器生成，不将项目数据提交给外部图表服务。每条正常回复末尾显示处理耗时与 Token 消耗：固定运维 Skill 为 `0（固定 Skill，未调用 AI）`；AI 服务未返回完整用量时显示未知。可在 Grafana 的 `AeroLog WeCom Bot` 面板查看连接状态、请求结果、阶段耗时、错误与兜底情况。
 
 ## 7. 相关文档
 
