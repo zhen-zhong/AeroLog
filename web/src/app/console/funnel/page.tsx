@@ -18,12 +18,15 @@ import {
 } from "@/features/analytics/analytics-ui";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api, ConversionBreakdownRow, ConversionStep, FunnelStepInput } from "@/lib/api";
 import { useProjectStore } from "@/stores/project-store";
 
 const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
+const NONE = "__none__";
 
 export default function FunnelPage() {
   const projectId = useProjectStore((s) => s.projectId);
@@ -33,6 +36,9 @@ export default function FunnelPage() {
   const [windowSeconds, setWindowSeconds] = useState<number>(24 * 3600);
   const [breakdownProperty, setBreakdownProperty] = useState("");
   const [segmentId, setSegmentId] = useState<number | undefined>();
+  const [cohortEvent, setCohortEvent] = useState("");
+  const [cohortProperty, setCohortProperty] = useState("");
+  const [cohortValue, setCohortValue] = useState("");
   const [range, setRange] = useState<[Dayjs, Dayjs]>([
     dayjs().subtract(7, "day").startOf("day"),
     dayjs().endOf("day"),
@@ -50,6 +56,9 @@ export default function FunnelPage() {
     setBreakdownTruncated(false);
     setBreakdownProperty("");
     setSegmentId(undefined);
+    setCohortEvent("");
+    setCohortProperty("");
+    setCohortValue("");
     setError("");
   }, [projectId]);
 
@@ -85,6 +94,11 @@ export default function FunnelPage() {
     queryFn: () => api.listSegments(projectId!),
     enabled: !!projectId,
   });
+  const { data: cohortProperties } = useQuery({
+    queryKey: ["funnel_cohort_properties", projectId, cohortEvent],
+    queryFn: () => api.listProperties(projectId!, { scope: "event", event: cohortEvent, include_global: true }),
+    enabled: !!projectId && !!cohortEvent,
+  });
   const propertyRows = properties?.data || [];
   const eventOptions = useMemo(() => {
     const definitions = eventDefinitions?.data || [];
@@ -103,6 +117,9 @@ export default function FunnelPage() {
         window_seconds: windowSeconds,
         breakdown_property: breakdownProperty || undefined,
         segment_id: segmentId,
+        cohort_event: cohortEvent || undefined,
+        cohort_property: cohortProperty || undefined,
+        cohort_value: cohortProperty && cohortValue ? cohortValue : undefined,
       }),
     onSuccess: (res) => {
       setError("");
@@ -192,12 +209,12 @@ export default function FunnelPage() {
               <div className="grid gap-1.5">
                 <div className="text-sm font-medium">分组参数（可选）</div>
                 <Select
-                  value={breakdownProperty || "__none__"}
-                  onValueChange={(v) => setBreakdownProperty(v === "__none__" ? "" : v)}
+                  value={breakdownProperty || NONE}
+                  onValueChange={(v) => setBreakdownProperty(v === NONE ? "" : v)}
                 >
                   <SelectTrigger><SelectValue placeholder="不分组" /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="__none__">不分组</SelectItem>
+                    <SelectItem value={NONE}>不分组</SelectItem>
                     {propertyRows.map((p) => (
                       <SelectItem key={p.id} value={p.name}>{p.name}</SelectItem>
                     ))}
@@ -212,6 +229,21 @@ export default function FunnelPage() {
                 </Select>
                 <p className="text-xs text-muted-foreground">仅圈选分群中的用户。</p>
               </div>
+              <div className="grid gap-1.5">
+                <Label>筛选用户事件（可选）</Label>
+                <Select value={cohortEvent || NONE} onValueChange={(value) => { setCohortEvent(value === NONE ? "" : value); setCohortProperty(""); setCohortValue(""); }}>
+                  <SelectTrigger><SelectValue placeholder="不按事件筛选" /></SelectTrigger>
+                  <SelectContent><SelectItem value={NONE}>不按事件筛选</SelectItem>{eventOptions.map((event) => <SelectItem key={event.event} value={event.event}>{event.event}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+              {cohortEvent ? <div className="grid gap-1.5">
+                <Label>事件参数（可选）</Label>
+                <Select value={cohortProperty || NONE} onValueChange={(value) => { setCohortProperty(value === NONE ? "" : value); setCohortValue(""); }}>
+                  <SelectTrigger><SelectValue placeholder="仅发生过该事件" /></SelectTrigger>
+                  <SelectContent><SelectItem value={NONE}>仅发生过该事件</SelectItem>{(cohortProperties?.data || []).map((property) => <SelectItem key={property.name} value={property.name}>{property.display_name || property.name}</SelectItem>)}</SelectContent>
+                </Select>
+              </div> : null}
+              {cohortProperty ? <div className="grid gap-1.5"><Label htmlFor="funnel-cohort-value">参数值（可选）</Label><Input id="funnel-cohort-value" value={cohortValue} onChange={(event) => setCohortValue(event.target.value)} placeholder="留空表示参数存在" /></div> : null}
             </div>
 
             <div className="mt-5">
@@ -236,6 +268,9 @@ export default function FunnelPage() {
                   setResult([]);
                   setBreakdown([]);
                   setBreakdownTruncated(false);
+                  setCohortEvent("");
+                  setCohortProperty("");
+                  setCohortValue("");
                   setError("");
                 }}
               >

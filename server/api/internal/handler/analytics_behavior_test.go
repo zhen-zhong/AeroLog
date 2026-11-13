@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -51,5 +53,20 @@ func TestNormalizeBehaviorCohortAllowsPropertyExistenceFilter(t *testing.T) {
 	}
 	if body.CohortEvent != "mmp_singular_install" || body.CohortProperty != "mmp_singular_campaign_name" {
 		t.Fatalf("cohort filter was not normalized: %#v", body)
+	}
+}
+
+func TestAnalyticsCohortMemberQueryAndSegmentIntersectionKeepArgumentOrder(t *testing.T) {
+	cohortQuery, cohortArgs, err := analyticsCohortMemberQuery(4, 100, 200, analyticsCohortFilter{Event: "mmp_singular_install", Property: "mmp_singular_campaign_name", Value: "spring"})
+	if err != nil {
+		t.Fatalf("cohort query = %v", err)
+	}
+	query, args := intersectMemberQueries("SELECT distinct_id FROM users WHERE project_id=?", []any{uint32(4)}, cohortQuery, cohortArgs)
+	if !strings.Contains(query, "distinct_id IN (SELECT DISTINCT distinct_id FROM events") {
+		t.Fatalf("unexpected intersection query: %s", query)
+	}
+	want := []any{uint32(4), uint32(4), "mmp_singular_install", int64(100), int64(200), "mmp_singular_campaign_name", "mmp_singular_campaign_name", `"spring"`}
+	if !reflect.DeepEqual(args, want) {
+		t.Fatalf("args = %#v, want %#v", args, want)
 	}
 }

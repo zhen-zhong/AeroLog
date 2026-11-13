@@ -1141,6 +1141,9 @@ export const api = {
             window_seconds?: number;
             breakdown_property?: string;
             segment_id?: number;
+            cohort_event?: string;
+            cohort_property?: string;
+            cohort_value?: string;
         },
     ) =>
         req<
@@ -1163,6 +1166,9 @@ export const api = {
             days?: number;
             breakdown_property?: string;
             segment_id?: number;
+            cohort_event?: string;
+            cohort_property?: string;
+            cohort_value?: string;
         },
     ) => {
         const q = new URLSearchParams({
@@ -1174,6 +1180,9 @@ export const api = {
         if (params.days) q.set("days", String(params.days));
         if (params.breakdown_property) q.set("breakdown_property", params.breakdown_property);
         if (params.segment_id) q.set("segment_id", String(params.segment_id));
+        if (params.cohort_event) q.set("cohort_event", params.cohort_event);
+        if (params.cohort_property) q.set("cohort_property", params.cohort_property);
+        if (params.cohort_value) q.set("cohort_value", params.cohort_value);
         return req<
             ApiOne<{
                 overall: RetentionCohort[];

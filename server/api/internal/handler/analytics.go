@@ -504,6 +504,9 @@ func (h *AnalyticsHandler) conversion(c *gin.Context) {
 		WindowSeconds     int64             `json:"window_seconds"`
 		BreakdownProperty string            `json:"breakdown_property"`
 		SegmentID         int64             `json:"segment_id"`
+		CohortEvent       string            `json:"cohort_event"`
+		CohortProperty    string            `json:"cohort_property"`
+		CohortValue       string            `json:"cohort_value"`
 	}
 	if err := c.BindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
@@ -530,6 +533,12 @@ func (h *AnalyticsHandler) conversion(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
 		return
 	}
+	cohortQuery, cohortArgs, err := analyticsCohortMemberQuery(uint32(pid), body.From, body.To, analyticsCohortFilter{Event: body.CohortEvent, Property: body.CohortProperty, Value: body.CohortValue})
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
+		return
+	}
+	memberQuery, memberArgs = intersectMemberQueries(memberQuery, memberArgs, cohortQuery, cohortArgs)
 	steps, err := h.computeFunnelForMembers(ctx, uint32(pid), stepsInput, body.From, body.To, body.WindowSeconds, memberQuery, memberArgs)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
@@ -1459,6 +1468,11 @@ func (h *AnalyticsHandler) retention(c *gin.Context) {
 		from = to - int64(days+7)*24*3600*1000
 	}
 	breakdownProp := c.Query("breakdown_property")
+	cohortFilter := analyticsCohortFilter{
+		Event:    c.Query("cohort_event"),
+		Property: c.Query("cohort_property"),
+		Value:    c.Query("cohort_value"),
+	}
 	ctx := c.Request.Context()
 	segmentID := atoi64(c.Query("segment_id"))
 	memberQuery, memberArgs, err := h.analyticsSegmentMembers(ctx, int64(pid), segmentID)
@@ -1466,6 +1480,12 @@ func (h *AnalyticsHandler) retention(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
 		return
 	}
+	cohortQuery, cohortArgs, err := analyticsCohortMemberQuery(uint32(pid), from, to, cohortFilter)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
+		return
+	}
+	memberQuery, memberArgs = intersectMemberQueries(memberQuery, memberArgs, cohortQuery, cohortArgs)
 	timezone := clickHouseTimezone(h.projectTimezone(ctx, uint32(pid)))
 	overall, err := h.computeRetentionForMembers(ctx, uint32(pid), timezone, initEv, retEv, from, to, days, memberQuery, memberArgs)
 	if err != nil {

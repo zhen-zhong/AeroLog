@@ -65,18 +65,14 @@ func (h *AnalyticsHandler) loadBehaviorEvents(ctx context.Context, pid uint32, b
 			where += " AND event IN (" + joinStrs(holders, ", ") + ")"
 		}
 	}
-	if body.CohortEvent != "" {
-		cohortWhere := `project_id = ? AND event = ? AND time BETWEEN fromUnixTimestamp64Milli(?) AND fromUnixTimestamp64Milli(?)`
-		cohortArgs := []any{pid, body.CohortEvent, body.From, body.To}
-		if body.CohortProperty != "" {
-			cohortWhere += ` AND JSONExtractRaw(properties, ?) != ''`
-			cohortArgs = append(cohortArgs, body.CohortProperty)
-			if body.CohortValue != "" {
-				cohortWhere += ` AND JSONExtractRaw(properties, ?) = ?`
-				cohortArgs = append(cohortArgs, body.CohortProperty, rawJSONValue(body.CohortValue))
-			}
-		}
-		where += ` AND distinct_id IN (SELECT DISTINCT distinct_id FROM events WHERE ` + cohortWhere + `)`
+	cohortQuery, cohortArgs, err := analyticsCohortMemberQuery(pid, body.From, body.To, analyticsCohortFilter{
+		Event: body.CohortEvent, Property: body.CohortProperty, Value: body.CohortValue,
+	})
+	if err != nil {
+		return nil, false, &queryTableError{Status: http.StatusBadRequest, Msg: err.Error()}
+	}
+	if cohortQuery != "" {
+		where += ` AND distinct_id IN (` + cohortQuery + `)`
 		args = append(args, cohortArgs...)
 	}
 	memberQuery, memberArgs, err := h.analyticsSegmentMembers(ctx, int64(pid), body.SegmentID)
@@ -110,25 +106,73 @@ func (h *AnalyticsHandler) loadBehaviorEvents(ctx context.Context, pid uint32, b
 	return out, truncated, nil
 }
 
+type analyticsCohortFilter struct {
+	Event    string
+	Property string
+	Value    string
+}
+
 // normalizeBehaviorCohort 限定路径和 Session 的用户筛选条件。
 // 先按 cohort 选人，再读取完整事件序列，避免不含渠道属性的后续事件被错误排除。
 func normalizeBehaviorCohort(body *behaviorQueryBody) error {
-	body.CohortEvent = strings.TrimSpace(body.CohortEvent)
-	body.CohortProperty = strings.TrimSpace(body.CohortProperty)
-	body.CohortValue = strings.TrimSpace(body.CohortValue)
-	if len(body.CohortEvent) > 128 || len(body.CohortProperty) > 128 {
+	filter := &analyticsCohortFilter{Event: body.CohortEvent, Property: body.CohortProperty, Value: body.CohortValue}
+	if err := normalizeAnalyticsCohortFilter(filter); err != nil {
+		return err
+	}
+	body.CohortEvent, body.CohortProperty, body.CohortValue = filter.Event, filter.Property, filter.Value
+	return nil
+}
+
+func normalizeAnalyticsCohortFilter(filter *analyticsCohortFilter) error {
+	filter.Event = strings.TrimSpace(filter.Event)
+	filter.Property = strings.TrimSpace(filter.Property)
+	filter.Value = strings.TrimSpace(filter.Value)
+	if len(filter.Event) > 128 || len(filter.Property) > 128 {
 		return &queryTableError{Status: http.StatusBadRequest, Msg: "cohort event and property length must be <= 128"}
 	}
-	if body.CohortEvent == "" {
-		if body.CohortProperty != "" || body.CohortValue != "" {
+	if filter.Event == "" {
+		if filter.Property != "" || filter.Value != "" {
 			return &queryTableError{Status: http.StatusBadRequest, Msg: "cohort_event required when filtering users by event property"}
 		}
 		return nil
 	}
-	if body.CohortProperty == "" && body.CohortValue != "" {
+	if filter.Property == "" && filter.Value != "" {
 		return &queryTableError{Status: http.StatusBadRequest, Msg: "cohort_property required when cohort_value is set"}
 	}
 	return nil
+}
+
+// analyticsCohortMemberQuery 返回事件属性筛选后的用户集合。
+// 该集合用于与保存分群取交集，调用方再读取用户的完整行为，而非只读取命中属性的事件。
+func analyticsCohortMemberQuery(pid uint32, from, to int64, filter analyticsCohortFilter) (string, []any, error) {
+	if err := normalizeAnalyticsCohortFilter(&filter); err != nil {
+		return "", nil, err
+	}
+	if filter.Event == "" {
+		return "", nil, nil
+	}
+	where := `project_id = ? AND event = ? AND time BETWEEN fromUnixTimestamp64Milli(?) AND fromUnixTimestamp64Milli(?)`
+	args := []any{pid, filter.Event, from, to}
+	if filter.Property != "" {
+		where += ` AND JSONExtractRaw(properties, ?) != ''`
+		args = append(args, filter.Property)
+		if filter.Value != "" {
+			where += ` AND JSONExtractRaw(properties, ?) = ?`
+			args = append(args, filter.Property, rawJSONValue(filter.Value))
+		}
+	}
+	return `SELECT DISTINCT distinct_id FROM events WHERE ` + where, args, nil
+}
+
+func intersectMemberQueries(left string, leftArgs []any, right string, rightArgs []any) (string, []any) {
+	if left == "" {
+		return right, rightArgs
+	}
+	if right == "" {
+		return left, leftArgs
+	}
+	args := append(append([]any{}, leftArgs...), rightArgs...)
+	return `SELECT distinct_id FROM (` + left + `) WHERE distinct_id IN (` + right + `)`, args
 }
 
 func normalizeSessionGap(seconds int64) int64 {
