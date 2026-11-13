@@ -35,15 +35,7 @@ import (
 //     - breakdown：按属性维度拆解的同口径行
 func (h *AnalyticsHandler) attribution(c *gin.Context) {
 	pid, _ := strconv.ParseUint(c.Param("id"), 10, 32)
-	var body struct {
-		ConversionEvent   string   `json:"conversion_event"`
-		TouchEvents       []string `json:"touch_events"`
-		From              int64    `json:"from"`
-		To                int64    `json:"to"`
-		WindowSeconds     int64    `json:"window_seconds"`
-		Model             string   `json:"model"`
-		BreakdownProperty string   `json:"breakdown_property"`
-	}
+	var body attributionRequest
 	if err := c.BindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
 		return
@@ -76,17 +68,28 @@ func (h *AnalyticsHandler) attribution(c *gin.Context) {
 
 	ctx := c.Request.Context()
 
+	memberQuery, memberArgs, err := h.analyticsSegmentMembers(ctx, int64(pid), body.SegmentID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
+		return
+	}
+
 	// 总转化用户数（用于计算未归因占比）
 	var totalUsers uint64
 	totalQ := `SELECT uniqExact(distinct_id) FROM events
 	           WHERE project_id = ? AND event = ?
 	             AND time BETWEEN fromUnixTimestamp64Milli(?) AND fromUnixTimestamp64Milli(?)`
-	if err := h.CH.QueryRow(ctx, totalQ, uint32(pid), body.ConversionEvent, body.From, body.To).Scan(&totalUsers); err != nil {
+	totalArgs := []any{uint32(pid), body.ConversionEvent, body.From, body.To}
+	if memberQuery != "" {
+		totalQ += ` AND distinct_id IN (` + memberQuery + `)`
+		totalArgs = append(totalArgs, memberArgs...)
+	}
+	if err := h.CH.QueryRow(ctx, totalQ, totalArgs...).Scan(&totalUsers); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
 		return
 	}
 
-	rows, attributedUsers, totalCredit, lagBuckets, err := computeAttribution(ctx, h, uint32(pid), &body, model, "")
+	rows, attributedUsers, totalCredit, lagBuckets, err := computeAttribution(ctx, h, uint32(pid), &body, model, memberQuery, memberArgs)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
 		return
@@ -95,7 +98,7 @@ func (h *AnalyticsHandler) attribution(c *gin.Context) {
 	breakdown := []attributionBreakdownGroup{}
 	breakdownTruncated := false
 	if body.BreakdownProperty != "" {
-		breakdown, err = computeAttributionBreakdown(ctx, h, uint32(pid), &body, model)
+		breakdown, err = computeAttributionBreakdown(ctx, h, uint32(pid), &body, model, memberQuery, memberArgs)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
 			return
@@ -128,6 +131,17 @@ func (h *AnalyticsHandler) attribution(c *gin.Context) {
 			"breakdown":           breakdown,
 		},
 	})
+}
+
+type attributionRequest struct {
+	ConversionEvent   string   `json:"conversion_event"`
+	TouchEvents       []string `json:"touch_events"`
+	From              int64    `json:"from"`
+	To                int64    `json:"to"`
+	WindowSeconds     int64    `json:"window_seconds"`
+	Model             string   `json:"model"`
+	BreakdownProperty string   `json:"breakdown_property"`
+	SegmentID         int64    `json:"segment_id"`
 }
 
 type attributionRow struct {
@@ -172,17 +186,14 @@ var attributionLagBuckets = []struct {
 }
 
 // 共享构造：返回 commonCTE + 参数序列。propertyForGroup 非空时把 dim 也带入 touch_raw（用于 breakdown 路径）。
-func attributionBuildCTE(pid uint32, body *struct {
-	ConversionEvent   string   `json:"conversion_event"`
-	TouchEvents       []string `json:"touch_events"`
-	From              int64    `json:"from"`
-	To                int64    `json:"to"`
-	WindowSeconds     int64    `json:"window_seconds"`
-	Model             string   `json:"model"`
-	BreakdownProperty string   `json:"breakdown_property"`
-}, propertyForGroup string) (string, []any) {
-	// SQL 占位符顺序：conv(4) -> [JSONExtractRaw 可选] -> touch_raw 主部分(4) -> touch_events(N)
+func attributionBuildCTE(pid uint32, body *attributionRequest, propertyForGroup, memberQuery string, memberArgs []any) (string, []any) {
+	// SQL 占位符顺序：conv(4) -> 分群成员（可选） -> [JSONExtractRaw 可选] -> touch_raw 主部分(4) -> touch_events(N)
 	args := []any{pid, body.ConversionEvent, body.From, body.To}
+	memberClause := ""
+	if memberQuery != "" {
+		memberClause = ` AND distinct_id IN (` + memberQuery + `)`
+		args = append(args, memberArgs...)
+	}
 	dimSelect := ""
 	if propertyForGroup != "" {
 		dimSelect = ", JSONExtractRaw(e.properties, ?) AS dim"
@@ -199,7 +210,7 @@ func attributionBuildCTE(pid uint32, body *struct {
 			SELECT distinct_id, max(time) AS conv_time
 			FROM events
 			WHERE project_id = ? AND event = ?
-			  AND time BETWEEN fromUnixTimestamp64Milli(?) AND fromUnixTimestamp64Milli(?)
+			  AND time BETWEEN fromUnixTimestamp64Milli(?) AND fromUnixTimestamp64Milli(?)` + memberClause + `
 			GROUP BY distinct_id
 		),
 		touch_raw AS (
@@ -220,16 +231,8 @@ func attributionBuildCTE(pid uint32, body *struct {
 
 // computeAttribution 主路径：返回 rows / attributedUsers / totalCredit / lagBuckets。
 // dimFilter 非空表示只统计该 dim 值的 picked/weighted 行（用于 breakdown 子查询）。
-func computeAttribution(ctx context.Context, h *AnalyticsHandler, pid uint32, body *struct {
-	ConversionEvent   string   `json:"conversion_event"`
-	TouchEvents       []string `json:"touch_events"`
-	From              int64    `json:"from"`
-	To                int64    `json:"to"`
-	WindowSeconds     int64    `json:"window_seconds"`
-	Model             string   `json:"model"`
-	BreakdownProperty string   `json:"breakdown_property"`
-}, model string, _ string) ([]attributionRow, uint64, float64, []attributionLagBucket, error) {
-	cte, args := attributionBuildCTE(pid, body, "")
+func computeAttribution(ctx context.Context, h *AnalyticsHandler, pid uint32, body *attributionRequest, model, memberQuery string, memberArgs []any) ([]attributionRow, uint64, float64, []attributionLagBucket, error) {
+	cte, args := attributionBuildCTE(pid, body, "", memberQuery, memberArgs)
 
 	var aggregated string
 	switch model {
@@ -335,16 +338,8 @@ func computeAttribution(ctx context.Context, h *AnalyticsHandler, pid uint32, bo
 }
 
 // computeAttributionBreakdown 把 picked/weighted 按 dim 分组，每组返回 rows + 头部触点。
-func computeAttributionBreakdown(ctx context.Context, h *AnalyticsHandler, pid uint32, body *struct {
-	ConversionEvent   string   `json:"conversion_event"`
-	TouchEvents       []string `json:"touch_events"`
-	From              int64    `json:"from"`
-	To                int64    `json:"to"`
-	WindowSeconds     int64    `json:"window_seconds"`
-	Model             string   `json:"model"`
-	BreakdownProperty string   `json:"breakdown_property"`
-}, model string) ([]attributionBreakdownGroup, error) {
-	cte, args := attributionBuildCTE(pid, body, body.BreakdownProperty)
+func computeAttributionBreakdown(ctx context.Context, h *AnalyticsHandler, pid uint32, body *attributionRequest, model, memberQuery string, memberArgs []any) ([]attributionBreakdownGroup, error) {
+	cte, args := attributionBuildCTE(pid, body, body.BreakdownProperty, memberQuery, memberArgs)
 
 	var aggregated string
 	switch model {

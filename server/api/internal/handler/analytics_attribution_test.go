@@ -7,15 +7,7 @@ import (
 )
 
 func TestAttributionBuildCTEPlacesDimensionArgumentAtItsPlaceholder(t *testing.T) {
-	body := &struct {
-		ConversionEvent   string   `json:"conversion_event"`
-		TouchEvents       []string `json:"touch_events"`
-		From              int64    `json:"from"`
-		To                int64    `json:"to"`
-		WindowSeconds     int64    `json:"window_seconds"`
-		Model             string   `json:"model"`
-		BreakdownProperty string   `json:"breakdown_property"`
-	}{
+	body := &attributionRequest{
 		ConversionEvent: "pay_success",
 		TouchEvents:     []string{"page_view", "add_to_cart"},
 		From:            100,
@@ -23,7 +15,7 @@ func TestAttributionBuildCTEPlacesDimensionArgumentAtItsPlaceholder(t *testing.T
 		WindowSeconds:   3600,
 	}
 
-	cte, args := attributionBuildCTE(42, body, "channel")
+	cte, args := attributionBuildCTE(42, body, "channel", "", nil)
 	want := []any{
 		uint32(42), "pay_success", int64(100), int64(200),
 		"channel", // JSONExtractRaw(e.properties, ?) appears after the conv CTE.
@@ -39,15 +31,7 @@ func TestAttributionBuildCTEPlacesDimensionArgumentAtItsPlaceholder(t *testing.T
 }
 
 func TestAttributionBuildCTEOmitsDimensionArgumentWithoutBreakdown(t *testing.T) {
-	body := &struct {
-		ConversionEvent   string   `json:"conversion_event"`
-		TouchEvents       []string `json:"touch_events"`
-		From              int64    `json:"from"`
-		To                int64    `json:"to"`
-		WindowSeconds     int64    `json:"window_seconds"`
-		Model             string   `json:"model"`
-		BreakdownProperty string   `json:"breakdown_property"`
-	}{
+	body := &attributionRequest{
 		ConversionEvent: "pay_success",
 		TouchEvents:     []string{"page_view"},
 		From:            100,
@@ -55,12 +39,31 @@ func TestAttributionBuildCTEOmitsDimensionArgumentWithoutBreakdown(t *testing.T)
 		WindowSeconds:   3600,
 	}
 
-	cte, args := attributionBuildCTE(42, body, "")
+	cte, args := attributionBuildCTE(42, body, "", "", nil)
 	if strings.Contains(cte, " AS dim") {
 		t.Fatal("non-breakdown CTE must not select a dimension")
 	}
 	if got, want := strings.Count(cte, "?"), len(args); got != want {
 		t.Fatalf("placeholder count = %d, want %d", got, want)
+	}
+}
+
+func TestAttributionBuildCTEAppliesSegmentMembershipToConversions(t *testing.T) {
+	body := &attributionRequest{
+		ConversionEvent: "pay_success",
+		TouchEvents:     []string{"page_view"},
+		From:            100,
+		To:              200,
+		WindowSeconds:   3600,
+	}
+
+	cte, args := attributionBuildCTE(42, body, "", "SELECT distinct_id FROM users WHERE project_id=?", []any{uint32(42)})
+	if !strings.Contains(cte, "distinct_id IN (SELECT distinct_id FROM users WHERE project_id=?)") {
+		t.Fatalf("segment membership missing from conversion CTE: %s", cte)
+	}
+	want := []any{uint32(42), "pay_success", int64(100), int64(200), uint32(42), uint32(42), int64(100), int64(200), int64(3600), "page_view"}
+	if !reflect.DeepEqual(args, want) {
+		t.Fatalf("unexpected CTE arguments\nwant: %#v\n got: %#v", want, args)
 	}
 }
 

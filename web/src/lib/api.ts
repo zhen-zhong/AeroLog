@@ -1191,6 +1191,7 @@ export const api = {
             window_seconds?: number;
             model?: "first" | "last" | "linear";
             breakdown_property?: string;
+            segment_id?: number;
         },
     ) =>
         req<

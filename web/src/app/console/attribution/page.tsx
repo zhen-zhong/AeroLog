@@ -55,6 +55,7 @@ export default function AttributionPage() {
   const [model, setModel] = useState<Model>("last");
   const [windowSeconds, setWindowSeconds] = useState<number>(7 * 24 * 3600);
   const [breakdownProperty, setBreakdownProperty] = useState<string>("");
+  const [segmentId, setSegmentId] = useState<number | undefined>();
   const [range, setRange] = useState<[Dayjs, Dayjs]>([
     dayjs().subtract(30, "day").startOf("day"),
     dayjs().endOf("day"),
@@ -66,6 +67,7 @@ export default function AttributionPage() {
     setConversionEvent(undefined);
     setTouchEvents([]);
     setBreakdownProperty("");
+    setSegmentId(undefined);
     setError("");
   }, [projectId]);
 
@@ -85,6 +87,11 @@ export default function AttributionPage() {
     queryFn: () => api.listProperties(projectId!, { scope: "event" }),
     enabled: !!projectId,
   });
+  const { data: segments } = useQuery({
+    queryKey: ["attribution_segments", projectId],
+    queryFn: () => api.listSegments(projectId!),
+    enabled: !!projectId,
+  });
 
   const runMut = useMutation({
     mutationFn: () =>
@@ -96,6 +103,7 @@ export default function AttributionPage() {
         window_seconds: windowSeconds,
         model,
         breakdown_property: breakdownProperty || undefined,
+        segment_id: segmentId,
       }),
     onSuccess: () => setError(""),
     onError: (e: Error) => setError(e.message),
@@ -308,6 +316,16 @@ export default function AttributionPage() {
                 </SelectContent>
               </Select>
             </div>
+            <div className="grid min-w-0 gap-1.5">
+              <Label>用户分群（可选）</Label>
+              <Select value={segmentId ? String(segmentId) : "__all__"} onValueChange={(value) => setSegmentId(value === "__all__" ? undefined : Number(value))}>
+                <SelectTrigger><SelectValue placeholder="全部用户" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all__">全部用户</SelectItem>
+                  {(segments?.data || []).map((segment) => <SelectItem key={segment.id} value={String(segment.id)}>{segment.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
           <p className="mt-2 text-xs text-muted-foreground">
             {MODEL_OPTIONS.find((opt) => opt.value === model)?.hint} 每位用户在分析期内只使用最近一次转化作为归因锚点。
@@ -339,6 +357,7 @@ export default function AttributionPage() {
                 setConversionEvent(undefined);
                 setTouchEvents([]);
                 setBreakdownProperty("");
+                setSegmentId(undefined);
                 setError("");
                 runMut.reset();
               }}
