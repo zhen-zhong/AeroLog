@@ -159,6 +159,8 @@ docker compose logs -f host-inspector --tail=100
 
 @AeroLog-ai-bot 服务器现在状态
 @AeroLog-ai-bot Kafka积压和DLQ情况
+@AeroLog-ai-bot 现在这上面有几个项目
+@AeroLog-ai-bot 项目列表
 @AeroLog-ai-bot 磁盘空间占用情况
 @AeroLog-ai-bot 哪些目录占用空间最大
 @AeroLog-ai-bot /usr目录里什么占用最大

@@ -135,15 +135,15 @@ const bot = new AiBot.WSClient({
   logger: sdkLogger,
 })
 
-const skillNames = new Set(['ads_summary', 'server_status', 'kafka_status', 'disk_usage', 'directory_usage', 'directory_usage_detail', 'report_trend', 'retention_trend', 'event_metrics', 'event_property_breakdown', 'funnel_summary'])
+const skillNames = new Set(['ads_summary', 'server_status', 'kafka_status', 'project_list', 'disk_usage', 'directory_usage', 'directory_usage_detail', 'report_trend', 'retention_trend', 'event_metrics', 'event_property_breakdown', 'funnel_summary'])
 const timeRanges = new Set(['today', 'yesterday', 'last_hours'])
 const trendMetrics = new Set(['new_users', 'ad_impressions', 'ad_impressions_per_user', 'ad_coin_revenue'])
 const chartTypes = new Set(['line', 'bar'])
 
 const plannerPrompt = `你是 AeroLog 只读查询规划器。根据用户问题，仅输出一个 JSON 对象，不要 Markdown、解释或 SQL。
-可选 skill 仅有：ads_summary、server_status、kafka_status、disk_usage、directory_usage、directory_usage_detail、report_trend、retention_trend、event_metrics、event_property_breakdown、funnel_summary。
+可选 skill 仅有：ads_summary、server_status、kafka_status、project_list、disk_usage、directory_usage、directory_usage_detail、report_trend、retention_trend、event_metrics、event_property_breakdown、funnel_summary。
 ads_summary 用于指定项目的广告、ad_show、广告数据；params 必须包含 time_range：today、yesterday 或 last_hours。用户说“近/最近 N 小时”时，必须使用 {"time_range":"last_hours","hours":N}；未指定时间时用 today。其他 skill 的 params 必须是 {}。
-server_status 用于服务器或主机资源与服务状态；kafka_status 用于 Kafka、消息队列、积压、DLQ；disk_usage 用于挂载点磁盘占用；directory_usage 用于哪些目录/文件占空间；directory_usage_detail 仅用于询问 /usr、/opt、/var/lib/docker、/var/lib/aerolog、/var/log、/var/cache、/tmp、/home 内部什么占空间。
+server_status 用于服务器或主机资源与服务状态；kafka_status 用于 Kafka、消息队列、积压、DLQ；project_list 用于询问有几个项目、多少项目、项目数量、项目列表或有哪些项目；disk_usage 用于挂载点磁盘占用；directory_usage 用于哪些目录/文件占空间；directory_usage_detail 仅用于询问 /usr、/opt、/var/lib/docker、/var/lib/aerolog、/var/log、/var/cache、/tmp、/home 内部什么占空间。
 report_trend 用于指定项目的新增用户、广告展示次数、人均广告展示、广告收入（金）的按天图表；params 必须为 {"metric":"new_users|ad_impressions|ad_impressions_per_user|ad_coin_revenue","days":1至30整数,"chart":"line|bar"}。未说明天数时 days=7，未说明图表时 chart=line。retention_trend 用于指定项目的新用户留存趋势图；params 必须为 {"days":1至30整数}，未说明天数时 days=7。
 event_metrics 用于指定项目一个或多个明确事件的总次数、去重用户数；params 为 {"events":["事件名"],"days":1至30整数}，最多 10 个事件。event_property_breakdown 用于一个明确事件按一个明确属性或参数拆解；params 为 {"event":"事件名","property":"属性名","days":1至30整数}。funnel_summary 用于 2 到 5 个明确事件的顺序漏斗；params 为 {"events":["事件1","事件2"],"days":1至30整数,"window_hours":1至168整数}，未说明窗口时 window_hours=24。事件和属性必须来自用户问题，不得杜撰。
 无法匹配时输出 {"skill":"unknown","params":{}}。`
@@ -245,6 +245,7 @@ function fallbackPlan(question) {
   if (/磁盘|磁碟|空间占用|磁盘占用/.test(lower)) return { skill: 'disk_usage', params: {} }
   if (/kafka|消息队列|积压|dlq/.test(lower)) return { skill: 'kafka_status', params: {} }
   if (/服务器|主机|server/.test(lower)) return { skill: 'server_status', params: {} }
+  if (/几个项目|多少项目|项目数量|项目列表|有哪些项目/.test(lower)) return { skill: 'project_list', params: {} }
   if (/留存|次日留存|day1/.test(lower)) return { skill: 'retention_trend', params: { days: parseDays(lower) } }
   if (/人均.*广告|广告.*人均/.test(lower)) return { skill: 'report_trend', params: { metric: 'ad_impressions_per_user', days: parseDays(lower), chart: requestedChart(lower) } }
   if (/广告收入|金币/.test(lower)) return { skill: 'report_trend', params: { metric: 'ad_coin_revenue', days: parseDays(lower), chart: requestedChart(lower) } }
@@ -270,6 +271,7 @@ function directOperationalPlan(question) {
   if (/磁盘|磁碟|空间占用|磁盘占用/.test(lower)) return { skill: 'disk_usage', params: {} }
   if (/kafka|消息队列|积压|dlq/.test(lower)) return { skill: 'kafka_status', params: {} }
   if (/服务器|主机|server/.test(lower)) return { skill: 'server_status', params: {} }
+  if (/几个项目|多少项目|项目数量|项目列表|有哪些项目/.test(lower)) return { skill: 'project_list', params: {} }
   return null
 }
 
@@ -336,6 +338,13 @@ function fallbackSummary(data) {
     const error = data.error ? `\n- 错误：${data.error}` : ''
     return `**Kafka 状态**\n\n- 检测时间：${data.checked_at || '未知'}\n- 服务：${data.available ? '正常' : '异常'}\n- 消费者：${data.consumers_up ?? '未知'}\n- 积压：${data.kafka_lag ?? '未知'}\n- 最近 1 小时 DLQ：${data.dlq_last_hour ?? '未知'}${error}`
   }
+  if (data?.skill === 'project_list') {
+    const statuses = { 0: '未启用', 1: '启用', 2: '冻结', 3: '下线' }
+    const projects = Array.isArray(data.projects) && data.projects.length
+      ? data.projects.map((item) => `- ${item.name}（ID ${item.id}，${statuses[item.status] || '未知状态'}，${item.data_source === 'sensorsdata' ? '神策' : 'AeroLog'}）`).join('\n')
+      : '- 暂无项目'
+    return `项目概览\n\n- 项目总数：${data.total ?? 0}\n- 启用项目：${data.enabled ?? 0}\n${projects}`
+  }
   if (data?.skill === 'report_trend') {
     const latest = Array.isArray(data.points) && data.points.length ? data.points[data.points.length - 1] : null
     return `**${data.project_name} · ${data.metric}**\n\n- 数据时间：${data.from} ～ ${data.to}\n- 累计值：${formatMetricValue(data.total)}\n- 最新值：${latest ? `${latest.label}，${formatMetricValue(latest.value)}` : '无数据'}\n- 图表：${data.chart?.type === 'bar' ? '柱状图' : '折线图'}`
@@ -399,7 +408,7 @@ async function summarize(question, data) {
       temperature: 0.2,
       max_tokens: 700,
       messages: [
-        { role: 'system', content: '你是 AeroLog 运维与数据助手。只能根据提供的 JSON 数据回答，不得编造数据。用简短中文纯文本整理结果，不使用星号、反引号、HTML 标签或代码块。需要列举内容时，每项统一以“- ”开头，不要使用 Unicode 项目符号。skill=server_status 时列 CPU、内存、磁盘、API、采集服务状态；skill=disk_usage 时按使用率降序列出挂载点；skill=directory_usage 时按 bytes 降序列出目录及大小；skill=directory_usage_detail 时按 bytes 降序列出指定目录一级子项及大小，并说明只统计白名单一级子项；skill=kafka_status 时列消费者、lag、DLQ；广告数据时列时间范围、总次数、去重用户数、主要事件。缺失或 unavailable 必须明确说明。' },
+        { role: 'system', content: '你是 AeroLog 运维与数据助手。只能根据提供的 JSON 数据回答，不得编造数据。用简短中文纯文本整理结果，不使用星号、反引号、HTML 标签或代码块。需要列举内容时，每项统一以“- ”开头，不要使用 Unicode 项目符号。skill=server_status 时列 CPU、内存、磁盘、API、采集服务状态；skill=disk_usage 时按使用率降序列出挂载点；skill=directory_usage 时按 bytes 降序列出目录及大小；skill=directory_usage_detail 时按 bytes 降序列出指定目录一级子项及大小，并说明只统计白名单一级子项；skill=kafka_status 时列消费者、lag、DLQ；skill=project_list 时列项目总数、启用项目数和项目名称；广告数据时列时间范围、总次数、去重用户数、主要事件。缺失或 unavailable 必须明确说明。' },
         { role: 'user', content: `问题：${question}\n\n受限查询结果：${JSON.stringify(data)}` },
       ],
     }),
@@ -420,7 +429,7 @@ function withResponseMeta(answer, elapsed, fixedSkill, tokens, tokensKnown) {
 }
 
 function usesFixedResponse(skill) {
-  return new Set(['server_status', 'kafka_status', 'disk_usage', 'directory_usage', 'directory_usage_detail', 'report_trend', 'retention_trend', 'event_metrics', 'event_property_breakdown', 'funnel_summary']).has(skill)
+  return new Set(['server_status', 'kafka_status', 'project_list', 'disk_usage', 'directory_usage', 'directory_usage_detail', 'report_trend', 'retention_trend', 'event_metrics', 'event_property_breakdown', 'funnel_summary']).has(skill)
 }
 
 function chartImage(data) {
