@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -605,6 +606,11 @@ func (h *GovernanceHandler) users(c *gin.Context) {
 	query := strings.TrimSpace(c.Query("query"))
 	profileProperty := strings.TrimSpace(c.Query("profile_property"))
 	profileValue := strings.TrimSpace(c.Query("profile_value"))
+	segmentID, err := optionalPositiveInt64(c.Query("segment_id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"err": "segment_id must be a positive integer"})
+		return
+	}
 	limit := clampLimit(c.DefaultQuery("limit", "100"), 1, 500)
 	if len(profileProperty) > 128 {
 		c.JSON(http.StatusBadRequest, gin.H{"err": "profile_property is too long"})
@@ -615,6 +621,15 @@ func (h *GovernanceHandler) users(c *gin.Context) {
 	      FROM users FINAL
 	      WHERE project_id = ?`
 	args := []any{uint32(pid)}
+	if segmentID > 0 {
+		membersQuery, memberArgs, err := segmentMembershipQuery(c, h.PG, int64(pid), segmentID)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
+			return
+		}
+		q += ` AND distinct_id IN (` + membersQuery + `)`
+		args = append(args, memberArgs...)
+	}
 	if query != "" {
 		q += ` AND (distinct_id = ? OR user_id = ? OR anonymous_id = ?)`
 		args = append(args, query, query, query)
@@ -650,6 +665,18 @@ func (h *GovernanceHandler) users(c *gin.Context) {
 		}
 	}
 	c.JSON(http.StatusOK, gin.H{"data": out})
+}
+
+func optionalPositiveInt64(raw string) (int64, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, nil
+	}
+	value, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || value <= 0 {
+		return 0, errors.New("invalid positive integer")
+	}
+	return value, nil
 }
 
 func (h *GovernanceHandler) profile(c *gin.Context) {

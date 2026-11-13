@@ -30,6 +30,8 @@ export function UsersPage() {
   const [profileProperty, setProfileProperty] = useState("");
   const [profileValue, setProfileValue] = useState("");
   const [submittedProfile, setSubmittedProfile] = useState({ property: "", value: "" });
+  const [segmentId, setSegmentId] = useState("");
+  const [submittedSegmentId, setSubmittedSegmentId] = useState("");
   const [selected, setSelected] = useState<UserProfile | null>(null);
   const [deepLinkReady, setDeepLinkReady] = useState(false);
   const [fallbackOpened, setFallbackOpened] = useState(false);
@@ -41,6 +43,8 @@ export function UsersPage() {
     setProfileProperty("");
     setProfileValue("");
     setSubmittedProfile({ property: "", value: "" });
+    setSegmentId("");
+    setSubmittedSegmentId("");
   }, [projectId]);
 
   useEffect(() => {
@@ -68,11 +72,12 @@ export function UsersPage() {
   }, [deepLinkReady, searchParams, setProjectId]);
 
   const users = useQuery({
-    queryKey: ["users", projectId, submittedQuery, submittedProfile],
+    queryKey: ["users", projectId, submittedQuery, submittedProfile, submittedSegmentId],
     queryFn: () => api.listUsers(projectId!, {
       query: submittedQuery,
       profile_property: submittedProfile.property || undefined,
       profile_value: submittedProfile.property ? submittedProfile.value : undefined,
+      segment_id: submittedSegmentId ? Number(submittedSegmentId) : undefined,
       limit: 100,
     }),
     enabled: !!projectId,
@@ -80,6 +85,11 @@ export function UsersPage() {
   const profileProperties = useQuery({
     queryKey: ["user-properties", projectId],
     queryFn: () => api.listProperties(projectId!, { scope: "user" }),
+    enabled: !!projectId,
+  });
+  const segments = useQuery({
+    queryKey: ["user-page-segments", projectId],
+    queryFn: () => api.listSegments(projectId!),
     enabled: !!projectId,
   });
 
@@ -113,6 +123,7 @@ export function UsersPage() {
     e.preventDefault();
     setSubmittedQuery(query.trim());
     setSubmittedProfile({ property: profileProperty, value: profileValue.trim() });
+    setSubmittedSegmentId(segmentId);
   }
 
   return (
@@ -128,7 +139,7 @@ export function UsersPage() {
         <MetricCard label="搜索结果" value={rows.length} loading={users.isLoading} />
       </div>
 
-      <form onSubmit={submitSearch} className="mb-4 grid gap-2 lg:grid-cols-[minmax(0,1fr)_220px_minmax(0,1fr)_auto]">
+      <form onSubmit={submitSearch} className="mb-4 grid gap-2 lg:grid-cols-[minmax(0,1fr)_220px_minmax(0,1fr)_220px_auto]">
         <div className="relative flex-1">
           <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
           <Input
@@ -153,14 +164,24 @@ export function UsersPage() {
           disabled={!profileProperty}
           placeholder={profileProperty ? "属性值，例如 Android / true / 1" : "先选择用户属性"}
         />
+        <Select value={segmentId || "__all__"} onValueChange={(value) => setSegmentId(value === "__all__" ? "" : value)}>
+          <SelectTrigger><SelectValue placeholder="已保存分群" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__all__">全部分群成员</SelectItem>
+            {(segments.data?.data || []).map((segment) => (
+              <SelectItem key={segment.id} value={String(segment.id)}>{segment.name}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         <Button type="submit">搜索</Button>
       </form>
 
-      {submittedProfile.property && (
+      {(submittedProfile.property || submittedSegmentId) && (
         <div className="mb-4 flex items-center gap-2 text-sm text-muted-foreground">
-          <span>用户属性筛选：</span>
-          <Badge variant="info">{submittedProfile.property} = {submittedProfile.value || '""'}</Badge>
-          <Button type="button" variant="ghost" size="sm" onClick={() => { setProfileProperty(""); setProfileValue(""); setSubmittedProfile({ property: "", value: "" }); }}>清除</Button>
+          <span>筛选：</span>
+          {submittedProfile.property && <Badge variant="info">{submittedProfile.property} = {submittedProfile.value || '""'}</Badge>}
+          {submittedSegmentId && <Badge variant="secondary">分群：{(segments.data?.data || []).find((segment) => String(segment.id) === submittedSegmentId)?.name || submittedSegmentId}</Badge>}
+          <Button type="button" variant="ghost" size="sm" onClick={() => { setProfileProperty(""); setProfileValue(""); setSubmittedProfile({ property: "", value: "" }); setSegmentId(""); setSubmittedSegmentId(""); }}>清除</Button>
         </div>
       )}
 
