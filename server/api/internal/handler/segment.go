@@ -28,13 +28,23 @@ func (h *SegmentHandler) Register(r *gin.RouterGroup) {
 }
 
 type SegmentRules struct {
-	ProfileProperty string `json:"profile_property,omitempty"`
-	ProfileValue    string `json:"profile_value,omitempty"`
-	Event           string `json:"event,omitempty"`
-	EventCondition  string `json:"event_condition,omitempty"`
-	EventProperty   string `json:"event_property,omitempty"`
-	EventValue      string `json:"event_value,omitempty"`
-	LookbackDays    int    `json:"lookback_days,omitempty"`
+	ProfileProperty string             `json:"profile_property,omitempty"`
+	ProfileValue    string             `json:"profile_value,omitempty"`
+	Event           string             `json:"event,omitempty"`
+	EventCondition  string             `json:"event_condition,omitempty"`
+	EventProperty   string             `json:"event_property,omitempty"`
+	EventValue      string             `json:"event_value,omitempty"`
+	LookbackDays    int                `json:"lookback_days,omitempty"`
+	EventRules      []SegmentEventRule `json:"event_rules,omitempty"`
+}
+
+// SegmentEventRule 是动态分群中的单个事件条件。全部条件按 AND 合并。
+type SegmentEventRule struct {
+	Event        string `json:"event"`
+	Condition    string `json:"condition,omitempty"`
+	Property     string `json:"property,omitempty"`
+	Value        string `json:"value,omitempty"`
+	LookbackDays int    `json:"lookback_days,omitempty"`
 }
 
 type UserSegment struct {
@@ -218,10 +228,18 @@ func (h *AnalyticsHandler) analyticsSegmentMembers(ctx context.Context, projectI
 }
 
 func segmentMembershipQueryForRules(projectID int64, rules SegmentRules) (string, []any) {
+	eventRules := segmentEventRules(rules)
 	var base string
-	args := make([]any, 0, 7)
-	if rules.Event != "" && rules.EventCondition == "has" {
-		base, args = segmentEventMembershipQuery(projectID, rules)
+	args := make([]any, 0, 7+len(eventRules)*4)
+	baseRule := -1
+	for index, rule := range eventRules {
+		if rule.Condition == "has" {
+			baseRule = index
+			break
+		}
+	}
+	if baseRule >= 0 {
+		base, args = segmentEventMembershipQuery(projectID, eventRules[baseRule])
 	} else {
 		base = `SELECT DISTINCT distinct_id FROM users FINAL WHERE project_id=?`
 		args = append(args, uint32(projectID))
@@ -232,24 +250,42 @@ func segmentMembershipQueryForRules(projectID int64, rules SegmentRules) (string
 		where += ` AND distinct_id IN (SELECT distinct_id FROM users FINAL WHERE project_id=? AND JSONExtractRaw(properties, ?) = ?)`
 		args = append(args, uint32(projectID), rules.ProfileProperty, rawJSONValue(rules.ProfileValue))
 	}
-	if rules.Event != "" && rules.EventCondition == "not_has" {
-		eventQuery, eventArgs := segmentEventMembershipQuery(projectID, rules)
-		where += ` AND distinct_id NOT IN (` + eventQuery + `)`
+	for index, rule := range eventRules {
+		if index == baseRule {
+			continue
+		}
+		eventQuery, eventArgs := segmentEventMembershipQuery(projectID, rule)
+		if rule.Condition == "not_has" {
+			where += ` AND distinct_id NOT IN (` + eventQuery + `)`
+		} else {
+			where += ` AND distinct_id IN (` + eventQuery + `)`
+		}
 		args = append(args, eventArgs...)
 	}
 
 	return base + ` AND 1=1` + where, args
 }
 
-func segmentEventMembershipQuery(projectID int64, rules SegmentRules) (string, []any) {
+func segmentEventRules(rules SegmentRules) []SegmentEventRule {
+	out := make([]SegmentEventRule, 0, 1+len(rules.EventRules))
+	if rules.Event != "" {
+		out = append(out, SegmentEventRule{
+			Event: rules.Event, Condition: rules.EventCondition, Property: rules.EventProperty,
+			Value: rules.EventValue, LookbackDays: rules.LookbackDays,
+		})
+	}
+	return append(out, rules.EventRules...)
+}
+
+func segmentEventMembershipQuery(projectID int64, rule SegmentEventRule) (string, []any) {
 	query := `SELECT DISTINCT distinct_id FROM events WHERE project_id=? AND event=? AND time >= fromUnixTimestamp64Milli(?)`
-	args := []any{uint32(projectID), rules.Event, segmentLookbackStart(rules.LookbackDays)}
-	if rules.EventProperty != "" {
+	args := []any{uint32(projectID), rule.Event, segmentLookbackStart(rule.LookbackDays)}
+	if rule.Property != "" {
 		query += ` AND JSONExtractRaw(properties, ?) != ''`
-		args = append(args, rules.EventProperty)
-		if rules.EventValue != "" {
+		args = append(args, rule.Property)
+		if rule.Value != "" {
 			query += ` AND JSONExtractRaw(properties, ?) = ?`
-			args = append(args, rules.EventProperty, rawJSONValue(rules.EventValue))
+			args = append(args, rule.Property, rawJSONValue(rule.Value))
 		}
 	}
 	return query, args
@@ -258,39 +294,73 @@ func segmentEventMembershipQuery(projectID int64, rules SegmentRules) (string, [
 func normalizeSegmentRules(rules SegmentRules) (SegmentRules, error) {
 	rules.ProfileProperty = strings.TrimSpace(rules.ProfileProperty)
 	rules.ProfileValue = strings.TrimSpace(rules.ProfileValue)
-	rules.Event = strings.TrimSpace(rules.Event)
-	rules.EventCondition = strings.TrimSpace(rules.EventCondition)
-	rules.EventProperty = strings.TrimSpace(rules.EventProperty)
-	rules.EventValue = strings.TrimSpace(rules.EventValue)
-	if len(rules.ProfileProperty) > 128 || len(rules.Event) > 128 || len(rules.EventProperty) > 128 {
+	if len(rules.ProfileProperty) > 128 {
 		return SegmentRules{}, errors.New("property and event length must be <= 128")
 	}
-	if rules.ProfileProperty == "" && rules.Event == "" {
-		return SegmentRules{}, errors.New("at least one profile_property or event is required")
-	}
-	if rules.Event == "" {
+	if rules.Event != "" {
+		primary, err := normalizeSegmentEventRule(SegmentEventRule{
+			Event: rules.Event, Condition: rules.EventCondition, Property: rules.EventProperty,
+			Value: rules.EventValue, LookbackDays: rules.LookbackDays,
+		})
+		if err != nil {
+			return SegmentRules{}, err
+		}
+		rules.Event = primary.Event
+		rules.EventCondition = primary.Condition
+		rules.EventProperty = primary.Property
+		rules.EventValue = primary.Value
+		rules.LookbackDays = primary.LookbackDays
+	} else {
 		rules.EventCondition = ""
 		rules.EventProperty = ""
 		rules.EventValue = ""
 		rules.LookbackDays = 0
-		return rules, nil
 	}
-	if rules.EventCondition == "" {
-		rules.EventCondition = "has"
+	if len(rules.EventRules) > 5 {
+		return SegmentRules{}, errors.New("event_rules must contain at most 5 conditions")
 	}
-	if rules.EventCondition != "has" && rules.EventCondition != "not_has" {
-		return SegmentRules{}, errors.New("event_condition must be has or not_has")
+	var normalizedRules []SegmentEventRule
+	if len(rules.EventRules) > 0 {
+		normalizedRules = make([]SegmentEventRule, 0, len(rules.EventRules))
 	}
-	if rules.EventProperty == "" && rules.EventValue != "" {
-		return SegmentRules{}, errors.New("event_property required when event_value is set")
+	for _, rule := range rules.EventRules {
+		normalized, err := normalizeSegmentEventRule(rule)
+		if err != nil {
+			return SegmentRules{}, err
+		}
+		normalizedRules = append(normalizedRules, normalized)
 	}
-	if rules.LookbackDays == 0 {
-		rules.LookbackDays = 30
-	}
-	if rules.LookbackDays < 1 || rules.LookbackDays > 365 {
-		return SegmentRules{}, errors.New("lookback_days must be 1..365")
+	rules.EventRules = normalizedRules
+	if rules.ProfileProperty == "" && rules.Event == "" && len(rules.EventRules) == 0 {
+		return SegmentRules{}, errors.New("at least one profile_property or event is required")
 	}
 	return rules, nil
+}
+
+func normalizeSegmentEventRule(rule SegmentEventRule) (SegmentEventRule, error) {
+	rule.Event = strings.TrimSpace(rule.Event)
+	rule.Condition = strings.TrimSpace(rule.Condition)
+	rule.Property = strings.TrimSpace(rule.Property)
+	rule.Value = strings.TrimSpace(rule.Value)
+	if rule.Event == "" || len(rule.Event) > 128 || len(rule.Property) > 128 {
+		return SegmentEventRule{}, errors.New("property and event length must be 1..128")
+	}
+	if rule.Condition == "" {
+		rule.Condition = "has"
+	}
+	if rule.Condition != "has" && rule.Condition != "not_has" {
+		return SegmentEventRule{}, errors.New("event condition must be has or not_has")
+	}
+	if rule.Property == "" && rule.Value != "" {
+		return SegmentEventRule{}, errors.New("event property required when event value is set")
+	}
+	if rule.LookbackDays == 0 {
+		rule.LookbackDays = 30
+	}
+	if rule.LookbackDays < 1 || rule.LookbackDays > 365 {
+		return SegmentEventRule{}, errors.New("lookback_days must be 1..365")
+	}
+	return rule, nil
 }
 
 func segmentLookbackStart(days int) int64 {

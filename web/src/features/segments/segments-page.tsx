@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { LoaderCircle, Plus, Trash2, Users } from "lucide-react";
+import { LoaderCircle, Plus, Trash2, Users, X } from "lucide-react";
 import { PageHeader } from "@/components/layout/page-header";
 import { EmptyState } from "@/components/data/empty-state";
 import { AnimatedContent } from "@/components/react-bits/animated-content";
@@ -12,7 +12,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { api, SegmentRules, UserSegment } from "@/lib/api";
+import { api, SegmentEventRule, SegmentRules, UserSegment } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
 import { useProjectStore } from "@/stores/project-store";
 
@@ -30,6 +30,7 @@ export function SegmentsPage() {
   const [eventProperty, setEventProperty] = useState("");
   const [eventValue, setEventValue] = useState("");
   const [lookbackDays, setLookbackDays] = useState("30");
+  const [extraEventRules, setExtraEventRules] = useState<SegmentEventRule[]>([]);
   const [formError, setFormError] = useState("");
 
   useEffect(() => {
@@ -42,6 +43,7 @@ export function SegmentsPage() {
     setEventProperty("");
     setEventValue("");
     setLookbackDays("30");
+    setExtraEventRules([]);
     setFormError("");
   }, [projectId]);
 
@@ -82,8 +84,10 @@ export function SegmentsPage() {
       const days = Number(lookbackDays);
       if (Number.isFinite(days)) out.lookback_days = days;
     }
+    const extra = extraEventRules.filter((rule) => rule.event);
+    if (extra.length) out.event_rules = extra;
     return out;
-  }, [event, eventCondition, eventProperty, eventValue, lookbackDays, profileProperty, profileValue]);
+  }, [event, eventCondition, eventProperty, eventValue, extraEventRules, lookbackDays, profileProperty, profileValue]);
 
   const preview = useMutation({
     mutationFn: () => api.previewSegment(projectId!, rules),
@@ -114,11 +118,12 @@ export function SegmentsPage() {
     setEventProperty(segment.rules.event_property || "");
     setEventValue(segment.rules.event_value || "");
     setLookbackDays(String(segment.rules.lookback_days || 30));
+    setExtraEventRules(segment.rules.event_rules || []);
     setFormError("");
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  const canPreview = !!projectId && (!!profileProperty || !!event);
+  const canPreview = !!projectId && (!!profileProperty || !!event || extraEventRules.some((rule) => rule.event));
   const canSave = canPreview && !!name.trim();
 
   return (
@@ -132,7 +137,7 @@ export function SegmentsPage() {
           <Card>
             <CardHeader>
               <CardTitle>新建分群</CardTitle>
-              <CardDescription>条件按 AND 合并。“未触发”以已有用户画像为基数。</CardDescription>
+              <CardDescription>全部条件按 AND 合并；最多 6 个事件条件。“未触发”以已有用户画像为基数。</CardDescription>
             </CardHeader>
             <CardContent className="space-y-5">
               <div className="grid gap-4 sm:grid-cols-2">
@@ -191,6 +196,23 @@ export function SegmentsPage() {
                 {event && <p className="mt-3 text-sm text-muted-foreground">近 {lookbackDays || "30"} 天 {eventCondition === "has" ? "触发" : "未触发"} <code>{event}</code>。</p>}
               </div>
 
+              <div className="rounded-lg border p-4">
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-2 font-medium">
+                  <span className="flex items-center gap-2"><Plus className="h-4 w-4" />附加事件条件</span>
+                  <Button type="button" size="sm" variant="outline" disabled={extraEventRules.length >= 5} onClick={() => setExtraEventRules((current) => [...current, { event: "", condition: "has", lookback_days: 30 }])}>添加条件</Button>
+                </div>
+                {extraEventRules.length ? <div className="space-y-4">{extraEventRules.map((rule, index) => (
+                  <SegmentEventRuleEditor
+                    key={index}
+                    projectId={projectId}
+                    events={events.data?.data || []}
+                    rule={rule}
+                    onChange={(next) => setExtraEventRules((current) => current.map((item, itemIndex) => itemIndex === index ? next : item))}
+                    onRemove={() => setExtraEventRules((current) => current.filter((_, itemIndex) => itemIndex !== index))}
+                  />
+                ))}</div> : <p className="text-sm text-muted-foreground">可追加“已触发”或“未触发”事件；与上方条件同时满足。</p>}
+              </div>
+
               {formError && <p className="text-sm text-destructive">{formError}</p>}
               {preview.data && <div className="rounded-md bg-muted px-3 py-2 text-sm"><div>预计圈选 <strong>{preview.data.data.users.toLocaleString()}</strong> 位用户</div>{preview.data.data.sample_users.length ? <div className="mt-2 flex flex-wrap gap-1.5 text-xs text-muted-foreground">样本：{preview.data.data.sample_users.map((distinctId) => <code key={distinctId} className="rounded bg-background px-1.5 py-0.5">{distinctId}</code>)}</div> : null}</div>}
               <div className="flex flex-wrap gap-2">
@@ -223,6 +245,7 @@ export function SegmentsPage() {
                     {segment.rules.profile_property && <Badge variant="secondary">{segment.rules.profile_property} = {segment.rules.profile_value || '""'}</Badge>}
                     {segment.rules.event && <Badge variant="info">近 {segment.rules.lookback_days} 天{segment.rules.event_condition === "not_has" ? "未触发" : "触发"} {segment.rules.event}</Badge>}
                     {segment.rules.event_property && <Badge variant="secondary">{segment.rules.event_property}{segment.rules.event_value ? ` = ${segment.rules.event_value}` : " 存在"}</Badge>}
+                    {(segment.rules.event_rules || []).map((rule, index) => <Badge key={`${rule.event}:${index}`} variant="info">近 {rule.lookback_days} 天{rule.condition === "not_has" ? "未触发" : "触发"} {rule.event}</Badge>)}
                   </div>
                   <div className="mt-3 flex items-center justify-between gap-2 text-xs text-muted-foreground">
                     <span>更新于 {formatDateTime(segment.updated_at)}</span>
@@ -235,5 +258,48 @@ export function SegmentsPage() {
         </div>
       )}
     </AnimatedContent>
+  );
+}
+
+function SegmentEventRuleEditor({
+  projectId,
+  events,
+  rule,
+  onChange,
+  onRemove,
+}: {
+  projectId?: number;
+  events: Array<{ event: string }>;
+  rule: SegmentEventRule;
+  onChange: (rule: SegmentEventRule) => void;
+  onRemove: () => void;
+}) {
+  const eventProperties = useQuery({
+    queryKey: ["segment-extra-event-properties", projectId, rule.event],
+    queryFn: () => api.listProperties(projectId!, { scope: "event", event: rule.event, include_global: true }),
+    enabled: !!projectId && !!rule.event,
+  });
+  return (
+    <div className="rounded-md border border-dashed p-3">
+      <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_120px_110px_auto]">
+        <Select value={rule.event || none} onValueChange={(value) => onChange({ ...rule, event: value === none ? "" : value, property: "", value: "" })}>
+          <SelectTrigger><SelectValue placeholder="选择事件" /></SelectTrigger>
+          <SelectContent><SelectItem value={none}>选择事件</SelectItem>{events.map((row) => <SelectItem key={row.event} value={row.event}>{row.event}</SelectItem>)}</SelectContent>
+        </Select>
+        <Select value={rule.condition || "has"} onValueChange={(value) => onChange({ ...rule, condition: value as "has" | "not_has" })} disabled={!rule.event}>
+          <SelectTrigger><SelectValue /></SelectTrigger>
+          <SelectContent><SelectItem value="has">已触发</SelectItem><SelectItem value="not_has">未触发</SelectItem></SelectContent>
+        </Select>
+        <Input type="number" min={1} max={365} value={String(rule.lookback_days || 30)} onChange={(event) => onChange({ ...rule, lookback_days: Number(event.target.value) || 0 })} disabled={!rule.event} placeholder="近 N 天" />
+        <Button type="button" size="icon" variant="ghost" aria-label="删除事件条件" onClick={onRemove}><X className="h-4 w-4" /></Button>
+      </div>
+      {rule.event ? <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        <Select value={rule.property || none} onValueChange={(value) => onChange({ ...rule, property: value === none ? "" : value, value: "" })}>
+          <SelectTrigger><SelectValue placeholder="不限制事件参数" /></SelectTrigger>
+          <SelectContent><SelectItem value={none}>不限制事件参数</SelectItem>{(eventProperties.data?.data || []).map((property) => <SelectItem key={property.name} value={property.name}>{property.display_name || property.name}</SelectItem>)}</SelectContent>
+        </Select>
+        <Input value={rule.value || ""} onChange={(event) => onChange({ ...rule, value: event.target.value })} disabled={!rule.property} placeholder={rule.property ? "留空表示参数存在；填写表示精确匹配" : "先选择事件参数"} />
+      </div> : null}
+    </div>
   );
 }

@@ -448,6 +448,13 @@ export interface QueryTemplate {
     created_at: string;
     updated_at: string;
 }
+export interface SegmentEventRule {
+    event: string;
+    condition?: "has" | "not_has";
+    property?: string;
+    value?: string;
+    lookback_days?: number;
+}
 export interface SegmentRules {
     profile_property?: string;
     profile_value?: string;
@@ -456,6 +463,7 @@ export interface SegmentRules {
     event_property?: string;
     event_value?: string;
     lookback_days?: number;
+    event_rules?: SegmentEventRule[];
 }
 export interface UserSegment {
     id: number;
