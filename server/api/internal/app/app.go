@@ -150,11 +150,15 @@ func newRouter(cfg *config.Config, pool *pgxpool.Pool, chConn driver.Conn) (*gin
 		SensorsApplication: cfg.SensorsApplication,
 		SensorsEventsTopic: cfg.SensorsEventsTopic, SensorsEventsGroup: cfg.SensorsEventsGroup,
 		SensorsProfilesTopic: cfg.SensorsProfilesTopic, SensorsProfilesGroup: cfg.SensorsProfilesGroup,
+		ReconciliationAlertMinCount: cfg.SensorsReconciliationAlertMinCount,
+		ReconciliationAlertMinRate:  cfg.SensorsReconciliationAlertMinRate,
+		ReconciliationAlertSilence:  time.Duration(cfg.SensorsReconciliationAlertSilenceMinutes) * time.Minute,
 	}
 	dataQuality.Register(authed)
 	(&handler.WeComBotHandler{PG: pool, CH: chConn, Analytics: analytics, Token: cfg.WeComBotToken, Monitor: dataQuality, HostInspectorURL: cfg.HostInspectorURL, HostInspectorToken: cfg.HostInspectorToken}).Register(v1)
 
 	projectScoped := authed.Group("", handler.ProjectAccessRequired(pool))
+	dataQuality.RegisterProjectAlerts(projectScoped)
 	(&handler.EventDefHandler{PG: pool}).Register(projectScoped)
 	(&handler.GovernanceHandler{PG: pool, CH: chConn}).Register(projectScoped)
 	(&handler.SegmentHandler{PG: pool, CH: chConn}).Register(projectScoped)

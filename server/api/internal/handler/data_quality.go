@@ -18,19 +18,22 @@ import (
 
 // DataQualityHandler 返回数据源项目的接入健康度及共享 Kafka 链路健康度。
 type DataQualityHandler struct {
-	PG                   *pgxpool.Pool
-	CH                   driver.Conn
-	PrometheusURL        string
-	EncryptionKey        string
-	WeComWebhookURL      string
-	SensorsApplication   string
-	SensorsEventsTopic   string
-	SensorsEventsGroup   string
-	SensorsProfilesTopic string
-	SensorsProfilesGroup string
-	HTTPClient           *http.Client
-	alertMu              sync.Mutex
-	alertStates          map[string]bool
+	PG                          *pgxpool.Pool
+	CH                          driver.Conn
+	PrometheusURL               string
+	EncryptionKey               string
+	WeComWebhookURL             string
+	SensorsApplication          string
+	SensorsEventsTopic          string
+	SensorsEventsGroup          string
+	SensorsProfilesTopic        string
+	SensorsProfilesGroup        string
+	ReconciliationAlertMinCount int
+	ReconciliationAlertMinRate  float64
+	ReconciliationAlertSilence  time.Duration
+	HTTPClient                  *http.Client
+	alertMu                     sync.Mutex
+	alertStates                 map[string]bool
 }
 
 type sensorsQualityProject struct {
@@ -109,8 +112,17 @@ func (h *DataQualityHandler) sensorsDataQuality(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"err": "读取死信队列状态失败"})
 		return
 	}
+	projectIDs := make([]int64, 0, len(projects))
+	for _, project := range projects {
+		projectIDs = append(projectIDs, project.ProjectID)
+	}
+	alerts, err := h.reconciliationAlertsForProjects(c.Request.Context(), projectIDs)
+	if err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"err": "读取对账告警状态失败"})
+		return
+	}
 	queue := h.sharedQueueHealth(c.Request.Context())
-	c.JSON(http.StatusOK, gin.H{"data": gin.H{"projects": projects, "queue": queue}})
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"projects": projects, "queue": queue, "alerts": alerts}})
 }
 
 func (h *DataQualityHandler) visibleSensorsProjects(c *gin.Context) ([]sensorsQualityProject, error) {

@@ -141,6 +141,26 @@ export interface SensorsQueueHealth {
 	}>;
     error?: string;
 }
+
+export interface SensorsReconciliationAlert {
+    id: number;
+    project_id: number;
+    project_name: string;
+    source_project: string;
+    reconcile_date: string;
+    alert_type: "data_difference" | "query_error";
+    status: "open" | "acknowledged" | "closed";
+    details: Record<string, unknown>;
+    first_detected_at: string;
+    last_detected_at: string;
+    last_notified_at?: string;
+    notification_count: number;
+    acknowledged_by?: string;
+    acknowledged_at?: string;
+    closed_by?: string;
+    closed_at?: string;
+    resolution_note?: string;
+}
 export interface SensorsReconciliationDay {
     date: string;
     sensors_events: number;
@@ -626,8 +646,12 @@ export const api = {
         req<ApiOne<SensorsIntegration>>(`/projects/${id}/integrations/sensorsdata`),
     getSensorsIntegrationHealth: (id: number | string) =>
         req<ApiOne<SensorsIntegrationHealth>>(`/projects/${id}/integrations/sensorsdata/health`),
-    getSensorsDataQuality: () => req<ApiOne<{ projects: SensorsDataQualityProject[]; queue: SensorsQueueHealth }>>("/data-quality/sensorsdata"),
+    getSensorsDataQuality: () => req<ApiOne<{ projects: SensorsDataQualityProject[]; queue: SensorsQueueHealth; alerts: SensorsReconciliationAlert[] }>>("/data-quality/sensorsdata"),
     reconcileSensorsData: (days: number) => req<ApiOne<SensorsReconciliation>>(`/data-quality/sensorsdata/reconcile?days=${days}`, { method: "POST" }),
+    acknowledgeSensorsReconciliationAlert: (projectID: number | string, alertID: number | string) =>
+        req<ApiOne<{ id: number; status: SensorsReconciliationAlert["status"] }>>(`/projects/${projectID}/data-quality/sensorsdata/alerts/${alertID}/acknowledge`, { method: "POST", body: JSON.stringify({}) }),
+    closeSensorsReconciliationAlert: (projectID: number | string, alertID: number | string, note = "") =>
+        req<ApiOne<{ id: number; status: SensorsReconciliationAlert["status"] }>>(`/projects/${projectID}/data-quality/sensorsdata/alerts/${alertID}/close`, { method: "POST", body: JSON.stringify({ note }) }),
     verifySensorsIntegration: (id: number | string) =>
         req<ApiOne<{ verified: boolean }>>(`/projects/${id}/integrations/sensorsdata/verify`, { method: "POST" }),
     connectSensorsIntegration: (

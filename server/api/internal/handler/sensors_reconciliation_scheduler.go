@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log"
 	"strings"
 	"time"
@@ -76,25 +75,22 @@ func (h *DataQualityHandler) runScheduledReconciliations(ctx context.Context) {
 }
 
 func (h *DataQualityHandler) notifyScheduledReconciliation(ctx context.Context, day time.Time, result sensorsReconciliationProject) {
-	if result.Error == "" && (len(result.Rows) == 0 || !reconciliationHasAnomaly(result.Rows[0])) {
+	candidate, ok := h.reconciliationAlertCandidate(result)
+	if !ok {
 		return
 	}
-	lines := []string{
-		"项目：" + result.ProjectName + "（" + result.SourceProject + "）",
-		"日期：" + day.Format("2006-01-02") + " · " + result.Timezone,
+	shouldNotify, err := h.recordReconciliationAlert(ctx, result.ProjectID, day, candidate)
+	if err != nil {
+		log.Printf("record Sensors reconciliation alert project=%d err: %v", result.ProjectID, err)
+		return
 	}
-	if result.Error != "" {
-		lines = append(lines, "状态：对账失败", "原因："+result.Error)
-	} else {
-		row := result.Rows[0]
-		lines = append(lines,
-			"状态：完整覆盖数据存在差异",
-			fmt.Sprintf("总事件：神策 %d / AeroLog %d", row.SensorsEvents, row.AeroLogEvents),
-		)
+	if !shouldNotify {
+		return
 	}
+	lines := append([]string{"日期：" + day.Format("2006-01-02") + " · " + result.Timezone}, candidate.Lines...)
 	notifyCtx, cancel := context.WithTimeout(ctx, 6*time.Second)
 	defer cancel()
-	if err := h.sendWeComAlert(notifyCtx, "AeroLog 神策数据告警", lines); err != nil {
+	if err := h.sendWeComAlert(notifyCtx, candidate.Title, lines); err != nil {
 		log.Printf("send WeCom reconciliation alert project=%d err: %v", result.ProjectID, err)
 	}
 }

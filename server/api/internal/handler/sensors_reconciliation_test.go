@@ -86,6 +86,49 @@ func TestReconciliationDateRangeUsesProjectTimezone(t *testing.T) {
 	}
 }
 
+func TestReconciliationAlertCandidateUsesCountAndRateThreshold(t *testing.T) {
+	h := &DataQualityHandler{ReconciliationAlertMinCount: 10, ReconciliationAlertMinRate: 0.05}
+	base := sensorsReconciliationProject{ProjectName: "RbowDrama", SourceProject: "RbowDrama", Rows: []sensorsReconciliationDay{{
+		CoverageStatus: "covered", SensorsEvents: 100, AeroLogEvents: 94,
+	}}}
+	if _, ok := h.reconciliationAlertCandidate(base); ok {
+		t.Fatal("difference below count threshold must not alert")
+	}
+	base.Rows[0].AeroLogEvents = 87
+	candidate, ok := h.reconciliationAlertCandidate(base)
+	if !ok || candidate.Type != "data_difference" || candidate.Details["difference"] != uint64(13) {
+		t.Fatalf("unexpected candidate: %#v, %v", candidate, ok)
+	}
+}
+
+func TestReconciliationAlertCandidateUsesLargestEventDifference(t *testing.T) {
+	h := &DataQualityHandler{ReconciliationAlertMinCount: 10, ReconciliationAlertMinRate: 0.05}
+	result := sensorsReconciliationProject{Rows: []sensorsReconciliationDay{{
+		CoverageStatus: "covered", SensorsEvents: 100, AeroLogEvents: 100,
+		SensorsByEvent: map[string]uint64{"ad_show": 50}, AeroLogByEvent: map[string]uint64{"ad_show": 35},
+	}}}
+	candidate, ok := h.reconciliationAlertCandidate(result)
+	if !ok || candidate.Details["metric"] != "ad_show" || candidate.Details["difference"] != uint64(15) {
+		t.Fatalf("unexpected candidate: %#v, %v", candidate, ok)
+	}
+}
+
+func TestReconciliationAlertCandidateSkipsPartialCoverage(t *testing.T) {
+	h := &DataQualityHandler{}
+	result := sensorsReconciliationProject{Rows: []sensorsReconciliationDay{{CoverageStatus: "partial", SensorsEvents: 100, AeroLogEvents: 0}}}
+	if _, ok := h.reconciliationAlertCandidate(result); ok {
+		t.Fatal("partial coverage must not alert")
+	}
+}
+
+func TestReconciliationAlertCandidateAlwaysRecordsQueryFailure(t *testing.T) {
+	h := &DataQualityHandler{}
+	candidate, ok := h.reconciliationAlertCandidate(sensorsReconciliationProject{Error: "神策查询失败"})
+	if !ok || candidate.Type != "query_error" || candidate.Details["error"] != "神策查询失败" {
+		t.Fatalf("unexpected candidate: %#v, %v", candidate, ok)
+	}
+}
+
 func mustReconciliationDate(t *testing.T, value string) time.Time {
 	t.Helper()
 	date, err := time.Parse("2006-01-02", value)

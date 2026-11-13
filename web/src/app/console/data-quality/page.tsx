@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { api, SensorsDataQualityProject, SensorsReconciliation, SensorsReconciliationDay } from "@/lib/api";
+import { api, SensorsDataQualityProject, SensorsReconciliation, SensorsReconciliationAlert, SensorsReconciliationDay } from "@/lib/api";
 
 function formatTime(value?: string) {
   return value ? dayjs(value).format("YYYY-MM-DD HH:mm:ss") : "暂无事件";
@@ -27,6 +27,22 @@ function projectState(project: SensorsDataQualityProject) {
   return { label: "正常", variant: "success" as const };
 }
 
+function alertState(alert: SensorsReconciliationAlert) {
+  if (alert.status === "closed") return { label: "已关闭", variant: "secondary" as const };
+  if (alert.status === "acknowledged") return { label: "已确认", variant: "warning" as const };
+  return { label: "待处理", variant: "danger" as const };
+}
+
+function alertDetail(alert: SensorsReconciliationAlert) {
+  if (alert.alert_type === "query_error") return String(alert.details.error || "对账查询失败");
+  const metric = String(alert.details.metric || "总事件");
+  const sensors = Number(alert.details.sensors || 0).toLocaleString();
+  const aerolog = Number(alert.details.aerolog || 0).toLocaleString();
+  const difference = Number(alert.details.difference || 0).toLocaleString();
+  const rate = (Number(alert.details.difference_rate || 0) * 100).toFixed(1);
+  return `${metric}：神策 ${sensors} / AeroLog ${aerolog}，差值 ${difference}（${rate}%）`;
+}
+
 export default function DataQualityPage() {
   const quality = useQuery({ queryKey: ["sensors-data-quality"], queryFn: api.getSensorsDataQuality, refetchInterval: 30_000 });
   const [reconciliationDays, setReconciliationDays] = useState("3");
@@ -34,8 +50,21 @@ export default function DataQualityPage() {
   const data = quality.data?.data;
   const projects = data?.projects || [];
   const queue = data?.queue;
+  const alerts = data?.alerts || [];
   const recentProjects = projects.filter((project) => project.events_last_5_minutes > 0).length;
   const projectDLQ = projects.reduce((total, project) => total + project.dlq_last_hour, 0);
+  const alertAction = useMutation({
+    mutationFn: ({ alert, action, note = "" }: { alert: SensorsReconciliationAlert; action: "acknowledge" | "close"; note?: string }) => action === "acknowledge"
+      ? api.acknowledgeSensorsReconciliationAlert(alert.project_id, alert.id)
+      : api.closeSensorsReconciliationAlert(alert.project_id, alert.id, note),
+    onSuccess: () => quality.refetch(),
+  });
+
+  function closeAlert(alert: SensorsReconciliationAlert) {
+    const note = window.prompt("填写关闭备注（可留空）");
+    if (note === null) return;
+    alertAction.mutate({ alert, action: "close", note });
+  }
 
   return <div>
     <AnalyticsHeader title="数据健康" description="按项目查看神策事件入库状态。Kafka lag 与消费者状态属于共享队列，不按项目拆分。" action={<Button variant="outline" size="sm" onClick={() => quality.refetch()} disabled={quality.isFetching}><RefreshCw className={quality.isFetching ? "animate-spin" : ""} />刷新</Button>} />
@@ -50,6 +79,7 @@ export default function DataQualityPage() {
         <Card className="min-w-0"><CardHeader className="border-b bg-secondary/35"><CardTitle>项目入库状态</CardTitle><CardDescription>每 30 秒自动刷新；时间按浏览器本地时区显示。</CardDescription></CardHeader><CardContent className="p-0 sm:p-0">{projects.length ? <div className="overflow-x-auto"><Table className="min-w-[1200px]"><TableHeader><TableRow><TableHead>项目</TableHead><TableHead>神策项目</TableHead><TableHead>订阅应用</TableHead><TableHead>订阅方</TableHead><TableHead>状态</TableHead><TableHead>最后入库</TableHead><TableHead className="text-right">近 5 分钟</TableHead><TableHead className="text-right">近 1 小时</TableHead><TableHead className="text-right">项目 DLQ</TableHead><TableHead>最近校验</TableHead></TableRow></TableHeader><TableBody>{projects.map((project) => { const state = projectState(project); return <TableRow key={project.project_id}><TableCell className="font-medium">{project.project_name}</TableCell><TableCell>{project.source_project}</TableCell><TableCell className="max-w-40 truncate font-mono text-xs" title={project.application_id}>{queue?.application_name || project.application_id}</TableCell><TableCell className="max-w-44"><div className="truncate font-mono text-xs" title={project.subscriber}>{project.subscriber}</div><div className="text-xs text-muted-foreground">{project.subscription_id ? `订阅 #${project.subscription_id}` : "复用已有订阅"}</div></TableCell><TableCell><Badge variant={state.variant}>{state.label}</Badge>{project.last_error ? <div className="mt-1 max-w-52 truncate text-xs text-destructive" title={project.last_error}>{project.last_error}</div> : null}</TableCell><TableCell className="font-mono text-xs">{formatTime(project.last_event_at)}</TableCell><TableCell className="text-right font-mono">{project.events_last_5_minutes.toLocaleString()}</TableCell><TableCell className="text-right font-mono">{project.events_last_hour.toLocaleString()}</TableCell><TableCell className="text-right font-mono">{project.dlq_last_hour.toLocaleString()}</TableCell><TableCell className="font-mono text-xs">{project.last_verified_at ? formatTime(project.last_verified_at) : "未校验"}</TableCell></TableRow>; })}</TableBody></Table></div> : <div className="p-4 sm:p-5"><EmptyAnalysis title="暂无神策项目" description="在项目管理中配置神策数据源后，这里会展示实时入库健康状态。" /></div>}</CardContent></Card>
         <div className="grid content-start gap-5"><Card><CardHeader><CardTitle className="flex items-center gap-2"><ServerCog className="h-4 w-4" />共享订阅链路</CardTitle><CardDescription>订阅应用、Topic 与消费者组由所有神策项目复用。</CardDescription></CardHeader><CardContent className="space-y-3 text-sm">{queue?.available ? <><div className="flex items-center justify-between gap-3"><span className="text-muted-foreground">订阅应用</span><span className="max-w-48 truncate font-mono text-xs" title={queue.application_name}>{queue.application_name || "未配置"}</span></div><div className="flex items-center justify-between gap-3"><span className="text-muted-foreground">总状态</span><Badge variant={queue.consumers_up ? "success" : "danger"}>{queue.consumers_up ? "运行中" : "消费者不可用"}</Badge></div>{queue.consumers?.map((consumer) => <div key={consumer.job} className="rounded-md border bg-secondary/20 p-2.5"><div className="flex items-center justify-between gap-3"><span className="font-medium">{consumer.name}</span><Badge variant={consumer.consumer_up ? "success" : "danger"}>{consumer.consumer_up ? "运行中" : "不可用"}</Badge></div><p className="mt-1 truncate font-mono text-xs text-muted-foreground" title={consumer.topic}>Topic：{consumer.topic}</p><p className="mt-1 truncate font-mono text-xs text-muted-foreground" title={consumer.group_id}>Group：{consumer.group_id}</p><p className="mt-1 text-xs text-muted-foreground">lag：<span className="font-mono">{Math.round(consumer.kafka_lag).toLocaleString()}</span></p></div>)}<div className="flex items-center justify-between gap-3"><span className="text-muted-foreground">近 1 小时 DLQ</span><span className="font-mono">{queue.dlq_last_hour.toLocaleString()}</span></div></> : <div className="rounded-md border border-dashed bg-secondary/30 p-3 text-muted-foreground"><TriangleAlert className="mb-2 h-4 w-4" />{queue?.error || "队列监控暂不可用"}</div>}</CardContent></Card><Card><CardHeader><CardTitle className="flex items-center gap-2"><Activity className="h-4 w-4" />判定规则</CardTitle></CardHeader><CardContent className="space-y-2 text-sm text-muted-foreground"><p>正常：连接无错误、已有事件入库、项目 DLQ 为 0。</p><p>等待数据：连接正常，但尚未收到神策事件。</p><p>存在死信：最近 1 小时项目关联的 DLQ 大于 0。</p></CardContent></Card></div>
       </div>
+      <Card className="mt-5 min-w-0"><CardHeader className="gap-3 border-b bg-secondary/35 sm:flex-row sm:items-start sm:justify-between"><div><CardTitle>对账异常闭环</CardTitle><CardDescription>仅完整覆盖且达到阈值的差异会告警：默认至少 10 条且 5%。同一项目、日期、异常类型 6 小时内不重复推送。</CardDescription></div><Badge variant={alerts.some((alert) => alert.status === "open") ? "danger" : "success"}>{alerts.filter((alert) => alert.status === "open").length ? `${alerts.filter((alert) => alert.status === "open").length} 项待处理` : "无待处理告警"}</Badge></CardHeader><CardContent className="p-0 sm:p-0">{alerts.length ? <div className="overflow-x-auto"><Table className="min-w-[1040px]"><TableHeader><TableRow><TableHead>项目 / 日期</TableHead><TableHead>异常</TableHead><TableHead>状态</TableHead><TableHead>最后发现</TableHead><TableHead>通知</TableHead><TableHead>处理记录</TableHead><TableHead className="text-right">操作</TableHead></TableRow></TableHeader><TableBody>{alerts.map((alert) => { const state = alertState(alert); return <TableRow key={alert.id}><TableCell><div className="font-medium">{alert.project_name}</div><div className="text-xs text-muted-foreground">{alert.source_project} · {alert.reconcile_date}</div></TableCell><TableCell className="max-w-80"><div className="truncate" title={alertDetail(alert)}>{alertDetail(alert)}</div><div className="mt-1 text-xs text-muted-foreground">{alert.alert_type === "query_error" ? "查询失败" : "数据差异"}</div></TableCell><TableCell><Badge variant={state.variant}>{state.label}</Badge></TableCell><TableCell className="font-mono text-xs">{formatTime(alert.last_detected_at)}</TableCell><TableCell className="text-xs text-muted-foreground">{alert.notification_count} 次{alert.last_notified_at ? ` · ${formatTime(alert.last_notified_at)}` : ""}</TableCell><TableCell className="max-w-52 text-xs text-muted-foreground">{alert.closed_at ? <span title={alert.resolution_note || ""}>关闭：{alert.closed_by || "未知"}{alert.resolution_note ? ` · ${alert.resolution_note}` : ""}</span> : alert.acknowledged_at ? <span>确认：{alert.acknowledged_by || "未知"}</span> : "未处理"}</TableCell><TableCell className="text-right">{alert.status === "open" ? <div className="flex justify-end gap-2"><Button size="sm" variant="outline" onClick={() => alertAction.mutate({ alert, action: "acknowledge" })} disabled={alertAction.isPending}>确认</Button><Button size="sm" variant="outline" onClick={() => closeAlert(alert)} disabled={alertAction.isPending}>关闭</Button></div> : alert.status === "acknowledged" ? <Button size="sm" variant="outline" onClick={() => closeAlert(alert)} disabled={alertAction.isPending}>关闭</Button> : <span className="text-xs text-muted-foreground">—</span>}</TableCell></TableRow>; })}</TableBody></Table></div> : <div className="p-4 text-sm text-muted-foreground">暂无达到告警阈值的对账异常。</div>}{alertAction.error ? <div className="border-t p-3 text-sm text-destructive">{String(alertAction.error)}</div> : null}</CardContent></Card>
       <Card className="mt-5 min-w-0">
         <CardHeader className="gap-3 border-b bg-secondary/35 sm:flex-row sm:items-start sm:justify-between">
           <div><CardTitle>神策 / AeroLog 日对账</CardTitle><CardDescription>比较已完成自然日的事件总次数、去重用户及核心事件。仅点击“运行对账”时调用神策查询 API。</CardDescription></div>

@@ -438,4 +438,28 @@ CREATE TABLE IF NOT EXISTS sensors_reconciliation_runs (
 );
 CREATE INDEX IF NOT EXISTS idx_sensors_reconciliation_runs_project
     ON sensors_reconciliation_runs(project_id, reconcile_date DESC);
+
+CREATE TABLE IF NOT EXISTS sensors_reconciliation_alerts (
+    id                  BIGSERIAL PRIMARY KEY,
+    project_id          BIGINT      NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    reconcile_date      DATE        NOT NULL,
+    alert_type          VARCHAR(32) NOT NULL,
+    status              VARCHAR(16) NOT NULL DEFAULT 'open',
+    details             JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    first_detected_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_detected_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_notified_at    TIMESTAMPTZ,
+    notification_count  INTEGER     NOT NULL DEFAULT 0,
+    acknowledged_by     BIGINT      REFERENCES users(id),
+    acknowledged_at     TIMESTAMPTZ,
+    closed_by           BIGINT      REFERENCES users(id),
+    closed_at           TIMESTAMPTZ,
+    resolution_note     TEXT        NOT NULL DEFAULT '',
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT sensors_reconciliation_alerts_status_check CHECK (status IN ('open', 'acknowledged', 'closed')),
+    UNIQUE(project_id, reconcile_date, alert_type)
+);
+CREATE INDEX IF NOT EXISTS idx_sensors_reconciliation_alerts_project
+    ON sensors_reconciliation_alerts(project_id, status, reconcile_date DESC);
 `

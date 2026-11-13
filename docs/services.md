@@ -39,6 +39,8 @@ Prometheus ◄── API / Collector / Consumer / Node Exporter ──► Grafan
 
 控制台“数据健康”每 30 秒汇总神策接入状态：项目级订阅应用、订阅方、最后入库时间与项目 DLQ；共享链路级事件/用户属性 Topic、消费者组、各消费者运行状态、lag 与全局 DLQ。
 
+对账异常仅在完整覆盖且绝对差值、比例同时达到 `AEROLOG_SENSORS_RECONCILIATION_ALERT_MIN_COUNT`、`AEROLOG_SENSORS_RECONCILIATION_ALERT_MIN_RATE` 时创建告警；相同项目、日期、异常类型按 `AEROLOG_SENSORS_RECONCILIATION_ALERT_SILENCE_MINUTES` 静默。控制台可确认或关闭告警，并保存处理人、时间与关闭备注。
+
 ### 2.2 机器人与宿主机巡检
 
 | 服务 | 角色 | 权限边界 |
