@@ -35,11 +35,15 @@ type wecomBotQuery struct {
 // wecomBotSkillParams 是机器人规划后允许传入的受限参数。
 // 服务端会按 Skill 再次校验，不允许把任意查询条件传给数据层。
 type wecomBotSkillParams struct {
-	TimeRange string `json:"time_range,omitempty"`
-	Hours     int    `json:"hours,omitempty"`
-	Metric    string `json:"metric,omitempty"`
-	Days      int    `json:"days,omitempty"`
-	Chart     string `json:"chart,omitempty"`
+	TimeRange   string   `json:"time_range,omitempty"`
+	Hours       int      `json:"hours,omitempty"`
+	Metric      string   `json:"metric,omitempty"`
+	Days        int      `json:"days,omitempty"`
+	Chart       string   `json:"chart,omitempty"`
+	Events      []string `json:"events,omitempty"`
+	Event       string   `json:"event,omitempty"`
+	Property    string   `json:"property,omitempty"`
+	WindowHours int      `json:"window_hours,omitempty"`
 }
 
 type wecomBotEvent struct {

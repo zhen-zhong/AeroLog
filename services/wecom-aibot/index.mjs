@@ -135,16 +135,17 @@ const bot = new AiBot.WSClient({
   logger: sdkLogger,
 })
 
-const skillNames = new Set(['ads_summary', 'server_status', 'kafka_status', 'disk_usage', 'directory_usage', 'directory_usage_detail', 'report_trend', 'retention_trend'])
+const skillNames = new Set(['ads_summary', 'server_status', 'kafka_status', 'disk_usage', 'directory_usage', 'directory_usage_detail', 'report_trend', 'retention_trend', 'event_metrics', 'event_property_breakdown', 'funnel_summary'])
 const timeRanges = new Set(['today', 'yesterday', 'last_hours'])
 const trendMetrics = new Set(['new_users', 'ad_impressions', 'ad_impressions_per_user', 'ad_coin_revenue'])
 const chartTypes = new Set(['line', 'bar'])
 
 const plannerPrompt = `你是 AeroLog 只读查询规划器。根据用户问题，仅输出一个 JSON 对象，不要 Markdown、解释或 SQL。
-可选 skill 仅有：ads_summary、server_status、kafka_status、disk_usage、directory_usage、directory_usage_detail、report_trend、retention_trend。
+可选 skill 仅有：ads_summary、server_status、kafka_status、disk_usage、directory_usage、directory_usage_detail、report_trend、retention_trend、event_metrics、event_property_breakdown、funnel_summary。
 ads_summary 用于指定项目的广告、ad_show、广告数据；params 必须包含 time_range：today、yesterday 或 last_hours。用户说“近/最近 N 小时”时，必须使用 {"time_range":"last_hours","hours":N}；未指定时间时用 today。其他 skill 的 params 必须是 {}。
 server_status 用于服务器或主机资源与服务状态；kafka_status 用于 Kafka、消息队列、积压、DLQ；disk_usage 用于挂载点磁盘占用；directory_usage 用于哪些目录/文件占空间；directory_usage_detail 仅用于询问 /usr、/opt、/var/lib/docker、/var/lib/aerolog、/var/log、/var/cache、/tmp、/home 内部什么占空间。
 report_trend 用于指定项目的新增用户、广告展示次数、人均广告展示、广告收入（金）的按天图表；params 必须为 {"metric":"new_users|ad_impressions|ad_impressions_per_user|ad_coin_revenue","days":1至30整数,"chart":"line|bar"}。未说明天数时 days=7，未说明图表时 chart=line。retention_trend 用于指定项目的新用户留存趋势图；params 必须为 {"days":1至30整数}，未说明天数时 days=7。
+event_metrics 用于指定项目一个或多个明确事件的总次数、去重用户数；params 为 {"events":["事件名"],"days":1至30整数}，最多 10 个事件。event_property_breakdown 用于一个明确事件按一个明确属性或参数拆解；params 为 {"event":"事件名","property":"属性名","days":1至30整数}。funnel_summary 用于 2 到 5 个明确事件的顺序漏斗；params 为 {"events":["事件1","事件2"],"days":1至30整数,"window_hours":1至168整数}，未说明窗口时 window_hours=24。事件和属性必须来自用户问题，不得杜撰。
 无法匹配时输出 {"skill":"unknown","params":{}}。`
 
 function parsePlan(content) {
@@ -177,6 +178,24 @@ function parsePlan(content) {
     const days = Number(params.days)
     if (!Number.isInteger(days) || days < 1 || days > 30) throw new Error('留存趋势天数无效')
     return { skill, params: { days } }
+  }
+  if (skill === 'event_metrics') {
+    const events = Array.isArray(params.events) ? params.events.filter((item) => typeof item === 'string' && item.trim()).slice(0, 10).map((item) => item.trim()) : []
+    const days = Number(params.days)
+    if (!events.length || !Number.isInteger(days) || days < 1 || days > 30) throw new Error('事件指标参数无效')
+    return { skill, params: { events, days } }
+  }
+  if (skill === 'event_property_breakdown') {
+    const days = Number(params.days)
+    if (typeof params.event !== 'string' || !params.event.trim() || typeof params.property !== 'string' || !params.property.trim() || !Number.isInteger(days) || days < 1 || days > 30) throw new Error('事件属性拆解参数无效')
+    return { skill, params: { event: params.event.trim(), property: params.property.trim(), days } }
+  }
+  if (skill === 'funnel_summary') {
+    const events = Array.isArray(params.events) ? params.events.filter((item) => typeof item === 'string' && item.trim()).slice(0, 5).map((item) => item.trim()) : []
+    const days = Number(params.days)
+    const windowHours = Number(params.window_hours ?? 24)
+    if (events.length < 2 || !Number.isInteger(days) || days < 1 || days > 30 || !Number.isInteger(windowHours) || windowHours < 1 || windowHours > 168) throw new Error('漏斗参数无效')
+    return { skill, params: { events, days, window_hours: windowHours } }
   }
   return { skill, params: {} }
 }
@@ -325,6 +344,18 @@ function fallbackSummary(data) {
     const dayOne = Array.isArray(data.points) ? data.points.find((point) => point.label === 'Day1') : null
     return `**${data.project_name} · 新用户留存**\n\n- 同期范围：${data.from} ～ ${data.to}\n- Day1 留存：${dayOne ? formatPercent(dayOne.value) : '无数据'}\n- 图表：折线图`
   }
+  if (data?.skill === 'event_metrics') {
+    const events = Array.isArray(data.events) && data.events.length ? data.events.map((item) => `- ${item.event}：${item.count} 次，${item.users} 去重用户`).join('\n') : '- 无匹配事件数据'
+    return `${data.project_name} 事件指标\n\n- 数据时间：${data.from} ～ ${data.to}\n${events}`
+  }
+  if (data?.skill === 'event_property_breakdown') {
+    const values = Array.isArray(data.values) && data.values.length ? data.values.map((item) => `- ${item.value}：${item.count} 次，${item.users} 去重用户`).join('\n') : '- 无属性取值数据'
+    return `${data.project_name} · ${data.event} 属性拆解\n\n- 属性：${data.property}\n- 数据时间：${data.from} ～ ${data.to}\n${values}`
+  }
+  if (data?.skill === 'funnel_summary') {
+    const steps = Array.isArray(data.steps) && data.steps.length ? data.steps.map((item, index) => `- ${index + 1}. ${item.event}：${item.users} 用户，累计转化 ${(Number(item.conversion) * 100).toFixed(1)}%`).join('\n') : '- 无漏斗数据'
+    return `${data.project_name} 顺序漏斗\n\n- 数据时间：${data.from} ～ ${data.to}\n- 转化窗口：${data.window_hours} 小时\n${steps}`
+  }
   return `查询完成，AI 整理超时。原始结果：\n\n\`\`\`json\n${JSON.stringify(data, null, 2)}\n\`\`\``
 }
 
@@ -389,7 +420,7 @@ function withResponseMeta(answer, elapsed, fixedSkill, tokens, tokensKnown) {
 }
 
 function usesFixedResponse(skill) {
-  return new Set(['server_status', 'kafka_status', 'disk_usage', 'directory_usage', 'directory_usage_detail', 'report_trend', 'retention_trend']).has(skill)
+  return new Set(['server_status', 'kafka_status', 'disk_usage', 'directory_usage', 'directory_usage_detail', 'report_trend', 'retention_trend', 'event_metrics', 'event_property_breakdown', 'funnel_summary']).has(skill)
 }
 
 function chartImage(data) {
