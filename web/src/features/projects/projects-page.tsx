@@ -262,13 +262,14 @@ export function ProjectsPage() {
                   <TableHead className="min-w-24">状态</TableHead>
                   <TableHead className="min-w-36">分析时区</TableHead>
                   <TableHead className="min-w-48">创建时间</TableHead>
+                  <TableHead className="min-w-80">操作</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {isLoading ? (
                   Array.from({ length: 4 }).map((_, index) => (
                     <TableRow key={index}>
-                      <TableCell colSpan={11}>
+                      <TableCell colSpan={12}>
                         <Skeleton className="h-8 w-full" />
                       </TableCell>
                     </TableRow>
@@ -291,7 +292,7 @@ export function ProjectsPage() {
                   ))
                 ) : (
                   <TableRow>
-                    <TableCell colSpan={11} className="h-28 text-center text-sm text-muted-foreground">
+                    <TableCell colSpan={12} className="h-28 text-center text-sm text-muted-foreground">
                       暂无项目
                     </TableCell>
                   </TableRow>
@@ -497,16 +498,6 @@ function ProjectRow({
           <Badge variant={project.data_source === "sensorsdata" ? "success" : "secondary"}>
             {project.data_source === "sensorsdata" ? "神策" : "AeroLog"}
           </Badge>
-          <Button type="button" variant="outline" size="sm" className="h-8 gap-1.5" onClick={() => onSensorsConnect(project)} disabled={project.role !== "owner"}>
-            <Link2 className="h-3.5 w-3.5" />
-            配置神策
-          </Button>
-          <Button type="button" variant="outline" size="sm" className="h-8" onClick={() => onRevenueConfig(project)} disabled={project.role !== "owner"}>
-            广告收入
-          </Button>
-          <Button type="button" variant="outline" size="sm" className="h-8" onClick={() => onChannelCostConfig(project)} disabled={project.role !== "owner"}>
-            渠道成本
-          </Button>
         </div>
       </TableCell>
       <TableCell className="max-w-56 truncate text-muted-foreground">{project.package_name || "-"}</TableCell>
@@ -532,6 +523,20 @@ function ProjectRow({
         />
       </TableCell>
       <TableCell className="text-muted-foreground">{formatDateTime(project.created_at)}</TableCell>
+      <TableCell>
+        <div className="flex items-center gap-2 whitespace-nowrap">
+          <Button type="button" variant="outline" size="sm" className="h-8 gap-1.5" onClick={() => onSensorsConnect(project)} disabled={project.role !== "owner"}>
+            <Link2 className="h-3.5 w-3.5" />
+            配置神策
+          </Button>
+          <Button type="button" variant="outline" size="sm" className="h-8" onClick={() => onRevenueConfig(project)} disabled={project.role !== "owner"}>
+            广告收入
+          </Button>
+          <Button type="button" variant="outline" size="sm" className="h-8" onClick={() => onChannelCostConfig(project)} disabled={project.role !== "owner"}>
+            渠道成本
+          </Button>
+        </div>
+      </TableCell>
     </TableRow>
   );
 }
