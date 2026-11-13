@@ -130,6 +130,24 @@ CREATE INDEX IF NOT EXISTS idx_project_members_user
 CREATE INDEX IF NOT EXISTS idx_project_members_project
     ON project_members(project_id, role);
 
+-- 项目级广告收入规则。不同广告事件可使用各自金额字段和换算系数。
+CREATE TABLE IF NOT EXISTS project_revenue_mappings (
+    id                BIGSERIAL PRIMARY KEY,
+    project_id        BIGINT       NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    name              VARCHAR(128) NOT NULL,
+    event             VARCHAR(128) NOT NULL,
+    amount_property   VARCHAR(128) NOT NULL,
+    currency_property VARCHAR(128) NOT NULL DEFAULT '',
+    multiplier        DOUBLE PRECISION NOT NULL DEFAULT 1,
+    include_in_ltv    BOOLEAN      NOT NULL DEFAULT true,
+    created_at        TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    updated_at        TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    UNIQUE(project_id, event, amount_property),
+    CONSTRAINT project_revenue_mappings_multiplier_check CHECK (multiplier > 0)
+);
+CREATE INDEX IF NOT EXISTS idx_project_revenue_mappings_project
+    ON project_revenue_mappings(project_id, updated_at DESC);
+
 CREATE TABLE IF NOT EXISTS aerolog_schema_migrations (
     name       VARCHAR(128) PRIMARY KEY,
     applied_at TIMESTAMPTZ NOT NULL DEFAULT now()

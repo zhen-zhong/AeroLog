@@ -62,6 +62,21 @@ func (h *AnalyticsHandler) channelBusiness(c *gin.Context) {
 	}
 	body.Limit = clampLimit(strconv.Itoa(body.Limit), 1, 100)
 
+	mappings, err := h.projectRevenueMappings(c, int64(pid))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"err": "读取广告收入规则失败"})
+		return
+	}
+	// 已配置项目级规则时，优先使用全部规则；旧请求参数仅作为未配置时的兼容兜底。
+	configuredRevenue := len(mappings) > 0
+	if !configuredRevenue && body.RevenueEvent != "" {
+		mappings = []ProjectRevenueMapping{{
+			Event: body.RevenueEvent, AmountProperty: body.RevenueProperty, Multiplier: 1, IncludeInLTV: true,
+		}}
+	}
+	revenueExpr, revenueArgs := revenueMappingExpression(mappings, false)
+	ltvRevenueExpr, ltvRevenueArgs := revenueMappingExpression(mappings, true)
+
 	q := `WITH cohort AS (
 		SELECT distinct_id, argMin(JSONExtractRaw(properties, ?), time) AS dimension
 		FROM events
@@ -78,13 +93,17 @@ func (h *AnalyticsHandler) channelBusiness(c *gin.Context) {
 		countIf(a.event=?) AS ad_shows,
 		uniqExactIf(c.distinct_id, a.event=?) AS show_users,
 		countIf(a.event=?) AS ad_completes,
-		sumIf(toFloat64OrZero(JSONExtractString(a.properties, ?)), a.event=?) AS revenue
+		` + revenueExpr + ` AS revenue,
+		` + ltvRevenueExpr + ` AS ltv_revenue
 	FROM cohort AS c
 	LEFT JOIN activity AS a ON c.distinct_id=a.distinct_id
 	GROUP BY c.dimension
 	ORDER BY revenue DESC, ad_shows DESC
 	LIMIT ?`
-	args := []any{body.Dimension, uint32(pid), body.AttributionEvent, body.From, body.To, body.Dimension, uint32(pid), body.From, body.To, body.ShowEvent, body.ShowEvent, body.CompleteEvent, body.RevenueProperty, body.RevenueEvent, uint32(body.Limit)}
+	args := []any{body.Dimension, uint32(pid), body.AttributionEvent, body.From, body.To, body.Dimension, uint32(pid), body.From, body.To, body.ShowEvent, body.ShowEvent, body.CompleteEvent}
+	args = append(args, revenueArgs...)
+	args = append(args, ltvRevenueArgs...)
+	args = append(args, uint32(body.Limit))
 	rows, err := h.CH.Query(c, q, args...)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
@@ -99,18 +118,19 @@ func (h *AnalyticsHandler) channelBusiness(c *gin.Context) {
 		ShowUsers   uint64  `json:"show_users"`
 		AdCompletes uint64  `json:"ad_completes"`
 		Revenue     float64 `json:"revenue"`
+		LTVRevenue  float64 `json:"-"`
 		LTV         float64 `json:"ltv"`
 	}
 	out := make([]row, 0)
 	for rows.Next() {
 		var item row
-		if err := rows.Scan(&item.Raw, &item.Installs, &item.AdShows, &item.ShowUsers, &item.AdCompletes, &item.Revenue); err != nil {
+		if err := rows.Scan(&item.Raw, &item.Installs, &item.AdShows, &item.ShowUsers, &item.AdCompletes, &item.Revenue, &item.LTVRevenue); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
 			return
 		}
 		_, item.Label = parsePropertyValue(item.Raw)
 		if item.Installs > 0 {
-			item.LTV = item.Revenue / float64(item.Installs)
+			item.LTV = item.LTVRevenue / float64(item.Installs)
 		}
 		out = append(out, item)
 	}
@@ -118,5 +138,21 @@ func (h *AnalyticsHandler) channelBusiness(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": gin.H{"rows": out, "cost_available": false}})
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"rows": out, "cost_available": false, "revenue_mapping_count": len(mappings), "revenue_configured": configuredRevenue}})
+}
+
+func revenueMappingExpression(mappings []ProjectRevenueMapping, ltvOnly bool) (string, []any) {
+	terms := make([]string, 0, len(mappings))
+	args := make([]any, 0, len(mappings)*3)
+	for _, mapping := range mappings {
+		if ltvOnly && !mapping.IncludeInLTV {
+			continue
+		}
+		terms = append(terms, "sumIf(toFloat64OrZero(JSONExtractString(a.properties, ?)) * ?, a.event=?)")
+		args = append(args, mapping.AmountProperty, mapping.Multiplier, mapping.Event)
+	}
+	if len(terms) == 0 {
+		return "toFloat64(0)", args
+	}
+	return "(" + strings.Join(terms, " + ") + ")", args
 }

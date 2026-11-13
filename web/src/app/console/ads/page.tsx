@@ -37,8 +37,6 @@ export default function AdsPage() {
   const [attributionEvent, setAttributionEvent] = useState("");
   const [channelShowEvent, setChannelShowEvent] = useState("");
   const [channelCompleteEvent, setChannelCompleteEvent] = useState("");
-  const [channelRevenueEvent, setChannelRevenueEvent] = useState("");
-  const [channelRevenueProperty, setChannelRevenueProperty] = useState("coin_amount");
   const timeDimensions = useMemo<QueryDimension[]>(() => [{ type: "time", key: "day" }], []);
   const rangeValue = useMemo(() => ({ from: range[0].valueOf(), to: range[1].valueOf() }), [range]);
 
@@ -63,11 +61,15 @@ export default function AdsPage() {
     if (!attributionEvent) setAttributionEvent(eventNames.includes("mmp_singular_install") ? "mmp_singular_install" : "$AppStart");
     if (!channelShowEvent) setChannelShowEvent(eventNames.includes("mmp_singular_ad_impression") ? "mmp_singular_ad_impression" : eventNames.includes("ad_show") ? "ad_show" : "");
     if (!channelCompleteEvent && eventNames.includes("ad_complete")) setChannelCompleteEvent("ad_complete");
-    if (!channelRevenueEvent && eventNames.includes("coin_earned")) setChannelRevenueEvent("coin_earned");
-  }, [attributionEvent, channelCompleteEvent, channelRevenueEvent, channelShowEvent, eventNames]);
+  }, [attributionEvent, channelCompleteEvent, channelShowEvent, eventNames]);
+  const revenueMappings = useQuery({
+    queryKey: ["ads_channel_revenue-mappings", projectId],
+    queryFn: () => api.listProjectRevenueMappings(projectId!),
+    enabled: !!projectId,
+  });
   const channelBusiness = useQuery({
-    queryKey: ["ads_channel_business", projectId, rangeValue, channelDimension, attributionEvent, channelShowEvent, channelCompleteEvent, channelRevenueEvent, channelRevenueProperty],
-    queryFn: () => api.channelBusiness(projectId!, { dimension: channelDimension, attribution_event: attributionEvent, show_event: channelShowEvent, complete_event: channelCompleteEvent || undefined, revenue_event: channelRevenueEvent || undefined, revenue_property: channelRevenueEvent ? channelRevenueProperty : undefined, ...rangeValue }),
+    queryKey: ["ads_channel_business", projectId, rangeValue, channelDimension, attributionEvent, channelShowEvent, channelCompleteEvent, revenueMappings.dataUpdatedAt],
+    queryFn: () => api.channelBusiness(projectId!, { dimension: channelDimension, attribution_event: attributionEvent, show_event: channelShowEvent, complete_event: channelCompleteEvent || undefined, ...rangeValue }),
     enabled: !!projectId && !!attributionEvent && !!channelShowEvent,
   });
 
@@ -173,10 +175,10 @@ export default function AdsPage() {
           <ChannelSelect label="归因事件" value={attributionEvent} onChange={setAttributionEvent} options={eventNames.map((value) => ({ value, label: value }))} />
           <ChannelSelect label="广告展示事件" value={channelShowEvent} onChange={setChannelShowEvent} options={eventNames.map((value) => ({ value, label: value }))} />
           <ChannelSelect label="广告完成事件" value={channelCompleteEvent} onChange={setChannelCompleteEvent} options={eventNames.map((value) => ({ value, label: value }))} optional />
-          <ChannelSelect label="广告收入事件" value={channelRevenueEvent} onChange={setChannelRevenueEvent} options={eventNames.map((value) => ({ value, label: value }))} optional />
+          <div className="grid gap-1.5"><span className="text-sm font-medium">广告收入映射</span><div className="flex min-h-10 items-center rounded-md border px-3 text-sm text-muted-foreground">{revenueMappings.isLoading ? "读取中..." : revenueMappings.data?.data.length ? `已配置 ${revenueMappings.data.data.length} 条` : "未配置"}</div></div>
         </div>
       </ToolbarPanel>
-      <ChartPanel title="渠道经营指标" description="LTV = 分析期广告收入 ÷ 归因用户数；ROI/ROAS 需接入渠道成本后计算。" className="mt-5" contentClassName="p-0 sm:p-0">
+      <ChartPanel title="渠道经营指标" description={revenueMappings.data?.data.length ? "广告收入汇总项目级映射；LTV = 勾选计入 LTV 的收入 ÷ 归因用户数；ROI/ROAS 需接入渠道成本后计算。" : "未配置广告收入映射；请到项目管理 → 广告收入新增规则。"} className="mt-5" contentClassName="p-0 sm:p-0">
         {!channelBusiness.data?.data.rows.length ? <EmptyAnalysis className="min-h-48" title="暂无渠道经营数据" description="选择已上报归因、展示事件后，按统一渠道字段计算。" /> : <div className="overflow-x-auto"><Table className="min-w-[980px]"><TableHeader><TableRow><TableHead>{channelDimension === "mmp_media_source" ? "媒体来源" : "广告活动"}</TableHead><TableHead className="text-right">归因用户</TableHead><TableHead className="text-right">广告展示</TableHead><TableHead className="text-right">展示用户</TableHead><TableHead className="text-right">广告完成</TableHead><TableHead className="text-right">广告收入</TableHead><TableHead className="text-right">LTV</TableHead><TableHead className="text-right">ROI / ROAS</TableHead></TableRow></TableHeader><TableBody>{channelBusiness.data.data.rows.map((row) => <TableRow key={row.raw}><TableCell className="font-medium">{row.label}</TableCell><TableCell className="text-right font-mono">{row.installs.toLocaleString()}</TableCell><TableCell className="text-right font-mono">{row.ad_shows.toLocaleString()}</TableCell><TableCell className="text-right font-mono">{row.show_users.toLocaleString()}</TableCell><TableCell className="text-right font-mono">{row.ad_completes.toLocaleString()}</TableCell><TableCell className="text-right font-mono">{row.revenue.toLocaleString()}</TableCell><TableCell className="text-right font-mono">{row.ltv.toFixed(2)}</TableCell><TableCell className="text-right text-muted-foreground">待成本数据</TableCell></TableRow>)}</TableBody></Table></div>}
       </ChartPanel>
     </>}

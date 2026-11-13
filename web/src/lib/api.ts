@@ -394,6 +394,18 @@ export interface ChannelBusinessRow {
     revenue: number;
     ltv: number;
 }
+export interface ProjectRevenueMapping {
+    id: number;
+    project_id: number;
+    name: string;
+    event: string;
+    amount_property: string;
+    currency_property: string;
+    multiplier: number;
+    include_in_ltv: boolean;
+    created_at: string;
+    updated_at: string;
+}
 export interface CohortMetricValue {
     offset: number;
     count: number;
@@ -727,6 +739,27 @@ export const api = {
         req<ApiOne<{ deleted: boolean }>>(`/projects/${id}/members/${userId}`, {
             method: "DELETE",
         }),
+    listProjectRevenueMappings: (id: number | string) =>
+        req<ApiList<ProjectRevenueMapping>>(`/projects/${id}/revenue-mappings`),
+    createProjectRevenueMapping: (
+        id: number | string,
+        body: Omit<ProjectRevenueMapping, "id" | "project_id" | "created_at" | "updated_at">,
+    ) => req<ApiOne<ProjectRevenueMapping>>(`/projects/${id}/revenue-mappings`, {
+        method: "POST",
+        body: JSON.stringify(body),
+    }),
+    updateProjectRevenueMapping: (
+        id: number | string,
+        mappingId: number | string,
+        body: Omit<ProjectRevenueMapping, "id" | "project_id" | "created_at" | "updated_at">,
+    ) => req<ApiOne<ProjectRevenueMapping>>(`/projects/${id}/revenue-mappings/${mappingId}`, {
+        method: "PATCH",
+        body: JSON.stringify(body),
+    }),
+    deleteProjectRevenueMapping: (id: number | string, mappingId: number | string) =>
+        req<ApiOne<{ deleted: boolean }>>(`/projects/${id}/revenue-mappings/${mappingId}`, {
+            method: "DELETE",
+        }),
     listEvents: (id: number | string) =>
         req<ApiList<EventDefinition>>(`/projects/${id}/events`),
     channelBusiness: (id: number | string, body: {
@@ -739,7 +772,7 @@ export const api = {
         from: number;
         to: number;
         limit?: number;
-    }) => req<ApiOne<{ rows: ChannelBusinessRow[]; cost_available: boolean }>>(`/projects/${id}/analytics/channel_business`, {
+    }) => req<ApiOne<{ rows: ChannelBusinessRow[]; cost_available: boolean; revenue_mapping_count: number; revenue_configured: boolean }>>(`/projects/${id}/analytics/channel_business`, {
         method: "POST",
         body: JSON.stringify(body),
     }),

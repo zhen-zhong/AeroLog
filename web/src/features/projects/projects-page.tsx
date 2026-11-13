@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Copy, Link2, Plus, ShieldCheck, ShieldOff } from "lucide-react";
-import { api, Project, ProjectStatus } from "@/lib/api";
+import { api, Project, ProjectRevenueMapping, ProjectStatus } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
 import { PageHeader } from "@/components/layout/page-header";
 import { AnimatedContent } from "@/components/react-bits/animated-content";
@@ -92,6 +92,7 @@ export function ProjectsPage() {
   const [sensorsProjectID, setSensorsProjectID] = useState("");
   const [error, setError] = useState("");
   const [sensorsProject, setSensorsProject] = useState<Project | null>(null);
+  const [revenueProject, setRevenueProject] = useState<Project | null>(null);
   const user = useAuthStore((s) => s.user);
   const isPlatformAdmin = user?.role === "admin";
   const canManageProjects = isPlatformAdmin || user?.role === "company_admin";
@@ -283,6 +284,7 @@ export function ProjectsPage() {
                       onStatusChange={changeStatus}
                       onTimezoneChange={changeTimezone}
                       onSensorsConnect={setSensorsProject}
+                      onRevenueConfig={setRevenueProject}
                     />
                   ))
                 ) : (
@@ -446,6 +448,10 @@ export function ProjectsPage() {
         project={sensorsProject}
         onOpenChange={(next) => { if (!next) setSensorsProject(null); }}
       />
+      <RevenueMappingsSheet
+        project={revenueProject}
+        onOpenChange={(next) => { if (!next) setRevenueProject(null); }}
+      />
     </AnimatedContent>
   );
 }
@@ -459,6 +465,7 @@ function ProjectRow({
   onStatusChange,
   onTimezoneChange,
   onSensorsConnect,
+  onRevenueConfig,
 }: {
   project: Project;
   pending: boolean;
@@ -468,6 +475,7 @@ function ProjectRow({
   onStatusChange: (project: Project, status: ProjectStatus) => void;
   onTimezoneChange: (project: Project, timezone: Project["timezone"]) => void;
   onSensorsConnect: (project: Project) => void;
+  onRevenueConfig: (project: Project) => void;
 }) {
   return (
     <TableRow>
@@ -484,6 +492,9 @@ function ProjectRow({
           <Button type="button" variant="outline" size="sm" className="h-8 gap-1.5" onClick={() => onSensorsConnect(project)} disabled={project.role !== "owner"}>
             <Link2 className="h-3.5 w-3.5" />
             配置神策
+          </Button>
+          <Button type="button" variant="outline" size="sm" className="h-8" onClick={() => onRevenueConfig(project)} disabled={project.role !== "owner"}>
+            广告收入
           </Button>
         </div>
       </TableCell>
@@ -669,6 +680,143 @@ function SensorsIntegrationSheet({ project, onOpenChange }: { project: Project |
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>关闭</Button>
             <Button type="submit" disabled={connect.isPending}>{connect.isPending ? "保存中..." : saved ? "保存配置" : reuse ? "保存并启用路由" : "创建订阅并启用路由"}</Button>
           </div>
+        </form>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+type RevenueMappingForm = Omit<ProjectRevenueMapping, "id" | "project_id" | "created_at" | "updated_at">;
+
+const emptyRevenueMapping = (): RevenueMappingForm => ({
+  name: "",
+  event: "",
+  amount_property: "",
+  currency_property: "",
+  multiplier: 1,
+  include_in_ltv: true,
+});
+
+function RevenueMappingsSheet({ project, onOpenChange }: { project: Project | null; onOpenChange: (open: boolean) => void }) {
+  const qc = useQueryClient();
+  const [form, setForm] = useState<RevenueMappingForm>(emptyRevenueMapping());
+  const [editing, setEditing] = useState<ProjectRevenueMapping | null>(null);
+  const [error, setError] = useState("");
+  const mappings = useQuery({
+    queryKey: ["project-revenue-mappings", project?.id],
+    queryFn: () => api.listProjectRevenueMappings(project!.id),
+    enabled: !!project,
+    retry: false,
+  });
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ["project-revenue-mappings", project?.id] });
+    qc.invalidateQueries({ queryKey: ["ads_channel_revenue-mappings", project?.id] });
+  };
+  const save = useMutation({
+    mutationFn: () => editing
+      ? api.updateProjectRevenueMapping(project!.id, editing.id, form)
+      : api.createProjectRevenueMapping(project!.id, form),
+    onSuccess: () => {
+      setForm(emptyRevenueMapping());
+      setEditing(null);
+      setError("");
+      invalidate();
+    },
+    onError: (e: Error) => setError(e.message),
+  });
+  const remove = useMutation({
+    mutationFn: (mappingId: number) => api.deleteProjectRevenueMapping(project!.id, mappingId),
+    onSuccess: invalidate,
+    onError: (e: Error) => setError(e.message),
+  });
+
+  useEffect(() => {
+    if (!project) return;
+    setForm(emptyRevenueMapping());
+    setEditing(null);
+    setError("");
+  }, [project?.id]);
+
+  function submit(e: FormEvent) {
+    e.preventDefault();
+    if (!form.event.trim() || !form.amount_property.trim()) {
+      setError("请填写收入事件和金额字段");
+      return;
+    }
+    if (!Number.isFinite(form.multiplier) || form.multiplier <= 0) {
+      setError("换算系数必须大于 0");
+      return;
+    }
+    save.mutate();
+  }
+
+  function edit(item: ProjectRevenueMapping) {
+    setEditing(item);
+    setForm({
+      name: item.name,
+      event: item.event,
+      amount_property: item.amount_property,
+      currency_property: item.currency_property,
+      multiplier: item.multiplier,
+      include_in_ltv: item.include_in_ltv,
+    });
+    setError("");
+  }
+
+  return (
+    <Sheet open={!!project} onOpenChange={onOpenChange}>
+      <SheetContent side="right" className="overflow-y-auto sm:max-w-xl">
+        <SheetHeader>
+          <SheetTitle>广告收入映射</SheetTitle>
+          <SheetDescription>{project ? `为「${project.name}」配置收入事件。广告经营页会汇总全部规则；LTV 仅累计已勾选规则。` : ""}</SheetDescription>
+        </SheetHeader>
+        <div className="mt-5 space-y-2">
+          {mappings.isLoading ? <p className="text-sm text-muted-foreground">读取规则中...</p> : (mappings.data?.data || []).length ? (mappings.data?.data || []).map((item) => (
+            <div key={item.id} className="rounded-lg border p-3 text-sm">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="font-medium">{item.name}</p>
+                  <p className="mt-1 break-all text-muted-foreground">{item.event} · {item.amount_property} × {item.multiplier}{item.currency_property ? ` · 币种字段：${item.currency_property}` : ""}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{item.include_in_ltv ? "计入 LTV" : "不计入 LTV"}</p>
+                </div>
+                <div className="flex shrink-0 gap-2">
+                  <Button type="button" variant="outline" size="sm" onClick={() => edit(item)}>编辑</Button>
+                  <Button type="button" variant="outline" size="sm" onClick={() => remove.mutate(item.id)} disabled={remove.isPending}>删除</Button>
+                </div>
+              </div>
+            </div>
+          )) : <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">暂无规则。不同广告平台可分别新增事件和金额字段。</p>}
+        </div>
+        <form onSubmit={submit} className="mt-6 space-y-4 border-t pt-5">
+          <div className="flex items-center justify-between gap-3"><p className="font-medium">{editing ? "编辑规则" : "新增规则"}</p>{editing && <Button type="button" size="sm" variant="ghost" onClick={() => { setEditing(null); setForm(emptyRevenueMapping()); setError(""); }}>取消编辑</Button>}</div>
+          <div className="space-y-2">
+            <Label htmlFor="revenue-mapping-name">规则名称</Label>
+            <Input id="revenue-mapping-name" value={form.name} onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))} placeholder="如：AdMob 广告收入" autoComplete="off" />
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="revenue-mapping-event">收入事件</Label>
+              <Input id="revenue-mapping-event" value={form.event} onChange={(e) => setForm((prev) => ({ ...prev, event: e.target.value }))} placeholder="如：ad_revenue" autoComplete="off" />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="revenue-mapping-amount">金额字段</Label>
+              <Input id="revenue-mapping-amount" value={form.amount_property} onChange={(e) => setForm((prev) => ({ ...prev, amount_property: e.target.value }))} placeholder="如：revenue" autoComplete="off" />
+            </div>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="revenue-mapping-multiplier">换算系数</Label>
+              <Input id="revenue-mapping-multiplier" type="number" min="0" step="any" value={form.multiplier} onChange={(e) => setForm((prev) => ({ ...prev, multiplier: Number(e.target.value) }))} />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="revenue-mapping-currency">币种字段（可选）</Label>
+              <Input id="revenue-mapping-currency" value={form.currency_property} onChange={(e) => setForm((prev) => ({ ...prev, currency_property: e.target.value }))} placeholder="如：currency" autoComplete="off" />
+            </div>
+          </div>
+          <label className="flex cursor-pointer items-center gap-2 text-sm"><input type="checkbox" checked={form.include_in_ltv} onChange={(e) => setForm((prev) => ({ ...prev, include_in_ltv: e.target.checked }))} />计入渠道 LTV</label>
+          <p className="text-xs text-muted-foreground">换算系数用于分、微元等单位换算；币种字段仅记录字段来源，不做自动汇率换算。</p>
+          {error && <p className="text-sm text-destructive">{error}</p>}
+          <div className="flex justify-end gap-2 pt-2"><Button type="button" variant="outline" onClick={() => onOpenChange(false)}>关闭</Button><Button type="submit" disabled={save.isPending}>{save.isPending ? "保存中..." : editing ? "保存修改" : "新增规则"}</Button></div>
         </form>
       </SheetContent>
     </Sheet>
