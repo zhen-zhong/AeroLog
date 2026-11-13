@@ -90,7 +90,7 @@ func (s *Syncer) Sync(ctx context.Context, events []*model.EnvelopedEvent) error
 		queued++
 	}
 	for k, v := range propDefs {
-		batch.Queue(upsertPropertyDefinitionSQL, int64(k.projectID), k.name, k.scope, v.dataType, v.first, v.last)
+		batch.Queue(upsertPropertyDefinitionSQL, int64(k.projectID), k.name, propertyDisplayName(k.name), k.scope, v.dataType, v.first, v.last)
 		queued++
 	}
 	for k, v := range identities {
@@ -109,6 +109,20 @@ func (s *Syncer) Sync(ctx context.Context, events []*model.EnvelopedEvent) error
 		}
 	}
 	return nil
+}
+
+func propertyDisplayName(name string) string {
+	known := map[string]string{
+		"mmp_media_source":  "媒体来源",
+		"mmp_campaign_name": "广告活动",
+		"mmp_campaign_id":   "广告活动 ID",
+		"mmp_ad_group_name": "广告组",
+		"mmp_ad_group_id":   "广告组 ID",
+		"mmp_creative_name": "创意名称",
+		"mmp_creative_id":   "创意 ID",
+		"mmp_country":       "归因国家",
+	}
+	return known[name]
 }
 
 type eventKey struct {
@@ -660,9 +674,10 @@ ON CONFLICT (project_id, name) DO UPDATE SET
 `
 
 const upsertPropertyDefinitionSQL = `
-INSERT INTO property_definitions(project_id, name, scope, event, data_type, first_seen, last_seen)
-VALUES($1, $2, $3, '', $4, $5, $6)
+INSERT INTO property_definitions(project_id, name, display_name, scope, event, data_type, first_seen, last_seen)
+VALUES($1, $2, $3, $4, '', $5, $6, $7)
 ON CONFLICT (project_id, name, scope, event) DO UPDATE SET
+	display_name = COALESCE(NULLIF(EXCLUDED.display_name, ''), property_definitions.display_name),
 	data_type = CASE
 		WHEN property_definitions.schema_locked THEN property_definitions.data_type
 		WHEN property_definitions.data_type = EXCLUDED.data_type THEN property_definitions.data_type

@@ -64,6 +64,7 @@ func decodeFlattenRecord(record map[string]interface{}, targetProjectID uint32) 
 	copySourceMetadata(props, record, "project_id", "$sensorsdata_project_id")
 	copySourceMetadata(props, record, "trace_id", "$sensorsdata_trace_id")
 	copySourceMetadata(props, record, "operation_type", "$sensorsdata_operation_type")
+	normalizeSingularAttributionProperties(props)
 
 	identities := objectValue(record["identities"])
 	userID := stringValue(identities["$identity_login_id"])
@@ -164,6 +165,7 @@ func decodeFlattenProfileRecord(record map[string]interface{}, targetProjectID u
 	copySourceMetadata(props, record, "project_id", "$sensorsdata_project_id")
 	copySourceMetadata(props, record, "trace_id", "$sensorsdata_trace_id")
 	copySourceMetadata(props, record, "operation_type", "$sensorsdata_operation_type")
+	normalizeSingularAttributionProperties(props)
 
 	receivedAt, ok := millis(props["$receive_time"])
 	if !ok || receivedAt <= 0 {
@@ -209,6 +211,50 @@ func copySourceMetadata(props, record map[string]interface{}, from, to string) {
 	if value, ok := record[from]; ok && value != nil {
 		props[to] = value
 	}
+}
+
+// normalizeSingularAttributionProperties 将 Singular 原始字段映射为统一 MMP 渠道字段。
+// 已存在的统一字段优先，保证其他归因来源可与 Singular 共用同一套分析维度。
+func normalizeSingularAttributionProperties(props map[string]interface{}) {
+	aliases := []struct {
+		to   string
+		from []string
+	}{
+		{to: "mmp_media_source", from: []string{"mmp_singular_network_name"}},
+		{to: "mmp_campaign_name", from: []string{"mmp_singular_campaign_name"}},
+		{to: "mmp_campaign_id", from: []string{"mmp_singular_campaign_id"}},
+		{to: "mmp_ad_group_name", from: []string{"mmp_singular_subcampaign_name"}},
+		{to: "mmp_ad_group_id", from: []string{"mmp_singular_subcampaign_id"}},
+		{to: "mmp_creative_name", from: []string{"mmp_singular_creative_name"}},
+		{to: "mmp_creative_id", from: []string{"mmp_singular_creative_id"}},
+		{to: "mmp_country", from: []string{"mmp_singular_attribution_country"}},
+	}
+	for _, alias := range aliases {
+		if hasNonEmptyProperty(props, alias.to) {
+			continue
+		}
+		for _, source := range alias.from {
+			if value, ok := props[source]; ok && hasPropertyValue(value) {
+				props[alias.to] = value
+				break
+			}
+		}
+	}
+}
+
+func hasNonEmptyProperty(props map[string]interface{}, key string) bool {
+	value, ok := props[key]
+	return ok && hasPropertyValue(value)
+}
+
+func hasPropertyValue(value interface{}) bool {
+	if value == nil {
+		return false
+	}
+	if text, ok := value.(string); ok {
+		return strings.TrimSpace(text) != ""
+	}
+	return true
 }
 
 func objectValue(value interface{}) map[string]interface{} {

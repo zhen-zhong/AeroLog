@@ -44,6 +44,49 @@ func TestDecodeFlattenRejectsInvalidInput(t *testing.T) {
 	}
 }
 
+func TestDecodeFlattenNormalizesSingularAttribution(t *testing.T) {
+	raw := []byte(`{
+  "event":"mmp_singular_install",
+  "distinct_id":"device-1",
+  "time":1792558800000,
+  "properties":{
+    "mmp_singular_network_name":"Meta Ads",
+    "mmp_singular_campaign_name":"Spring Launch",
+    "mmp_singular_campaign_id":"campaign-1",
+    "mmp_singular_subcampaign_name":"Group A",
+    "mmp_singular_creative_name":"Creative 01",
+    "mmp_singular_attribution_country":"US"
+  }
+}`)
+	got, err := DecodeFlatten(raw, 7)
+	if err != nil {
+		t.Fatalf("DecodeFlatten() error = %v", err)
+	}
+	for key, want := range map[string]string{
+		"mmp_media_source":  "Meta Ads",
+		"mmp_campaign_name": "Spring Launch",
+		"mmp_campaign_id":   "campaign-1",
+		"mmp_ad_group_name": "Group A",
+		"mmp_creative_name": "Creative 01",
+		"mmp_country":       "US",
+	} {
+		if got.Event.Properties[key] != want {
+			t.Fatalf("%s = %#v, want %q", key, got.Event.Properties[key], want)
+		}
+	}
+}
+
+func TestNormalizeSingularAttributionKeepsExistingCanonicalValue(t *testing.T) {
+	props := map[string]interface{}{
+		"mmp_media_source":          "Google Ads",
+		"mmp_singular_network_name": "Meta Ads",
+	}
+	normalizeSingularAttributionProperties(props)
+	if got := props["mmp_media_source"]; got != "Google Ads" {
+		t.Fatalf("mmp_media_source = %#v, want existing value", got)
+	}
+}
+
 func TestDecodeFlattenProfile(t *testing.T) {
 	raw := []byte(`{
   "operation_type":"SET",
