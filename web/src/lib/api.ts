@@ -393,6 +393,10 @@ export interface ChannelBusinessRow {
     ad_completes: number;
     revenue: number;
     ltv: number;
+    cost?: number;
+    cost_currency?: string;
+    roi?: number;
+    roas?: number;
 }
 export interface ProjectRevenueMapping {
     id: number;
@@ -403,6 +407,18 @@ export interface ProjectRevenueMapping {
     currency_property: string;
     multiplier: number;
     include_in_ltv: boolean;
+    created_at: string;
+    updated_at: string;
+}
+export interface ProjectChannelCost {
+    id: number;
+    project_id: number;
+    cost_date: string;
+    media_source: string;
+    campaign_name: string;
+    cost: number;
+    currency: string;
+    source: "manual" | "csv";
     created_at: string;
     updated_at: string;
 }
@@ -760,6 +776,31 @@ export const api = {
         req<ApiOne<{ deleted: boolean }>>(`/projects/${id}/revenue-mappings/${mappingId}`, {
             method: "DELETE",
         }),
+    listProjectChannelCosts: (id: number | string, from?: string, to?: string) => {
+        const query = new URLSearchParams();
+        if (from) query.set("from", from);
+        if (to) query.set("to", to);
+        const suffix = query.size ? `?${query.toString()}` : "";
+        return req<ApiList<ProjectChannelCost>>(`/projects/${id}/channel-costs${suffix}`);
+    },
+    createProjectChannelCost: (
+        id: number | string,
+        body: Omit<ProjectChannelCost, "id" | "project_id" | "source" | "created_at" | "updated_at">,
+    ) => req<ApiOne<ProjectChannelCost>>(`/projects/${id}/channel-costs`, {
+        method: "POST",
+        body: JSON.stringify(body),
+    }),
+    importProjectChannelCosts: (
+        id: number | string,
+        rows: Array<Omit<ProjectChannelCost, "id" | "project_id" | "source" | "created_at" | "updated_at">>,
+    ) => req<ApiOne<{ imported: number }>>(`/projects/${id}/channel-costs/import`, {
+        method: "POST",
+        body: JSON.stringify({ rows }),
+    }),
+    deleteProjectChannelCost: (id: number | string, costId: number | string) =>
+        req<ApiOne<{ deleted: boolean }>>(`/projects/${id}/channel-costs/${costId}`, {
+            method: "DELETE",
+        }),
     listEvents: (id: number | string) =>
         req<ApiList<EventDefinition>>(`/projects/${id}/events`),
     channelBusiness: (id: number | string, body: {
@@ -772,7 +813,7 @@ export const api = {
         from: number;
         to: number;
         limit?: number;
-    }) => req<ApiOne<{ rows: ChannelBusinessRow[]; cost_available: boolean; revenue_mapping_count: number; revenue_configured: boolean }>>(`/projects/${id}/analytics/channel_business`, {
+    }) => req<ApiOne<{ rows: ChannelBusinessRow[]; cost_available: boolean; cost_from: string; cost_to: string; revenue_mapping_count: number; revenue_configured: boolean }>>(`/projects/${id}/analytics/channel_business`, {
         method: "POST",
         body: JSON.stringify(body),
     }),

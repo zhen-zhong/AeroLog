@@ -1,7 +1,9 @@
 package handler
 
 import (
+	"context"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -76,6 +78,13 @@ func (h *AnalyticsHandler) channelBusiness(c *gin.Context) {
 	}
 	revenueExpr, revenueArgs := revenueMappingExpression(mappings, false)
 	ltvRevenueExpr, ltvRevenueArgs := revenueMappingExpression(mappings, true)
+	costFrom, costTo := h.channelCostDateRange(c, uint32(pid), body.From, body.To)
+	costs, err := h.channelCostsForRange(c, int64(pid), body.Dimension, costFrom, costTo)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"err": "读取渠道成本失败"})
+		return
+	}
+	costAvailable := len(costs) > 0
 
 	q := `WITH cohort AS (
 		SELECT distinct_id, argMin(JSONExtractRaw(properties, ?), time) AS dimension
@@ -111,15 +120,19 @@ func (h *AnalyticsHandler) channelBusiness(c *gin.Context) {
 	}
 	defer rows.Close()
 	type row struct {
-		Raw         string  `json:"raw"`
-		Label       string  `json:"label"`
-		Installs    uint64  `json:"installs"`
-		AdShows     uint64  `json:"ad_shows"`
-		ShowUsers   uint64  `json:"show_users"`
-		AdCompletes uint64  `json:"ad_completes"`
-		Revenue     float64 `json:"revenue"`
-		LTVRevenue  float64 `json:"-"`
-		LTV         float64 `json:"ltv"`
+		Raw          string   `json:"raw"`
+		Label        string   `json:"label"`
+		Installs     uint64   `json:"installs"`
+		AdShows      uint64   `json:"ad_shows"`
+		ShowUsers    uint64   `json:"show_users"`
+		AdCompletes  uint64   `json:"ad_completes"`
+		Revenue      float64  `json:"revenue"`
+		LTVRevenue   float64  `json:"-"`
+		LTV          float64  `json:"ltv"`
+		Cost         *float64 `json:"cost,omitempty"`
+		CostCurrency string   `json:"cost_currency,omitempty"`
+		ROI          *float64 `json:"roi,omitempty"`
+		ROAS         *float64 `json:"roas,omitempty"`
 	}
 	out := make([]row, 0)
 	for rows.Next() {
@@ -132,13 +145,50 @@ func (h *AnalyticsHandler) channelBusiness(c *gin.Context) {
 		if item.Installs > 0 {
 			item.LTV = item.LTVRevenue / float64(item.Installs)
 		}
+		if cost, ok := costs[item.Label]; ok {
+			costValue := cost.Cost
+			item.Cost = &costValue
+			item.CostCurrency = cost.Currency
+			if costValue > 0 && !strings.Contains(cost.Currency, ",") {
+				roi := (item.Revenue - costValue) / costValue
+				roas := item.Revenue / costValue
+				item.ROI = &roi
+				item.ROAS = &roas
+			}
+			delete(costs, item.Label)
+		}
 		out = append(out, item)
 	}
 	if err := rows.Err(); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": gin.H{"rows": out, "cost_available": false, "revenue_mapping_count": len(mappings), "revenue_configured": configuredRevenue}})
+	for label, cost := range costs {
+		costValue := cost.Cost
+		out = append(out, row{Raw: label, Label: label, Cost: &costValue, CostCurrency: cost.Currency})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Revenue == out[j].Revenue {
+			left, right := 0.0, 0.0
+			if out[i].Cost != nil {
+				left = *out[i].Cost
+			}
+			if out[j].Cost != nil {
+				right = *out[j].Cost
+			}
+			return left > right
+		}
+		return out[i].Revenue > out[j].Revenue
+	})
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"rows": out, "cost_available": costAvailable, "revenue_mapping_count": len(mappings), "revenue_configured": configuredRevenue, "cost_from": costFrom, "cost_to": costTo}})
+}
+
+func (h *AnalyticsHandler) channelCostDateRange(ctx context.Context, projectID uint32, from, to int64) (string, string) {
+	location, err := time.LoadLocation(h.projectTimezone(ctx, projectID))
+	if err != nil {
+		location = time.Local
+	}
+	return time.UnixMilli(from).In(location).Format("2006-01-02"), time.UnixMilli(to).In(location).Format("2006-01-02")
 }
 
 func revenueMappingExpression(mappings []ProjectRevenueMapping, ltvOnly bool) (string, []any) {

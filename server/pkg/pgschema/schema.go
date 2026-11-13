@@ -148,6 +148,24 @@ CREATE TABLE IF NOT EXISTS project_revenue_mappings (
 CREATE INDEX IF NOT EXISTS idx_project_revenue_mappings_project
     ON project_revenue_mappings(project_id, updated_at DESC);
 
+-- 项目级渠道日成本。金额必须与收入规则使用同一币种/单位，才可计算 ROI、ROAS。
+CREATE TABLE IF NOT EXISTS project_channel_costs (
+    id               BIGSERIAL PRIMARY KEY,
+    project_id       BIGINT       NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    cost_date        DATE         NOT NULL,
+    media_source     VARCHAR(255) NOT NULL,
+    campaign_name    VARCHAR(255) NOT NULL DEFAULT '',
+    cost             DOUBLE PRECISION NOT NULL,
+    currency         VARCHAR(32)  NOT NULL DEFAULT '',
+    source           VARCHAR(32)  NOT NULL DEFAULT 'manual',
+    created_at       TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    updated_at       TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    UNIQUE(project_id, cost_date, media_source, campaign_name),
+    CONSTRAINT project_channel_costs_cost_check CHECK (cost >= 0)
+);
+CREATE INDEX IF NOT EXISTS idx_project_channel_costs_project_date
+    ON project_channel_costs(project_id, cost_date DESC);
+
 CREATE TABLE IF NOT EXISTS aerolog_schema_migrations (
     name       VARCHAR(128) PRIMARY KEY,
     applied_at TIMESTAMPTZ NOT NULL DEFAULT now()

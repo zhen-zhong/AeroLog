@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Copy, Link2, Plus, ShieldCheck, ShieldOff } from "lucide-react";
-import { api, Project, ProjectRevenueMapping, ProjectStatus } from "@/lib/api";
+import { api, Project, ProjectChannelCost, ProjectRevenueMapping, ProjectStatus } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
 import { PageHeader } from "@/components/layout/page-header";
 import { AnimatedContent } from "@/components/react-bits/animated-content";
@@ -93,6 +93,7 @@ export function ProjectsPage() {
   const [error, setError] = useState("");
   const [sensorsProject, setSensorsProject] = useState<Project | null>(null);
   const [revenueProject, setRevenueProject] = useState<Project | null>(null);
+  const [channelCostProject, setChannelCostProject] = useState<Project | null>(null);
   const user = useAuthStore((s) => s.user);
   const isPlatformAdmin = user?.role === "admin";
   const canManageProjects = isPlatformAdmin || user?.role === "company_admin";
@@ -285,6 +286,7 @@ export function ProjectsPage() {
                       onTimezoneChange={changeTimezone}
                       onSensorsConnect={setSensorsProject}
                       onRevenueConfig={setRevenueProject}
+                      onChannelCostConfig={setChannelCostProject}
                     />
                   ))
                 ) : (
@@ -452,6 +454,10 @@ export function ProjectsPage() {
         project={revenueProject}
         onOpenChange={(next) => { if (!next) setRevenueProject(null); }}
       />
+      <ChannelCostsSheet
+        project={channelCostProject}
+        onOpenChange={(next) => { if (!next) setChannelCostProject(null); }}
+      />
     </AnimatedContent>
   );
 }
@@ -466,6 +472,7 @@ function ProjectRow({
   onTimezoneChange,
   onSensorsConnect,
   onRevenueConfig,
+  onChannelCostConfig,
 }: {
   project: Project;
   pending: boolean;
@@ -476,6 +483,7 @@ function ProjectRow({
   onTimezoneChange: (project: Project, timezone: Project["timezone"]) => void;
   onSensorsConnect: (project: Project) => void;
   onRevenueConfig: (project: Project) => void;
+  onChannelCostConfig: (project: Project) => void;
 }) {
   return (
     <TableRow>
@@ -495,6 +503,9 @@ function ProjectRow({
           </Button>
           <Button type="button" variant="outline" size="sm" className="h-8" onClick={() => onRevenueConfig(project)} disabled={project.role !== "owner"}>
             广告收入
+          </Button>
+          <Button type="button" variant="outline" size="sm" className="h-8" onClick={() => onChannelCostConfig(project)} disabled={project.role !== "owner"}>
+            渠道成本
           </Button>
         </div>
       </TableCell>
@@ -821,6 +832,121 @@ function RevenueMappingsSheet({ project, onOpenChange }: { project: Project | nu
       </SheetContent>
     </Sheet>
   );
+}
+
+type ChannelCostForm = Omit<ProjectChannelCost, "id" | "project_id" | "source" | "created_at" | "updated_at">;
+
+function emptyChannelCost(): ChannelCostForm {
+  return { cost_date: new Date().toISOString().slice(0, 10), media_source: "", campaign_name: "", cost: 0, currency: "USD" };
+}
+
+function ChannelCostsSheet({ project, onOpenChange }: { project: Project | null; onOpenChange: (open: boolean) => void }) {
+  const qc = useQueryClient();
+  const [form, setForm] = useState<ChannelCostForm>(emptyChannelCost());
+  const [csv, setCSV] = useState("");
+  const [error, setError] = useState("");
+  const costs = useQuery({
+    queryKey: ["project-channel-costs", project?.id],
+    queryFn: () => api.listProjectChannelCosts(project!.id),
+    enabled: !!project,
+    retry: false,
+  });
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ["project-channel-costs", project?.id] });
+    qc.invalidateQueries({ queryKey: ["ads_channel_business", project?.id] });
+  };
+  const save = useMutation({
+    mutationFn: () => api.createProjectChannelCost(project!.id, form),
+    onSuccess: () => { setForm(emptyChannelCost()); setError(""); invalidate(); },
+    onError: (e: Error) => setError(e.message),
+  });
+  const importCosts = useMutation({
+    mutationFn: () => api.importProjectChannelCosts(project!.id, parseChannelCostsCSV(csv)),
+    onSuccess: () => { setCSV(""); setError(""); invalidate(); },
+    onError: (e: Error) => setError(e.message),
+  });
+  const remove = useMutation({
+    mutationFn: (id: number) => api.deleteProjectChannelCost(project!.id, id),
+    onSuccess: invalidate,
+    onError: (e: Error) => setError(e.message),
+  });
+
+  useEffect(() => {
+    if (!project) return;
+    setForm(emptyChannelCost());
+    setCSV("");
+    setError("");
+  }, [project?.id]);
+
+  function submit(e: FormEvent) {
+    e.preventDefault();
+    if (!form.cost_date || !form.media_source.trim() || !Number.isFinite(form.cost) || form.cost < 0) {
+      setError("请填写日期、媒体来源及大于或等于 0 的成本");
+      return;
+    }
+    save.mutate();
+  }
+
+  function submitCSV() {
+    try {
+      const rows = parseChannelCostsCSV(csv);
+      if (!rows.length) throw new Error("请至少粘贴一条成本数据");
+      importCosts.mutate();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "CSV 格式错误");
+    }
+  }
+
+  return (
+    <Sheet open={!!project} onOpenChange={onOpenChange}>
+      <SheetContent side="right" className="overflow-y-auto sm:max-w-xl">
+        <SheetHeader>
+          <SheetTitle>渠道成本</SheetTitle>
+          <SheetDescription>{project ? `为「${project.name}」录入按日渠道成本。ROI、ROAS 仅在成本与广告收入为相同币种或单位时有效。` : ""}</SheetDescription>
+        </SheetHeader>
+        <div className="mt-5 space-y-2">
+          {costs.isLoading ? <p className="text-sm text-muted-foreground">读取成本数据中...</p> : (costs.data?.data || []).length ? (costs.data?.data || []).map((item) => (
+            <div key={item.id} className="flex items-start justify-between gap-3 rounded-lg border p-3 text-sm">
+              <div className="min-w-0"><p className="font-medium">{item.cost_date} · {item.media_source}</p><p className="mt-1 break-all text-muted-foreground">{item.campaign_name || "全部活动"} · {item.cost.toLocaleString()} {item.currency || ""} · {item.source === "csv" ? "CSV" : "手工"}</p></div>
+              <Button type="button" variant="outline" size="sm" onClick={() => remove.mutate(item.id)} disabled={remove.isPending}>删除</Button>
+            </div>
+          )) : <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">暂无渠道成本。可逐条新增，或粘贴 CSV 批量导入。</p>}
+        </div>
+        <form onSubmit={submit} className="mt-6 space-y-4 border-t pt-5">
+          <p className="font-medium">新增或覆盖单日成本</p>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2"><Label htmlFor="channel-cost-date">日期</Label><Input id="channel-cost-date" type="date" value={form.cost_date} onChange={(e) => setForm((prev) => ({ ...prev, cost_date: e.target.value }))} /></div>
+            <div className="space-y-2"><Label htmlFor="channel-cost-source">媒体来源</Label><Input id="channel-cost-source" value={form.media_source} onChange={(e) => setForm((prev) => ({ ...prev, media_source: e.target.value }))} placeholder="如：Google Ads" autoComplete="off" /></div>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-3">
+            <div className="space-y-2 sm:col-span-2"><Label htmlFor="channel-cost-campaign">广告活动（可选）</Label><Input id="channel-cost-campaign" value={form.campaign_name} onChange={(e) => setForm((prev) => ({ ...prev, campaign_name: e.target.value }))} placeholder="不填则仅按媒体来源归集" autoComplete="off" /></div>
+            <div className="space-y-2"><Label htmlFor="channel-cost-value">成本</Label><Input id="channel-cost-value" type="number" min="0" step="any" value={form.cost} onChange={(e) => setForm((prev) => ({ ...prev, cost: Number(e.target.value) }))} /></div>
+          </div>
+          <div className="space-y-2"><Label htmlFor="channel-cost-currency">币种或单位</Label><Input id="channel-cost-currency" value={form.currency} onChange={(e) => setForm((prev) => ({ ...prev, currency: e.target.value }))} placeholder="如：USD" autoComplete="off" /></div>
+          <div className="flex justify-end"><Button type="submit" disabled={save.isPending}>{save.isPending ? "保存中..." : "保存成本"}</Button></div>
+        </form>
+        <div className="mt-6 space-y-3 border-t pt-5">
+          <p className="font-medium">批量导入 CSV</p>
+          <p className="text-xs text-muted-foreground">每行：日期,媒体来源,广告活动,成本,币种。首行表头可省略；广告活动、币种可留空。</p>
+          <Textarea value={csv} onChange={(e) => setCSV(e.target.value)} placeholder={"2026-11-13,Google Ads,UAC-Android,123.45,USD\n2026-11-13,Mintegral,,56.78,USD"} className="min-h-28 font-mono text-xs" />
+          <div className="flex justify-end"><Button type="button" variant="outline" onClick={submitCSV} disabled={importCosts.isPending}>{importCosts.isPending ? "导入中..." : "导入并覆盖同键记录"}</Button></div>
+        </div>
+        {error && <p className="mt-4 text-sm text-destructive">{error}</p>}
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+function parseChannelCostsCSV(value: string): ChannelCostForm[] {
+  const lines = value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  if (lines.length && /日期|date/i.test(lines[0].split(",")[0])) lines.shift();
+  return lines.map((line, index) => {
+    const cells = line.split(",").map((cell) => cell.trim());
+    if (cells.length < 4 || cells.length > 5) throw new Error(`第 ${index + 1} 行需要 4 或 5 列`);
+    const cost = Number(cells[3]);
+    if (!cells[0] || !cells[1] || !Number.isFinite(cost) || cost < 0) throw new Error(`第 ${index + 1} 行日期、媒体来源或成本无效`);
+    return { cost_date: cells[0], media_source: cells[1], campaign_name: cells[2] || "", cost, currency: cells[4] || "" };
+  });
 }
 
 function ProjectStatusSelect({
