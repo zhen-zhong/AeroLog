@@ -36,3 +36,20 @@ func TestBuildPathsUsesStartEventAndTopNodes(t *testing.T) {
 		t.Fatalf("top node = %#v", nodes[0])
 	}
 }
+
+func TestNormalizeBehaviorCohortRequiresEventForPropertyFilter(t *testing.T) {
+	body := &behaviorQueryBody{CohortProperty: "mmp_singular_campaign_name", CohortValue: "spring"}
+	if err := normalizeBehaviorCohort(body); err == nil {
+		t.Fatal("property filter without cohort event must fail")
+	}
+}
+
+func TestNormalizeBehaviorCohortAllowsPropertyExistenceFilter(t *testing.T) {
+	body := &behaviorQueryBody{CohortEvent: " mmp_singular_install ", CohortProperty: " mmp_singular_campaign_name "}
+	if err := normalizeBehaviorCohort(body); err != nil {
+		t.Fatalf("cohort filter = %v", err)
+	}
+	if body.CohortEvent != "mmp_singular_install" || body.CohortProperty != "mmp_singular_campaign_name" {
+		t.Fatalf("cohort filter was not normalized: %#v", body)
+	}
+}

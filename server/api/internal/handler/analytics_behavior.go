@@ -32,6 +32,9 @@ type behaviorQueryBody struct {
 	To                int64    `json:"to"`
 	SessionGapSeconds int64    `json:"session_gap_seconds"`
 	SegmentID         int64    `json:"segment_id"`
+	CohortEvent       string   `json:"cohort_event"`
+	CohortProperty    string   `json:"cohort_property"`
+	CohortValue       string   `json:"cohort_value"`
 }
 
 func (h *AnalyticsHandler) loadBehaviorEvents(ctx context.Context, pid uint32, body *behaviorQueryBody) ([]behaviorEvent, bool, error) {
@@ -43,6 +46,9 @@ func (h *AnalyticsHandler) loadBehaviorEvents(ctx context.Context, pid uint32, b
 	}
 	if len(body.Events) > 20 {
 		return nil, false, &queryTableError{Status: http.StatusBadRequest, Msg: "events length must be <= 20"}
+	}
+	if err := normalizeBehaviorCohort(body); err != nil {
+		return nil, false, &queryTableError{Status: http.StatusBadRequest, Msg: err.Error()}
 	}
 	where := "project_id = ? AND time BETWEEN fromUnixTimestamp64Milli(?) AND fromUnixTimestamp64Milli(?)"
 	args := []any{pid, body.From, body.To}
@@ -58,6 +64,20 @@ func (h *AnalyticsHandler) loadBehaviorEvents(ctx context.Context, pid uint32, b
 		if len(holders) > 0 {
 			where += " AND event IN (" + joinStrs(holders, ", ") + ")"
 		}
+	}
+	if body.CohortEvent != "" {
+		cohortWhere := `project_id = ? AND event = ? AND time BETWEEN fromUnixTimestamp64Milli(?) AND fromUnixTimestamp64Milli(?)`
+		cohortArgs := []any{pid, body.CohortEvent, body.From, body.To}
+		if body.CohortProperty != "" {
+			cohortWhere += ` AND JSONExtractRaw(properties, ?) != ''`
+			cohortArgs = append(cohortArgs, body.CohortProperty)
+			if body.CohortValue != "" {
+				cohortWhere += ` AND JSONExtractRaw(properties, ?) = ?`
+				cohortArgs = append(cohortArgs, body.CohortProperty, rawJSONValue(body.CohortValue))
+			}
+		}
+		where += ` AND distinct_id IN (SELECT DISTINCT distinct_id FROM events WHERE ` + cohortWhere + `)`
+		args = append(args, cohortArgs...)
 	}
 	memberQuery, memberArgs, err := h.analyticsSegmentMembers(ctx, int64(pid), body.SegmentID)
 	if err != nil {
@@ -88,6 +108,27 @@ func (h *AnalyticsHandler) loadBehaviorEvents(ctx context.Context, pid uint32, b
 		out = out[:maxBehaviorEvents]
 	}
 	return out, truncated, nil
+}
+
+// normalizeBehaviorCohort 限定路径和 Session 的用户筛选条件。
+// 先按 cohort 选人，再读取完整事件序列，避免不含渠道属性的后续事件被错误排除。
+func normalizeBehaviorCohort(body *behaviorQueryBody) error {
+	body.CohortEvent = strings.TrimSpace(body.CohortEvent)
+	body.CohortProperty = strings.TrimSpace(body.CohortProperty)
+	body.CohortValue = strings.TrimSpace(body.CohortValue)
+	if len(body.CohortEvent) > 128 || len(body.CohortProperty) > 128 {
+		return &queryTableError{Status: http.StatusBadRequest, Msg: "cohort event and property length must be <= 128"}
+	}
+	if body.CohortEvent == "" {
+		if body.CohortProperty != "" || body.CohortValue != "" {
+			return &queryTableError{Status: http.StatusBadRequest, Msg: "cohort_event required when filtering users by event property"}
+		}
+		return nil
+	}
+	if body.CohortProperty == "" && body.CohortValue != "" {
+		return &queryTableError{Status: http.StatusBadRequest, Msg: "cohort_property required when cohort_value is set"}
+	}
+	return nil
 }
 
 func normalizeSessionGap(seconds int64) int64 {
@@ -129,7 +170,7 @@ type pathEdge struct {
 }
 
 // /v1/projects/:id/analytics/paths
-// body: {events?, from, to, session_gap_seconds?, segment_id?, start_event?, max_steps?, max_nodes?}
+// body: {events?, from, to, session_gap_seconds?, segment_id?, cohort_event?, cohort_property?, cohort_value?, start_event?, max_steps?, max_nodes?}
 func (h *AnalyticsHandler) paths(c *gin.Context) {
 	pid, _ := strconv.ParseUint(c.Param("id"), 10, 32)
 	var body struct {
@@ -242,7 +283,7 @@ type sessionDay struct {
 }
 
 // /v1/projects/:id/analytics/sessions
-// body: {events?, from, to, session_gap_seconds?, segment_id?}
+// body: {events?, from, to, session_gap_seconds?, segment_id?, cohort_event?, cohort_property?, cohort_value?}
 func (h *AnalyticsHandler) sessionAnalysis(c *gin.Context) {
 	pid, _ := strconv.ParseUint(c.Param("id"), 10, 32)
 	var body behaviorQueryBody
