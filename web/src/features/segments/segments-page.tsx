@@ -27,6 +27,8 @@ export function SegmentsPage() {
   const [profileValue, setProfileValue] = useState("");
   const [event, setEvent] = useState("");
   const [eventCondition, setEventCondition] = useState<"has" | "not_has">("has");
+  const [eventProperty, setEventProperty] = useState("");
+  const [eventValue, setEventValue] = useState("");
   const [lookbackDays, setLookbackDays] = useState("30");
   const [formError, setFormError] = useState("");
 
@@ -37,6 +39,8 @@ export function SegmentsPage() {
     setProfileValue("");
     setEvent("");
     setEventCondition("has");
+    setEventProperty("");
+    setEventValue("");
     setLookbackDays("30");
     setFormError("");
   }, [projectId]);
@@ -56,6 +60,11 @@ export function SegmentsPage() {
     queryFn: () => api.topEvents(projectId!, { limit: 500 }),
     enabled: !!projectId,
   });
+  const eventProperties = useQuery({
+    queryKey: ["segment-event-properties", projectId, event],
+    queryFn: () => api.listProperties(projectId!, { scope: "event", event, include_global: true }),
+    enabled: !!projectId && !!event,
+  });
 
   const rules = useMemo<SegmentRules>(() => {
     const out: SegmentRules = {};
@@ -66,11 +75,15 @@ export function SegmentsPage() {
     if (event) {
       out.event = event;
       out.event_condition = eventCondition;
+      if (eventProperty) {
+        out.event_property = eventProperty;
+        out.event_value = eventValue;
+      }
       const days = Number(lookbackDays);
       if (Number.isFinite(days)) out.lookback_days = days;
     }
     return out;
-  }, [event, eventCondition, lookbackDays, profileProperty, profileValue]);
+  }, [event, eventCondition, eventProperty, eventValue, lookbackDays, profileProperty, profileValue]);
 
   const preview = useMutation({
     mutationFn: () => api.previewSegment(projectId!, rules),
@@ -98,6 +111,8 @@ export function SegmentsPage() {
     setProfileValue(segment.rules.profile_value || "");
     setEvent(segment.rules.event || "");
     setEventCondition(segment.rules.event_condition || "has");
+    setEventProperty(segment.rules.event_property || "");
+    setEventValue(segment.rules.event_value || "");
     setLookbackDays(String(segment.rules.lookback_days || 30));
     setFormError("");
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -150,7 +165,7 @@ export function SegmentsPage() {
               <div className="rounded-lg border p-4">
                 <div className="mb-4 flex items-center gap-2 font-medium"><Plus className="h-4 w-4" />事件条件</div>
                 <div className="grid gap-3 sm:grid-cols-3">
-                  <Select value={event || none} onValueChange={(value) => setEvent(value === none ? "" : value)}>
+                  <Select value={event || none} onValueChange={(value) => { setEvent(value === none ? "" : value); setEventProperty(""); setEventValue(""); }}>
                     <SelectTrigger><SelectValue placeholder="选择事件" /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value={none}>不限制事件</SelectItem>
@@ -166,11 +181,18 @@ export function SegmentsPage() {
                   </Select>
                   <Input type="number" min={1} max={365} value={lookbackDays} onChange={(value) => setLookbackDays(value.target.value)} disabled={!event} placeholder="近 N 天" />
                 </div>
+                {event ? <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  <Select value={eventProperty || none} onValueChange={(value) => { setEventProperty(value === none ? "" : value); setEventValue(""); }}>
+                    <SelectTrigger><SelectValue placeholder="不限制事件参数" /></SelectTrigger>
+                    <SelectContent><SelectItem value={none}>不限制事件参数</SelectItem>{(eventProperties.data?.data || []).map((property) => <SelectItem key={property.name} value={property.name}>{property.display_name || property.name}</SelectItem>)}</SelectContent>
+                  </Select>
+                  <Input value={eventValue} onChange={(value) => setEventValue(value.target.value)} disabled={!eventProperty} placeholder={eventProperty ? "留空表示参数存在；填写表示精确匹配" : "先选择事件参数"} />
+                </div> : null}
                 {event && <p className="mt-3 text-sm text-muted-foreground">近 {lookbackDays || "30"} 天 {eventCondition === "has" ? "触发" : "未触发"} <code>{event}</code>。</p>}
               </div>
 
               {formError && <p className="text-sm text-destructive">{formError}</p>}
-              {preview.data && <div className="rounded-md bg-muted px-3 py-2 text-sm">预计圈选 <strong>{preview.data.data.users.toLocaleString()}</strong> 位用户</div>}
+              {preview.data && <div className="rounded-md bg-muted px-3 py-2 text-sm"><div>预计圈选 <strong>{preview.data.data.users.toLocaleString()}</strong> 位用户</div>{preview.data.data.sample_users.length ? <div className="mt-2 flex flex-wrap gap-1.5 text-xs text-muted-foreground">样本：{preview.data.data.sample_users.map((distinctId) => <code key={distinctId} className="rounded bg-background px-1.5 py-0.5">{distinctId}</code>)}</div> : null}</div>}
               <div className="flex flex-wrap gap-2">
                 <Button type="button" variant="outline" disabled={!canPreview || preview.isPending} onClick={() => { setFormError(""); preview.mutate(); }}>
                   {preview.isPending && <LoaderCircle className="mr-2 h-4 w-4 animate-spin" />}预览人数
@@ -200,6 +222,7 @@ export function SegmentsPage() {
                   <div className="mt-3 flex flex-wrap gap-2">
                     {segment.rules.profile_property && <Badge variant="secondary">{segment.rules.profile_property} = {segment.rules.profile_value || '""'}</Badge>}
                     {segment.rules.event && <Badge variant="info">近 {segment.rules.lookback_days} 天{segment.rules.event_condition === "not_has" ? "未触发" : "触发"} {segment.rules.event}</Badge>}
+                    {segment.rules.event_property && <Badge variant="secondary">{segment.rules.event_property}{segment.rules.event_value ? ` = ${segment.rules.event_value}` : " 存在"}</Badge>}
                   </div>
                   <div className="mt-3 flex items-center justify-between gap-2 text-xs text-muted-foreground">
                     <span>更新于 {formatDateTime(segment.updated_at)}</span>

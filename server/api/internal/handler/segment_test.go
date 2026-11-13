@@ -24,9 +24,15 @@ func TestNormalizeSegmentRules(t *testing.T) {
 			input: SegmentRules{Event: "ad_show", EventCondition: "not_has", LookbackDays: 7},
 			want:  SegmentRules{Event: "ad_show", EventCondition: "not_has", LookbackDays: 7},
 		},
+		{
+			name:  "event property condition",
+			input: SegmentRules{Event: " mmp_singular_install ", EventProperty: " mmp_singular_campaign_name ", EventValue: " spring "},
+			want:  SegmentRules{Event: "mmp_singular_install", EventCondition: "has", EventProperty: "mmp_singular_campaign_name", EventValue: "spring", LookbackDays: 30},
+		},
 		{name: "no condition", input: SegmentRules{}, wantErr: true},
 		{name: "invalid condition", input: SegmentRules{Event: "ad_show", EventCondition: "maybe"}, wantErr: true},
 		{name: "invalid lookback", input: SegmentRules{Event: "ad_show", LookbackDays: 366}, wantErr: true},
+		{name: "event value without property", input: SegmentRules{Event: "ad_show", EventValue: "yes"}, wantErr: true},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

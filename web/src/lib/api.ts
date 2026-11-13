@@ -453,6 +453,8 @@ export interface SegmentRules {
     profile_value?: string;
     event?: string;
     event_condition?: "has" | "not_has";
+    event_property?: string;
+    event_value?: string;
     lookback_days?: number;
 }
 export interface UserSegment {
@@ -879,7 +881,7 @@ export const api = {
     listSegments: (id: number | string) =>
         req<ApiList<UserSegment>>(`/projects/${id}/segments`),
     previewSegment: (id: number | string, rules: SegmentRules) =>
-        req<ApiOne<{ users: number }>>(`/projects/${id}/segments/preview`, {
+        req<ApiOne<{ users: number; sample_users: string[] }>>(`/projects/${id}/segments/preview`, {
             method: "POST",
             body: JSON.stringify({ rules }),
         }),

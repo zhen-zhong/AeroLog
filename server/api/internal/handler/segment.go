@@ -32,6 +32,8 @@ type SegmentRules struct {
 	ProfileValue    string `json:"profile_value,omitempty"`
 	Event           string `json:"event,omitempty"`
 	EventCondition  string `json:"event_condition,omitempty"`
+	EventProperty   string `json:"event_property,omitempty"`
+	EventValue      string `json:"event_value,omitempty"`
 	LookbackDays    int    `json:"lookback_days,omitempty"`
 }
 
@@ -153,21 +155,37 @@ func (h *SegmentHandler) preview(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
 		return
 	}
-	count, err := h.previewCount(c, projectID, rules)
+	count, samples, err := h.previewMembers(c, projectID, rules)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": gin.H{"users": count}})
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"users": count, "sample_users": samples}})
 }
 
-func (h *SegmentHandler) previewCount(ctx context.Context, projectID int64, rules SegmentRules) (uint64, error) {
+func (h *SegmentHandler) previewMembers(ctx context.Context, projectID int64, rules SegmentRules) (uint64, []string, error) {
 	query, args := segmentMembershipQueryForRules(projectID, rules)
 	var count uint64
 	if err := h.CH.QueryRow(ctx, `SELECT count() FROM (`+query+`)`, args...).Scan(&count); err != nil {
-		return 0, err
+		return 0, nil, err
 	}
-	return count, nil
+	rows, err := h.CH.Query(ctx, `SELECT distinct_id FROM (`+query+`) ORDER BY distinct_id LIMIT 20`, args...)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer rows.Close()
+	samples := make([]string, 0, 20)
+	for rows.Next() {
+		var distinctID string
+		if err := rows.Scan(&distinctID); err != nil {
+			return 0, nil, err
+		}
+		samples = append(samples, distinctID)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, nil, err
+	}
+	return count, samples, nil
 }
 
 // segmentMembershipQuery 读取已保存规则，返回可嵌入 ClickHouse IN 子查询的成员查询。
@@ -203,8 +221,7 @@ func segmentMembershipQueryForRules(projectID int64, rules SegmentRules) (string
 	var base string
 	args := make([]any, 0, 7)
 	if rules.Event != "" && rules.EventCondition == "has" {
-		base = `SELECT DISTINCT distinct_id FROM events WHERE project_id=? AND event=? AND time >= fromUnixTimestamp64Milli(?)`
-		args = append(args, uint32(projectID), rules.Event, segmentLookbackStart(rules.LookbackDays))
+		base, args = segmentEventMembershipQuery(projectID, rules)
 	} else {
 		base = `SELECT DISTINCT distinct_id FROM users FINAL WHERE project_id=?`
 		args = append(args, uint32(projectID))
@@ -216,11 +233,26 @@ func segmentMembershipQueryForRules(projectID int64, rules SegmentRules) (string
 		args = append(args, uint32(projectID), rules.ProfileProperty, rawJSONValue(rules.ProfileValue))
 	}
 	if rules.Event != "" && rules.EventCondition == "not_has" {
-		where += ` AND distinct_id NOT IN (SELECT distinct_id FROM events WHERE project_id=? AND event=? AND time >= fromUnixTimestamp64Milli(?))`
-		args = append(args, uint32(projectID), rules.Event, segmentLookbackStart(rules.LookbackDays))
+		eventQuery, eventArgs := segmentEventMembershipQuery(projectID, rules)
+		where += ` AND distinct_id NOT IN (` + eventQuery + `)`
+		args = append(args, eventArgs...)
 	}
 
 	return base + ` AND 1=1` + where, args
+}
+
+func segmentEventMembershipQuery(projectID int64, rules SegmentRules) (string, []any) {
+	query := `SELECT DISTINCT distinct_id FROM events WHERE project_id=? AND event=? AND time >= fromUnixTimestamp64Milli(?)`
+	args := []any{uint32(projectID), rules.Event, segmentLookbackStart(rules.LookbackDays)}
+	if rules.EventProperty != "" {
+		query += ` AND JSONExtractRaw(properties, ?) != ''`
+		args = append(args, rules.EventProperty)
+		if rules.EventValue != "" {
+			query += ` AND JSONExtractRaw(properties, ?) = ?`
+			args = append(args, rules.EventProperty, rawJSONValue(rules.EventValue))
+		}
+	}
+	return query, args
 }
 
 func normalizeSegmentRules(rules SegmentRules) (SegmentRules, error) {
@@ -228,7 +260,9 @@ func normalizeSegmentRules(rules SegmentRules) (SegmentRules, error) {
 	rules.ProfileValue = strings.TrimSpace(rules.ProfileValue)
 	rules.Event = strings.TrimSpace(rules.Event)
 	rules.EventCondition = strings.TrimSpace(rules.EventCondition)
-	if len(rules.ProfileProperty) > 128 || len(rules.Event) > 128 {
+	rules.EventProperty = strings.TrimSpace(rules.EventProperty)
+	rules.EventValue = strings.TrimSpace(rules.EventValue)
+	if len(rules.ProfileProperty) > 128 || len(rules.Event) > 128 || len(rules.EventProperty) > 128 {
 		return SegmentRules{}, errors.New("property and event length must be <= 128")
 	}
 	if rules.ProfileProperty == "" && rules.Event == "" {
@@ -236,6 +270,8 @@ func normalizeSegmentRules(rules SegmentRules) (SegmentRules, error) {
 	}
 	if rules.Event == "" {
 		rules.EventCondition = ""
+		rules.EventProperty = ""
+		rules.EventValue = ""
 		rules.LookbackDays = 0
 		return rules, nil
 	}
@@ -244,6 +280,9 @@ func normalizeSegmentRules(rules SegmentRules) (SegmentRules, error) {
 	}
 	if rules.EventCondition != "has" && rules.EventCondition != "not_has" {
 		return SegmentRules{}, errors.New("event_condition must be has or not_has")
+	}
+	if rules.EventProperty == "" && rules.EventValue != "" {
+		return SegmentRules{}, errors.New("event_property required when event_value is set")
 	}
 	if rules.LookbackDays == 0 {
 		rules.LookbackDays = 30
