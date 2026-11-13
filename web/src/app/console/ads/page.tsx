@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import { useQuery } from "@tanstack/react-query";
 import dayjs, { Dayjs } from "dayjs";
@@ -14,6 +14,8 @@ const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
 
 const AD_EVENTS = ["ad_show", "ad_complete", "ad_failure"] as const;
 const BREAKDOWNS = [
+  { key: "mmp_media_source", label: "媒体来源" },
+  { key: "mmp_campaign_name", label: "广告活动" },
   { key: "placement", label: "广告位" },
   { key: "ad_network", label: "广告网络" },
   { key: "ad_format", label: "广告形式" },
@@ -31,6 +33,12 @@ export default function AdsPage() {
     dayjs().endOf("day"),
   ]);
   const [breakdown, setBreakdown] = useState<(typeof BREAKDOWNS)[number]["key"]>("placement");
+  const [channelDimension, setChannelDimension] = useState<"mmp_media_source" | "mmp_campaign_name">("mmp_media_source");
+  const [attributionEvent, setAttributionEvent] = useState("");
+  const [channelShowEvent, setChannelShowEvent] = useState("");
+  const [channelCompleteEvent, setChannelCompleteEvent] = useState("");
+  const [channelRevenueEvent, setChannelRevenueEvent] = useState("");
+  const [channelRevenueProperty, setChannelRevenueProperty] = useState("coin_amount");
   const timeDimensions = useMemo<QueryDimension[]>(() => [{ type: "time", key: "day" }], []);
   const rangeValue = useMemo(() => ({ from: range[0].valueOf(), to: range[1].valueOf() }), [range]);
 
@@ -43,6 +51,24 @@ export default function AdsPage() {
       return Object.fromEntries(AD_EVENTS.map((event, index) => [event, responses[index].data.rows])) as Record<AdEvent, QueryTableRow[]>;
     },
     enabled: !!projectId,
+  });
+  const eventDefinitions = useQuery({
+    queryKey: ["ads_channel_events", projectId],
+    queryFn: () => api.listEvents(projectId!),
+    enabled: !!projectId,
+  });
+  const eventNames = useMemo(() => (eventDefinitions.data?.data || []).map((item) => item.name), [eventDefinitions.data]);
+  useEffect(() => {
+    if (!eventNames.length) return;
+    if (!attributionEvent) setAttributionEvent(eventNames.includes("mmp_singular_install") ? "mmp_singular_install" : "$AppStart");
+    if (!channelShowEvent) setChannelShowEvent(eventNames.includes("mmp_singular_ad_impression") ? "mmp_singular_ad_impression" : eventNames.includes("ad_show") ? "ad_show" : "");
+    if (!channelCompleteEvent && eventNames.includes("ad_complete")) setChannelCompleteEvent("ad_complete");
+    if (!channelRevenueEvent && eventNames.includes("coin_earned")) setChannelRevenueEvent("coin_earned");
+  }, [attributionEvent, channelCompleteEvent, channelRevenueEvent, channelShowEvent, eventNames]);
+  const channelBusiness = useQuery({
+    queryKey: ["ads_channel_business", projectId, rangeValue, channelDimension, attributionEvent, channelShowEvent, channelCompleteEvent, channelRevenueEvent, channelRevenueProperty],
+    queryFn: () => api.channelBusiness(projectId!, { dimension: channelDimension, attribution_event: attributionEvent, show_event: channelShowEvent, complete_event: channelCompleteEvent || undefined, revenue_event: channelRevenueEvent || undefined, revenue_property: channelRevenueEvent ? channelRevenueProperty : undefined, ...rangeValue }),
+    enabled: !!projectId && !!attributionEvent && !!channelShowEvent,
   });
 
   const byProperty = useQuery({
@@ -141,6 +167,22 @@ export default function AdsPage() {
       <ChartPanel title="广告分组表现" description="完成率、失败率以该分组的广告展示次数为分母" className="mt-5" contentClassName="p-0 sm:p-0">
         {!breakdownRows.length ? <EmptyAnalysis className="min-h-48" title="暂无广告分组数据" description="当前时间范围内没有匹配的广告事件属性。" /> : <div className="overflow-x-auto"><Table className="min-w-[760px]"><TableHeader><TableRow><TableHead>{BREAKDOWNS.find((item) => item.key === breakdown)?.label}</TableHead><TableHead className="text-right">展示</TableHead><TableHead className="text-right">完成</TableHead><TableHead className="text-right">失败</TableHead><TableHead className="text-right">完成率</TableHead><TableHead className="text-right">失败率</TableHead><TableHead className="text-right">展示用户</TableHead></TableRow></TableHeader><TableBody>{breakdownRows.map((row) => <TableRow key={row.label}><TableCell className="font-medium">{row.label}</TableCell><TableCell className="text-right font-mono">{row.show.toLocaleString()}</TableCell><TableCell className="text-right font-mono">{row.complete.toLocaleString()}</TableCell><TableCell className="text-right font-mono">{row.failure.toLocaleString()}</TableCell><TableCell className="text-right font-mono">{row.show ? `${((row.complete / row.show) * 100).toFixed(2)}%` : "-"}</TableCell><TableCell className="text-right font-mono">{row.show ? `${((row.failure / row.show) * 100).toFixed(2)}%` : "-"}</TableCell><TableCell className="text-right font-mono">{row.users.toLocaleString()}</TableCell></TableRow>)}</TableBody></Table></div>}
       </ChartPanel>
+      <ToolbarPanel className="mt-5">
+        <div className="grid gap-4 xl:grid-cols-5 xl:items-end">
+          <ChannelSelect label="渠道维度" value={channelDimension} onChange={(value) => setChannelDimension(value as "mmp_media_source" | "mmp_campaign_name")} options={[{ value: "mmp_media_source", label: "媒体来源" }, { value: "mmp_campaign_name", label: "广告活动" }]} />
+          <ChannelSelect label="归因事件" value={attributionEvent} onChange={setAttributionEvent} options={eventNames.map((value) => ({ value, label: value }))} />
+          <ChannelSelect label="广告展示事件" value={channelShowEvent} onChange={setChannelShowEvent} options={eventNames.map((value) => ({ value, label: value }))} />
+          <ChannelSelect label="广告完成事件" value={channelCompleteEvent} onChange={setChannelCompleteEvent} options={eventNames.map((value) => ({ value, label: value }))} optional />
+          <ChannelSelect label="广告收入事件" value={channelRevenueEvent} onChange={setChannelRevenueEvent} options={eventNames.map((value) => ({ value, label: value }))} optional />
+        </div>
+      </ToolbarPanel>
+      <ChartPanel title="渠道经营指标" description="LTV = 分析期广告收入 ÷ 归因用户数；ROI/ROAS 需接入渠道成本后计算。" className="mt-5" contentClassName="p-0 sm:p-0">
+        {!channelBusiness.data?.data.rows.length ? <EmptyAnalysis className="min-h-48" title="暂无渠道经营数据" description="选择已上报归因、展示事件后，按统一渠道字段计算。" /> : <div className="overflow-x-auto"><Table className="min-w-[980px]"><TableHeader><TableRow><TableHead>{channelDimension === "mmp_media_source" ? "媒体来源" : "广告活动"}</TableHead><TableHead className="text-right">归因用户</TableHead><TableHead className="text-right">广告展示</TableHead><TableHead className="text-right">展示用户</TableHead><TableHead className="text-right">广告完成</TableHead><TableHead className="text-right">广告收入</TableHead><TableHead className="text-right">LTV</TableHead><TableHead className="text-right">ROI / ROAS</TableHead></TableRow></TableHeader><TableBody>{channelBusiness.data.data.rows.map((row) => <TableRow key={row.raw}><TableCell className="font-medium">{row.label}</TableCell><TableCell className="text-right font-mono">{row.installs.toLocaleString()}</TableCell><TableCell className="text-right font-mono">{row.ad_shows.toLocaleString()}</TableCell><TableCell className="text-right font-mono">{row.show_users.toLocaleString()}</TableCell><TableCell className="text-right font-mono">{row.ad_completes.toLocaleString()}</TableCell><TableCell className="text-right font-mono">{row.revenue.toLocaleString()}</TableCell><TableCell className="text-right font-mono">{row.ltv.toFixed(2)}</TableCell><TableCell className="text-right text-muted-foreground">待成本数据</TableCell></TableRow>)}</TableBody></Table></div>}
+      </ChartPanel>
     </>}
   </div>;
+}
+
+function ChannelSelect({ label, value, onChange, options, optional = false }: { label: string; value: string; onChange: (value: string) => void; options: Array<{ value: string; label: string }>; optional?: boolean }) {
+  return <div className="grid gap-1.5"><span className="text-sm font-medium">{label}</span><Select value={value || "__none__"} onValueChange={(next) => onChange(next === "__none__" ? "" : next)}><SelectTrigger><SelectValue placeholder={`选择${label}`} /></SelectTrigger><SelectContent>{optional && <SelectItem value="__none__">不统计</SelectItem>}{options.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectContent></Select></div>;
 }

@@ -384,6 +384,16 @@ export interface QueryTableRow {
     sums: Record<string, number>;
     sample_users: string[];
 }
+export interface ChannelBusinessRow {
+    raw: string;
+    label: string;
+    installs: number;
+    ad_shows: number;
+    show_users: number;
+    ad_completes: number;
+    revenue: number;
+    ltv: number;
+}
 export interface CohortMetricValue {
     offset: number;
     count: number;
@@ -719,6 +729,20 @@ export const api = {
         }),
     listEvents: (id: number | string) =>
         req<ApiList<EventDefinition>>(`/projects/${id}/events`),
+    channelBusiness: (id: number | string, body: {
+        dimension: "mmp_media_source" | "mmp_campaign_name";
+        attribution_event: string;
+        show_event: string;
+        complete_event?: string;
+        revenue_event?: string;
+        revenue_property?: string;
+        from: number;
+        to: number;
+        limit?: number;
+    }) => req<ApiOne<{ rows: ChannelBusinessRow[]; cost_available: boolean }>>(`/projects/${id}/analytics/channel_business`, {
+        method: "POST",
+        body: JSON.stringify(body),
+    }),
     updateEventSchema: (
         id: number | string,
         event: string,

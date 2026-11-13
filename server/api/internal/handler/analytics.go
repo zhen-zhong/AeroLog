@@ -53,6 +53,7 @@ func (h *AnalyticsHandler) Register(r *gin.RouterGroup) {
 	r.POST("/projects/:id/analytics/funnel", h.funnel)
 	r.GET("/projects/:id/analytics/retention", h.retention)
 	r.POST("/projects/:id/analytics/attribution", h.attribution)
+	r.POST("/projects/:id/analytics/channel_business", h.channelBusiness)
 	r.GET("/projects/:id/users/:distinct_id/events", h.userEvents)
 }
 
