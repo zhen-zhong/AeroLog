@@ -113,6 +113,9 @@ export interface SensorsDataQualityProject {
     project_id: number;
     project_name: string;
     source_project: string;
+	application_id: string;
+	subscriber: string;
+	subscription_id?: number;
     status: number;
     last_error: string;
     last_verified_at?: string;
@@ -124,9 +127,18 @@ export interface SensorsDataQualityProject {
 
 export interface SensorsQueueHealth {
     available: boolean;
+	application_name: string;
     consumers_up: boolean;
     kafka_lag: number;
     dlq_last_hour: number;
+	consumers: Array<{
+		name: string;
+		topic: string;
+		group_id: string;
+		job: string;
+		consumer_up: boolean;
+		kafka_lag: number;
+	}>;
     error?: string;
 }
 export interface SensorsReconciliationDay {

@@ -18,20 +18,28 @@ import (
 
 // DataQualityHandler 返回数据源项目的接入健康度及共享 Kafka 链路健康度。
 type DataQualityHandler struct {
-	PG              *pgxpool.Pool
-	CH              driver.Conn
-	PrometheusURL   string
-	EncryptionKey   string
-	WeComWebhookURL string
-	HTTPClient      *http.Client
-	alertMu         sync.Mutex
-	alertStates     map[string]bool
+	PG                   *pgxpool.Pool
+	CH                   driver.Conn
+	PrometheusURL        string
+	EncryptionKey        string
+	WeComWebhookURL      string
+	SensorsApplication   string
+	SensorsEventsTopic   string
+	SensorsEventsGroup   string
+	SensorsProfilesTopic string
+	SensorsProfilesGroup string
+	HTTPClient           *http.Client
+	alertMu              sync.Mutex
+	alertStates          map[string]bool
 }
 
 type sensorsQualityProject struct {
 	ProjectID          int64      `json:"project_id"`
 	ProjectName        string     `json:"project_name"`
 	SourceProject      string     `json:"source_project"`
+	ApplicationID      string     `json:"application_id"`
+	Subscriber         string     `json:"subscriber"`
+	SubscriptionID     *int64     `json:"subscription_id,omitempty"`
 	Status             int16      `json:"status"`
 	LastError          string     `json:"last_error"`
 	LastVerifiedAt     *time.Time `json:"last_verified_at,omitempty"`
@@ -42,11 +50,26 @@ type sensorsQualityProject struct {
 }
 
 type sensorsQueueHealth struct {
-	Available   bool    `json:"available"`
-	ConsumersUp bool    `json:"consumers_up"`
-	KafkaLag    float64 `json:"kafka_lag"`
-	DLQLastHour uint64  `json:"dlq_last_hour"`
-	Error       string  `json:"error,omitempty"`
+	Available       bool                         `json:"available"`
+	ApplicationName string                       `json:"application_name"`
+	ConsumersUp     bool                         `json:"consumers_up"`
+	KafkaLag        float64                      `json:"kafka_lag"`
+	DLQLastHour     uint64                       `json:"dlq_last_hour"`
+	Consumers       []sensorsQueueConsumerHealth `json:"consumers"`
+	Error           string                       `json:"error,omitempty"`
+}
+
+type sensorsQueueConsumerHealth struct {
+	Name       string  `json:"name"`
+	Topic      string  `json:"topic"`
+	GroupID    string  `json:"group_id"`
+	Job        string  `json:"job"`
+	ConsumerUp bool    `json:"consumer_up"`
+	KafkaLag   float64 `json:"kafka_lag"`
+}
+
+type sensorsConsumerSpec struct {
+	Name, Topic, GroupID, Job string
 }
 
 type prometheusVectorValue struct {
@@ -92,7 +115,8 @@ func (h *DataQualityHandler) sensorsDataQuality(c *gin.Context) {
 
 func (h *DataQualityHandler) visibleSensorsProjects(c *gin.Context) ([]sensorsQualityProject, error) {
 	base := `
-		SELECT p.id, p.name, si.source_project, si.status, COALESCE(si.last_error,''), si.last_verified_at
+		SELECT p.id, p.name, si.source_project, si.application_id, si.subscriber, si.subscription_id,
+		       si.status, COALESCE(si.last_error,''), si.last_verified_at
 		FROM projects p
 		JOIN sensors_integrations si ON si.project_id=p.id
 		WHERE si.status=1`
@@ -115,7 +139,7 @@ func (h *DataQualityHandler) visibleSensorsProjects(c *gin.Context) ([]sensorsQu
 	out := make([]sensorsQualityProject, 0)
 	for rows.Next() {
 		var item sensorsQualityProject
-		if err := rows.Scan(&item.ProjectID, &item.ProjectName, &item.SourceProject, &item.Status, &item.LastError, &item.LastVerifiedAt); err != nil {
+		if err := rows.Scan(&item.ProjectID, &item.ProjectName, &item.SourceProject, &item.ApplicationID, &item.Subscriber, &item.SubscriptionID, &item.Status, &item.LastError, &item.LastVerifiedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, item)
@@ -200,7 +224,7 @@ func (h *DataQualityHandler) fillProjectDLQ(ctx context.Context, projects []sens
 }
 
 func (h *DataQualityHandler) sharedQueueHealth(ctx context.Context) sensorsQueueHealth {
-	var out sensorsQueueHealth
+	out := sensorsQueueHealth{ApplicationName: h.SensorsApplication}
 	if h.PG != nil {
 		_ = h.PG.QueryRow(ctx, `SELECT count(*) FROM event_dlq WHERE created_at >= now() - INTERVAL '1 hour'`).Scan(&out.DLQLastHour)
 	}
@@ -208,21 +232,50 @@ func (h *DataQualityHandler) sharedQueueHealth(ctx context.Context) sensorsQueue
 		out.Error = "未配置 Prometheus"
 		return out
 	}
-	lag, err := h.prometheusNumber(ctx, `sum(aerolog_consumer_kafka_lag{job=~"aerolog-sensors-(consumer|profile-consumer)"})`)
-	if err != nil {
-		out.Error = "暂时无法读取共享 Kafka 队列"
+	specs := h.sensorsConsumerSpecs()
+	if len(specs) == 0 {
+		out.Error = "未配置神策消费者 Topic 或消费者组"
 		return out
 	}
-	up, err := h.prometheusNumber(ctx, `min(up{job=~"aerolog-sensors-(consumer|profile-consumer)"})`)
-	if err != nil {
-		out.Error = "暂时无法读取共享消费者状态"
-		return out
+	out.Consumers = make([]sensorsQueueConsumerHealth, 0, len(specs))
+	out.ConsumersUp = true
+	for _, spec := range specs {
+		item := sensorsQueueConsumerHealth{Name: spec.Name, Topic: spec.Topic, GroupID: spec.GroupID, Job: spec.Job}
+		up, err := h.prometheusNumber(ctx, `max(up{job=`+promQLString(spec.Job)+`}) OR vector(0)`)
+		if err != nil {
+			out.Error = "暂时无法读取神策消费者状态"
+			return out
+		}
+		lag, err := h.prometheusNumber(ctx, `sum(aerolog_consumer_kafka_lag{job=`+promQLString(spec.Job)+`,topic=`+promQLString(spec.Topic)+`}) OR vector(0)`)
+		if err != nil {
+			out.Error = "暂时无法读取神策 Kafka lag"
+			return out
+		}
+		item.ConsumerUp = up >= 1
+		item.KafkaLag = lag
+		out.ConsumersUp = out.ConsumersUp && item.ConsumerUp
+		out.KafkaLag += lag
+		out.Consumers = append(out.Consumers, item)
 	}
 	out.Available = true
-	out.KafkaLag = lag
-	out.ConsumersUp = up >= 1
 	return out
 }
+
+func (h *DataQualityHandler) sensorsConsumerSpecs() []sensorsConsumerSpec {
+	items := []sensorsConsumerSpec{
+		{Name: "事件", Topic: strings.TrimSpace(h.SensorsEventsTopic), GroupID: strings.TrimSpace(h.SensorsEventsGroup), Job: "aerolog-sensors-consumer"},
+		{Name: "用户属性", Topic: strings.TrimSpace(h.SensorsProfilesTopic), GroupID: strings.TrimSpace(h.SensorsProfilesGroup), Job: "aerolog-sensors-profile-consumer"},
+	}
+	out := make([]sensorsConsumerSpec, 0, len(items))
+	for _, item := range items {
+		if item.Topic != "" && item.GroupID != "" {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+func promQLString(value string) string { return strconv.Quote(value) }
 
 func (h *DataQualityHandler) prometheusNumber(ctx context.Context, query string) (float64, error) {
 	values, err := h.prometheusVector(ctx, query)

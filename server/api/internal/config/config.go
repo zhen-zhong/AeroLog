@@ -7,20 +7,24 @@ import (
 )
 
 type Config struct {
-	Addr               string
-	MetricsAddr        string
-	PostgresDSN        string
-	ClickHouse         ClickHouseConf
-	JWTSecret          string
-	AllowOrigins       []string
-	DebugRetentionDays int
-	IntegrationKey     string
-	SensorsApplication string
-	PrometheusURL      string
-	WeComWebhookURL    string
-	WeComBotToken      string
-	HostInspectorURL   string
-	HostInspectorToken string
+	Addr                 string
+	MetricsAddr          string
+	PostgresDSN          string
+	ClickHouse           ClickHouseConf
+	JWTSecret            string
+	AllowOrigins         []string
+	DebugRetentionDays   int
+	IntegrationKey       string
+	SensorsApplication   string
+	SensorsEventsTopic   string
+	SensorsEventsGroup   string
+	SensorsProfilesTopic string
+	SensorsProfilesGroup string
+	PrometheusURL        string
+	WeComWebhookURL      string
+	WeComBotToken        string
+	HostInspectorURL     string
+	HostInspectorToken   string
 }
 
 type ClickHouseConf struct {
@@ -41,16 +45,20 @@ func FromEnv() *Config {
 			Username: getEnv("AEROLOG_CH_USER", "aerolog"),
 			Password: getEnv("AEROLOG_CH_PASSWORD", "aerolog"),
 		},
-		JWTSecret:          getEnv("AEROLOG_JWT_SECRET", "change-me"),
-		AllowOrigins:       strings.Split(getEnv("AEROLOG_CORS", "*"), ","),
-		DebugRetentionDays: getEnvInt("AEROLOG_DEBUG_RETENTION_DAYS", 7),
-		IntegrationKey:     getEnv("AEROLOG_INTEGRATION_ENCRYPTION_KEY", ""),
-		SensorsApplication: getEnv("AEROLOG_SENSORS_APPLICATION_NAME", ""),
-		PrometheusURL:      strings.TrimRight(getEnv("AEROLOG_PROMETHEUS_URL", "http://prometheus:9090"), "/"),
-		WeComWebhookURL:    strings.TrimSpace(getEnv("AEROLOG_WECOM_WEBHOOK_URL", "")),
-		WeComBotToken:      strings.TrimSpace(getEnv("AEROLOG_WECOM_BOT_INTERNAL_TOKEN", "")),
-		HostInspectorURL:   strings.TrimRight(getEnv("AEROLOG_HOST_INSPECTOR_URL", "http://host-inspector:8086"), "/"),
-		HostInspectorToken: strings.TrimSpace(getEnv("AEROLOG_HOST_INSPECTOR_TOKEN", "")),
+		JWTSecret:            getEnv("AEROLOG_JWT_SECRET", "change-me"),
+		AllowOrigins:         strings.Split(getEnv("AEROLOG_CORS", "*"), ","),
+		DebugRetentionDays:   getEnvInt("AEROLOG_DEBUG_RETENTION_DAYS", 7),
+		IntegrationKey:       getEnv("AEROLOG_INTEGRATION_ENCRYPTION_KEY", ""),
+		SensorsApplication:   getEnv("AEROLOG_SENSORS_APPLICATION_NAME", ""),
+		SensorsEventsTopic:   getEnv("AEROLOG_SENSORS_EVENTS_TOPIC", "sensors.events.v1"),
+		SensorsEventsGroup:   getEnv("AEROLOG_SENSORS_GROUP_ID", "aerolog-sensors-consumer"),
+		SensorsProfilesTopic: getEnv("AEROLOG_SENSORS_PROFILES_TOPIC", "sensors.profiles.v1"),
+		SensorsProfilesGroup: getEnv("AEROLOG_SENSORS_PROFILES_GROUP_ID", "aerolog-sensors-profiles-consumer"),
+		PrometheusURL:        strings.TrimRight(getEnv("AEROLOG_PROMETHEUS_URL", "http://prometheus:9090"), "/"),
+		WeComWebhookURL:      strings.TrimSpace(getEnv("AEROLOG_WECOM_WEBHOOK_URL", "")),
+		WeComBotToken:        strings.TrimSpace(getEnv("AEROLOG_WECOM_BOT_INTERNAL_TOKEN", "")),
+		HostInspectorURL:     strings.TrimRight(getEnv("AEROLOG_HOST_INSPECTOR_URL", "http://host-inspector:8086"), "/"),
+		HostInspectorToken:   strings.TrimSpace(getEnv("AEROLOG_HOST_INSPECTOR_TOKEN", "")),
 	}
 }
 

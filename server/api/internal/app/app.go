@@ -145,7 +145,12 @@ func newRouter(cfg *config.Config, pool *pgxpool.Pool, chConn driver.Conn) (*gin
 	authed := v1.Group("", handler.AuthRequired(pool))
 	auth.RegisterPrivate(authed)
 	(&handler.ProjectHandler{PG: pool}).Register(authed)
-	dataQuality := &handler.DataQualityHandler{PG: pool, CH: chConn, PrometheusURL: cfg.PrometheusURL, EncryptionKey: cfg.IntegrationKey, WeComWebhookURL: cfg.WeComWebhookURL}
+	dataQuality := &handler.DataQualityHandler{
+		PG: pool, CH: chConn, PrometheusURL: cfg.PrometheusURL, EncryptionKey: cfg.IntegrationKey, WeComWebhookURL: cfg.WeComWebhookURL,
+		SensorsApplication: cfg.SensorsApplication,
+		SensorsEventsTopic: cfg.SensorsEventsTopic, SensorsEventsGroup: cfg.SensorsEventsGroup,
+		SensorsProfilesTopic: cfg.SensorsProfilesTopic, SensorsProfilesGroup: cfg.SensorsProfilesGroup,
+	}
 	dataQuality.Register(authed)
 	(&handler.WeComBotHandler{PG: pool, CH: chConn, Analytics: analytics, Token: cfg.WeComBotToken, Monitor: dataQuality, HostInspectorURL: cfg.HostInspectorURL, HostInspectorToken: cfg.HostInspectorToken}).Register(v1)
 

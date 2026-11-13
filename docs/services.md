@@ -37,6 +37,8 @@ Prometheus ◄── API / Collector / Consumer / Node Exporter ──► Grafan
 
 神策消费者不会消费自研 SDK 的 `events.raw`；路由依据神策 `project_id` 与已启用的 `sensors_integrations` 映射。解析或写入失败进入 DLQ，成功写入后才提交 Kafka offset。
 
+控制台“数据健康”每 30 秒汇总神策接入状态：项目级订阅应用、订阅方、最后入库时间与项目 DLQ；共享链路级事件/用户属性 Topic、消费者组、各消费者运行状态、lag 与全局 DLQ。
+
 ### 2.2 机器人与宿主机巡检
 
 | 服务 | 角色 | 权限边界 |
