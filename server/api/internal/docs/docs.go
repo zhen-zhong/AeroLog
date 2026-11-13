@@ -24,7 +24,7 @@ const swaggerHTML = `<!DOCTYPE html>
   <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
   <script>
     window.ui = SwaggerUIBundle({
-      url: "/swagger/openapi.yaml",
+      url: "./openapi.yaml",
       dom_id: "#swagger-ui",
       deepLinking: true,
       docExpansion: "list",

@@ -6,6 +6,8 @@ info:
     AeroLog 控制台和 SDK 共用的内部 HTTP API。所有 `/v1/...` 接口除登录/注册外均需要在
     请求头中携带 `Authorization: Bearer <session_token>`。
 servers:
+  - url: /api
+    description: 生产环境反向代理入口
   - url: http://localhost:8082
     description: 本地开发
 components:
@@ -222,6 +224,89 @@ paths:
       - { name: user_id, in: path, required: true, schema: { type: integer } }
     patch:  { tags: [项目], summary: 修改项目成员角色, responses: { "200": { description: ok } } }
     delete: { tags: [项目], summary: 移除项目成员, responses: { "200": { description: ok } } }
+  /v1/projects/{id}/revenue-mappings:
+    parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+    get: { tags: [项目], summary: 广告收入映射列表, responses: { "200": { description: ok } } }
+    post:
+      tags: [项目]
+      summary: 新增广告收入映射（项目 Owner）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [event, amount_property]
+              properties:
+                name: { type: string, example: AdMob 广告收入 }
+                event: { type: string, example: ad_revenue }
+                amount_property: { type: string, example: revenue_micros }
+                currency_property: { type: string, example: currency }
+                multiplier: { type: number, default: 1, example: 0.000001 }
+                include_in_ltv: { type: boolean, default: true }
+      responses: { "200": { description: ok } }
+  /v1/projects/{id}/revenue-mappings/{mapping_id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer } }
+      - { name: mapping_id, in: path, required: true, schema: { type: integer } }
+    patch: { tags: [项目], summary: 修改广告收入映射（项目 Owner）, responses: { "200": { description: ok } } }
+    delete: { tags: [项目], summary: 删除广告收入映射（项目 Owner）, responses: { "200": { description: ok } } }
+  /v1/projects/{id}/channel-costs:
+    parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+    get:
+      tags: [项目]
+      summary: 渠道成本列表
+      parameters:
+        - { name: from, in: query, schema: { type: string, format: date } }
+        - { name: to, in: query, schema: { type: string, format: date } }
+      responses: { "200": { description: ok } }
+    post:
+      tags: [项目]
+      summary: 新增或覆盖单日渠道成本（项目 Owner）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [cost_date, media_source, cost]
+              properties:
+                cost_date: { type: string, format: date, example: "2026-11-13" }
+                media_source: { type: string, example: Google Ads }
+                campaign_name: { type: string, example: UAC-Android }
+                cost: { type: number, example: 123.45 }
+                currency: { type: string, example: USD }
+      responses: { "200": { description: ok } }
+  /v1/projects/{id}/channel-costs/import:
+    parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+    post:
+      tags: [项目]
+      summary: 批量导入渠道成本（最多 1000 行，项目 Owner）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rows]
+              properties:
+                rows:
+                  type: array
+                  items:
+                    type: object
+                    required: [cost_date, media_source, cost]
+                    properties:
+                      cost_date: { type: string, format: date }
+                      media_source: { type: string }
+                      campaign_name: { type: string }
+                      cost: { type: number }
+                      currency: { type: string }
+      responses: { "200": { description: ok } }
+  /v1/projects/{id}/channel-costs/{cost_id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer } }
+      - { name: cost_id, in: path, required: true, schema: { type: integer } }
+    delete: { tags: [项目], summary: 删除渠道成本记录（项目 Owner）, responses: { "200": { description: ok } } }
 
   # ---------- 事件元数据 ----------
   /v1/projects/{id}/events:
@@ -313,6 +398,26 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/AttributionResponse" }
+  /v1/projects/{id}/analytics/channel_business:
+    parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+    post:
+      tags: [行为分析]
+      summary: 渠道广告经营指标（收入、成本、LTV、ROI、ROAS）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [attribution_event, show_event, from, to]
+              properties:
+                dimension: { type: string, enum: [mmp_media_source, mmp_campaign_name], default: mmp_media_source }
+                attribution_event: { type: string, example: mmp_singular_install }
+                show_event: { type: string, example: mmp_singular_ad_impression }
+                complete_event: { type: string, example: ad_complete }
+                from: { type: integer, format: int64, description: 起始时间(ms) }
+                to: { type: integer, format: int64, description: 结束时间(ms) }
+      responses: { "200": { description: ok } }
   /v1/projects/{id}/conversion_goals:
     parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
     get:  { tags: [行为分析], summary: 转化目标列表, responses: { "200": { description: ok } } }
