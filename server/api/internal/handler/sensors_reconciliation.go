@@ -425,9 +425,32 @@ func decodeSegmentationDays(raw json.RawMessage) (map[string]sensorsReconciliati
 	rows := map[string]sensorsReconciliationDay{}
 	collectSegmentationRows(value, rows)
 	if len(rows) == 0 {
+		if isEmptySegmentationResult(raw) {
+			return rows, nil
+		}
 		return nil, errors.New("响应未包含按日统计结果")
 	}
 	return rows, nil
+}
+
+// 神策在查询日期没有事件时会返回空的 detail_rows 或 rows；这是合法的零结果，
+// 不能当成响应格式错误。只有明确包含结果集合字段时才接受空结果。
+func isEmptySegmentationResult(raw json.RawMessage) bool {
+	var payload map[string]json.RawMessage
+	if json.Unmarshal(raw, &payload) != nil {
+		return false
+	}
+	for _, key := range []string{"detail_rows", "rows"} {
+		value, ok := payload[key]
+		if !ok {
+			continue
+		}
+		var rows []json.RawMessage
+		if json.Unmarshal(value, &rows) == nil && len(rows) == 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // Sensor Analytics returns metadata_columns and detail_rows. detail_rows is an

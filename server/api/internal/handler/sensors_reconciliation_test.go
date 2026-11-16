@@ -37,6 +37,25 @@ func TestDecodeSegmentationDetailRows(t *testing.T) {
 	}
 }
 
+func TestDecodeSegmentationDaysAcceptsEmptyDetailRows(t *testing.T) {
+	rows, err := decodeSegmentationDays([]byte(`{
+		"metadata_columns":{"date":"DATE","all_events":"DOUBLE"},
+		"detail_rows":[]
+	}`))
+	if err != nil {
+		t.Fatalf("decode empty result error: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("expected empty rows, got %#v", rows)
+	}
+}
+
+func TestDecodeSegmentationDaysRejectsUnknownEmptyPayload(t *testing.T) {
+	if _, err := decodeSegmentationDays([]byte(`{"unexpected":[]}`)); err == nil {
+		t.Fatal("unknown empty payload must not be accepted as a valid result")
+	}
+}
+
 func TestMergeReconciliationDaysIncludesMissingDays(t *testing.T) {
 	from := mustReconciliationDate(t, "2026-11-01")
 	to := mustReconciliationDate(t, "2026-11-03")
