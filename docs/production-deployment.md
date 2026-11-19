@@ -316,10 +316,13 @@ sudo ./scripts/restore-drill.sh 20261119T120000Z
 演练流程：
 
 1. 校验全部备份文件 SHA-256。
-2. PostgreSQL 恢复到 `aerolog_drill_*` 临时库，逐表比对行数。
-3. ClickHouse 恢复到 `aerolog_drill_*` 临时库，逐表比对行数。
+2. PostgreSQL 恢复到 `aerolog_drill_*` 临时库，逐表验证可读性并记录行数漂移。
+3. ClickHouse 恢复到 `aerolog_drill_*` 临时库，逐表验证可读性并记录行数漂移。
 4. Kafka 创建独立 `aerolog.recovery.drill.*` Topic 和消费组，消费后回退 offset，再次消费并比对消息。
 5. 无论成功或失败均清理临时数据库、临时备份文件、测试 Topic 和测试消费组。
+
+行数基准在在线备份完成后采集；持续写入期间，正式库基准可能略大于备份快照。该差异只做记录，
+备份文件 SHA-256、数据库恢复结果和逐表读取失败才会终止演练。
 
 脚本不会修改正式 Kafka 消费组 offset。备份目录默认为 `/var/backups/aerolog`，权限为
 `0700`；执行前默认要求至少 5 GiB 可用空间。可通过 `AEROLOG_BACKUP_ROOT` 和

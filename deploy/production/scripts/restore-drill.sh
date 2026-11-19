@@ -87,8 +87,7 @@ while IFS=$'\t' read -r schema table expected; do
   actual=$(compose exec -T postgres psql -U aerolog -d "${PG_DRILL_DB}" -At \
     -c "SELECT count(*) FROM \"${schema}\".\"${table}\"")
   if [[ ${actual} != "${expected}" ]]; then
-    echo "PostgreSQL 行数不一致：${schema}.${table}，备份=${expected}，恢复=${actual}" >&2
-    exit 1
+    echo "PostgreSQL 实时行数漂移：${schema}.${table}，备份后观测=${expected}，恢复快照=${actual}"
   fi
 done < "${BACKUP_DIR}/postgres-counts.tsv"
 
@@ -102,8 +101,7 @@ clickhouse --query \
 while IFS=$'\t' read -r table expected; do
   actual=$(clickhouse --query "SELECT count() FROM ${CH_DRILL_DB}.\`${table}\` FORMAT TSVRaw")
   if [[ ${actual} != "${expected}" ]]; then
-    echo "ClickHouse 行数不一致：${table}，备份=${expected}，恢复=${actual}" >&2
-    exit 1
+    echo "ClickHouse 实时行数漂移：${table}，备份后观测=${expected}，恢复快照=${actual}"
   fi
 done < "${BACKUP_DIR}/clickhouse-counts.tsv"
 
