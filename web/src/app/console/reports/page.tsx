@@ -10,6 +10,7 @@ import { AnalyticsHeader, ChartPanel, DateTimeRange, EmptyAnalysis, EventCollect
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -188,6 +189,7 @@ export default function CustomReportsPage() {
   const [config, setConfig] = useState<ReportConfig>(defaultConfig);
   const [range, setRange] = useState<[Dayjs, Dayjs]>([dayjs(config.from), dayjs(config.to)]);
   const [name, setName] = useState("");
+  const [reportToDelete, setReportToDelete] = useState<QueryTemplate | null>(null);
 
   const allEvents = useQuery({
     queryKey: ["custom_report_events", projectId],
@@ -246,7 +248,10 @@ export default function CustomReportsPage() {
   });
   const remove = useMutation({
     mutationFn: (id: number) => api.deleteQueryTemplate(projectId!, id),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ["custom_reports", projectId] }),
+    onSuccess: () => {
+      setReportToDelete(null);
+      void qc.invalidateQueries({ queryKey: ["custom_reports", projectId] });
+    },
   });
 
   useEffect(() => {
@@ -345,9 +350,22 @@ export default function CustomReportsPage() {
           <ChartPanel title="报表结果" description={isCohort ? `新增用户：${config.cohort.cohortEvent} · 统计：${config.cohort.metricEvent}` : `${dimensionLabel(config.dimension, config.property)} · ${config.events.length ? `${config.events.length} 个事件` : "全部事件"}`} contentClassName="p-0 sm:p-0">
             {!(isCohort ? cohortRows.length : rows.length) ? <div className="p-4 sm:p-5"><EmptyAnalysis className="min-h-72" title="尚未生成报表" description="配置维度与指标后点击运行。" /></div> : config.chart === "table" ? isCohort ? <CohortReportTable rows={cohortRows} config={config} /> : <ReportTable rows={rows} config={config} /> : <ReactECharts option={chartOption} style={{ height: 430 }} />}
           </ChartPanel>
-          <ChartPanel title="我的报表" description="保存后可复用；勾选快捷报表会显示在本页顶部。" contentClassName="p-0 sm:p-0">{reportTemplates.length ? <div className="divide-y">{reportTemplates.map((item) => <div key={item.id} className="flex items-center gap-3 p-3"><button className="min-w-0 flex-1 text-left" onClick={() => apply(item)}><div className="truncate text-sm font-medium">{item.name}</div><div className="text-xs text-muted-foreground">{(item.config as Partial<ReportConfig>).shortcut ? "快捷报表" : "已保存报表"}</div></button><Button size="icon" variant="ghost" onClick={() => remove.mutate(item.id)} aria-label="删除报表"><Trash2 className="h-4 w-4" /></Button></div>)}</div> : <div className="p-4 sm:p-5"><EmptyAnalysis className="min-h-28" title="暂无保存报表" description="配置后输入名称并保存。" /></div>}</ChartPanel>
+          <ChartPanel title="我的报表" description="保存后可复用；勾选快捷报表会显示在本页顶部。" contentClassName="p-0 sm:p-0">{reportTemplates.length ? <div className="divide-y">{reportTemplates.map((item) => <div key={item.id} className="flex items-center gap-3 p-3"><button className="min-w-0 flex-1 text-left" onClick={() => apply(item)}><div className="truncate text-sm font-medium">{item.name}</div><div className="text-xs text-muted-foreground">{(item.config as Partial<ReportConfig>).shortcut ? "快捷报表" : "已保存报表"}</div></button><Button size="sm" variant="ghost" onClick={() => { remove.reset(); setReportToDelete(item); }} aria-label={`删除报表 ${item.name}`}><Trash2 className="h-4 w-4" />删除</Button></div>)}</div> : <div className="p-4 sm:p-5"><EmptyAnalysis className="min-h-28" title="暂无保存报表" description="配置后输入名称并保存。" /></div>}</ChartPanel>
         </div>
       </div>
+      <Dialog open={!!reportToDelete} onOpenChange={(open) => { if (!open && !remove.isPending) { remove.reset(); setReportToDelete(null); } }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>删除报表</DialogTitle>
+            <DialogDescription>确定删除“{reportToDelete?.name}”？删除后将从快捷报表和我的报表中移除。</DialogDescription>
+          </DialogHeader>
+          {remove.error ? <div className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{String(remove.error)}</div> : null}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { remove.reset(); setReportToDelete(null); }} disabled={remove.isPending}>取消</Button>
+            <Button variant="destructive" onClick={() => reportToDelete && remove.mutate(reportToDelete.id)} disabled={!reportToDelete || remove.isPending}>{remove.isPending ? "删除中…" : "确认删除"}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

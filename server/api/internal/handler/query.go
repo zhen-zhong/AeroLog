@@ -175,10 +175,22 @@ func (h *QueryHandler) updateTemplate(c *gin.Context) {
 
 func (h *QueryHandler) deleteTemplate(c *gin.Context) {
 	pid, _ := strconv.ParseInt(c.Param("id"), 10, 64)
-	tid, _ := strconv.ParseInt(c.Param("tid"), 10, 64)
-	_, err := h.PG.Exec(c, `UPDATE query_templates SET status=0, updated_at=now() WHERE id=$1 AND project_id=$2`, tid, pid)
+	tid, err := strconv.ParseInt(c.Param("tid"), 10, 64)
+	if err != nil || tid <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"err": "报表 ID 无效"})
+		return
+	}
+	command, err := h.PG.Exec(c, `
+		UPDATE query_templates
+		SET status=0, is_shared=false, share_token=NULL, updated_at=now()
+		WHERE id=$1 AND project_id=$2 AND status=1
+	`, tid, pid)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"err": "删除报表失败"})
+		return
+	}
+	if command.RowsAffected() == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"err": "报表不存在或已删除"})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{"ok": true}})
