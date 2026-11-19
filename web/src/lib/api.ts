@@ -362,7 +362,7 @@ export interface UserEvent {
     properties: Record<string, unknown>;
 }
 export interface QueryDimension {
-    type: "event" | "property" | "time";
+    type: "event" | "property" | "time" | "overall";
     key: string;
 }
 export interface QueryFilter {
@@ -485,6 +485,53 @@ export interface QueryTemplate {
     status: number;
     created_at: string;
     updated_at: string;
+}
+export type DashboardWidgetType = "metric" | "line" | "bar" | "table" | "funnel" | "text";
+export type DashboardWidgetSource = "query_template" | "custom_report" | "funnel" | "text";
+export interface DashboardWidget {
+    id: number;
+    dashboard_id: number;
+    project_id: number;
+    title: string;
+    widget_type: DashboardWidgetType;
+    source_type: DashboardWidgetSource;
+    source_id?: number;
+    query_config: Record<string, unknown>;
+    display_config: Record<string, unknown>;
+    layout_config: Record<string, unknown>;
+    status: number;
+    created_at: string;
+    updated_at: string;
+}
+export interface Dashboard {
+    id: number;
+    project_id: number;
+    name: string;
+    description: string;
+    global_config: Record<string, unknown>;
+    draft_config: Record<string, unknown>;
+    published_config: Record<string, unknown>;
+    status: number;
+    widget_count: number;
+    widgets?: DashboardWidget[];
+    created_at: string;
+    updated_at: string;
+}
+export interface DashboardInput {
+    name: string;
+    description?: string;
+    global_config?: Record<string, unknown>;
+    draft_config?: Record<string, unknown>;
+    published_config?: Record<string, unknown>;
+}
+export interface DashboardWidgetInput {
+    title: string;
+    widget_type: DashboardWidgetType;
+    source_type: DashboardWidgetSource;
+    source_id?: number;
+    query_config?: Record<string, unknown>;
+    display_config?: Record<string, unknown>;
+    layout_config?: Record<string, unknown>;
 }
 export interface SegmentEventRule {
     event: string;
@@ -1226,6 +1273,36 @@ export const api = {
         }),
     getSharedQueryTemplate: (token: string) =>
         req<ApiOne<QueryTemplate>>(`/shared/query_templates/${encodeURIComponent(token)}`),
+    listDashboards: (id: number | string) =>
+        req<ApiList<Dashboard>>(`/projects/${id}/dashboards`),
+    getDashboard: (id: number | string, dashboardId: number | string) =>
+        req<ApiOne<Dashboard>>(`/projects/${id}/dashboards/${dashboardId}`),
+    createDashboard: (id: number | string, body: DashboardInput) =>
+        req<ApiOne<Dashboard>>(`/projects/${id}/dashboards`, {
+            method: "POST",
+            body: JSON.stringify(body),
+        }),
+    updateDashboard: (id: number | string, dashboardId: number | string, body: DashboardInput) =>
+        req<ApiOne<Dashboard>>(`/projects/${id}/dashboards/${dashboardId}`, {
+            method: "PATCH",
+            body: JSON.stringify(body),
+        }),
+    deleteDashboard: (id: number | string, dashboardId: number | string) =>
+        req<ApiOne<{ ok: boolean }>>(`/projects/${id}/dashboards/${dashboardId}`, { method: "DELETE" }),
+    createDashboardWidget: (id: number | string, dashboardId: number | string, body: DashboardWidgetInput) =>
+        req<ApiOne<DashboardWidget>>(`/projects/${id}/dashboards/${dashboardId}/widgets`, {
+            method: "POST",
+            body: JSON.stringify(body),
+        }),
+    updateDashboardWidget: (id: number | string, dashboardId: number | string, widgetId: number | string, body: DashboardWidgetInput) =>
+        req<ApiOne<DashboardWidget>>(`/projects/${id}/dashboards/${dashboardId}/widgets/${widgetId}`, {
+            method: "PATCH",
+            body: JSON.stringify(body),
+        }),
+    deleteDashboardWidget: (id: number | string, dashboardId: number | string, widgetId: number | string) =>
+        req<ApiOne<{ ok: boolean }>>(`/projects/${id}/dashboards/${dashboardId}/widgets/${widgetId}`, { method: "DELETE" }),
+    copyDashboardWidget: (id: number | string, dashboardId: number | string, widgetId: number | string) =>
+        req<ApiOne<DashboardWidget>>(`/projects/${id}/dashboards/${dashboardId}/widgets/${widgetId}/copy`, { method: "POST" }),
     createAnalyticsJob: (
         id: number | string,
         body: { type: "query_export"; input: Record<string, unknown> },

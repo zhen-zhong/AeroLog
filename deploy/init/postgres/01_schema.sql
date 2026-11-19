@@ -347,17 +347,6 @@ CREATE INDEX IF NOT EXISTS idx_schema_issue_groups_project_updated
 CREATE INDEX IF NOT EXISTS idx_schema_issue_groups_project_event
     ON schema_issue_groups(project_id, event, updated_at DESC);
 
--- 看板
-CREATE TABLE IF NOT EXISTS dashboards (
-    id          BIGSERIAL PRIMARY KEY,
-    project_id  BIGINT      NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-    name        VARCHAR(128) NOT NULL,
-    layout      JSONB       NOT NULL DEFAULT '[]'::jsonb,
-    created_by  BIGINT      REFERENCES users(id),
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
 -- 转化目标：保存核心业务路径，计算仍走 ClickHouse 实时分析。
 CREATE TABLE IF NOT EXISTS conversion_goals (
     id                 BIGSERIAL PRIMARY KEY,
@@ -412,6 +401,47 @@ CREATE TABLE IF NOT EXISTS query_templates (
 
 CREATE INDEX IF NOT EXISTS idx_query_templates_project
     ON query_templates(project_id, status, updated_at DESC);
+
+-- 可视化数据看板及其组件。
+CREATE TABLE IF NOT EXISTS dashboards (
+    id               BIGSERIAL PRIMARY KEY,
+    project_id       BIGINT       NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    name             VARCHAR(128) NOT NULL,
+    description      TEXT         NOT NULL DEFAULT '',
+    global_config    JSONB        NOT NULL DEFAULT '{}'::jsonb,
+    draft_config     JSONB        NOT NULL DEFAULT '{}'::jsonb,
+    published_config JSONB        NOT NULL DEFAULT '{}'::jsonb,
+    status           SMALLINT     NOT NULL DEFAULT 1,
+    created_by       BIGINT       REFERENCES users(id),
+    created_at       TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    updated_at       TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+ALTER TABLE dashboards ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT '';
+ALTER TABLE dashboards ADD COLUMN IF NOT EXISTS global_config JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE dashboards ADD COLUMN IF NOT EXISTS draft_config JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE dashboards ADD COLUMN IF NOT EXISTS published_config JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE dashboards ADD COLUMN IF NOT EXISTS status SMALLINT NOT NULL DEFAULT 1;
+CREATE INDEX IF NOT EXISTS idx_dashboards_project
+    ON dashboards(project_id, status, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS dashboard_widgets (
+    id             BIGSERIAL PRIMARY KEY,
+    dashboard_id   BIGINT       NOT NULL REFERENCES dashboards(id) ON DELETE CASCADE,
+    project_id     BIGINT       NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    title          VARCHAR(255) NOT NULL,
+    widget_type    VARCHAR(32)  NOT NULL,
+    source_type    VARCHAR(32)  NOT NULL,
+    source_id      BIGINT,
+    query_config   JSONB        NOT NULL DEFAULT '{}'::jsonb,
+    display_config JSONB        NOT NULL DEFAULT '{}'::jsonb,
+    layout_config  JSONB        NOT NULL DEFAULT '{}'::jsonb,
+    status         SMALLINT     NOT NULL DEFAULT 1,
+    created_by     BIGINT       REFERENCES users(id),
+    created_at     TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    updated_at     TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_dashboard_widgets_dashboard
+    ON dashboard_widgets(dashboard_id, status, id);
 
 -- 可保存动态分群：用户属性与事件行为规则。
 CREATE TABLE IF NOT EXISTS user_segments (

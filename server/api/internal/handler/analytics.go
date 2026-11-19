@@ -1041,6 +1041,9 @@ func (h *AnalyticsHandler) executeQueryTable(ctx context.Context, pid uint32, bo
 		if dim.Type == "event" {
 			selects = append(selects, "event AS "+alias)
 			metas = append(metas, QueryDimMeta{Type: "event", Key: "event"})
+		} else if dim.Type == "overall" {
+			selects = append(selects, "'all' AS "+alias)
+			metas = append(metas, QueryDimMeta{Type: "overall", Key: "overall"})
 		} else if dim.Type == "time" && (dim.Key == "day" || dim.Key == "hour") {
 			format := "%F"
 			if dim.Key == "hour" {
@@ -1191,6 +1194,9 @@ func writeQueryTableError(c *gin.Context, err error) {
 }
 
 func parseDimensionValue(dimType, raw string) (any, string) {
+	if dimType == "overall" {
+		return "all", "总体"
+	}
 	if dimType == "event" {
 		if raw == "" {
 			return raw, "(空事件)"

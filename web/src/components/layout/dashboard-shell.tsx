@@ -57,6 +57,7 @@ const navGroups = [
     label: "自助分析",
     icon: Boxes,
     items: [
+      { href: "/console/dashboards", label: "数据看板", icon: LayoutDashboard },
       { href: "/console/reports", label: "自定义报表", icon: BarChart3 },
       { href: "/console/query", label: "自助查询", icon: Boxes },
     ],

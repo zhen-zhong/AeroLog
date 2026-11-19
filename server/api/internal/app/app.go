@@ -162,6 +162,7 @@ func newRouter(cfg *config.Config, pool *pgxpool.Pool, chConn driver.Conn) (*gin
 	(&handler.EventDefHandler{PG: pool}).Register(projectScoped)
 	(&handler.GovernanceHandler{PG: pool, CH: chConn}).Register(projectScoped)
 	(&handler.SegmentHandler{PG: pool, CH: chConn}).Register(projectScoped)
+	(&handler.DashboardHandler{PG: pool}).Register(projectScoped)
 	(&handler.SensorsIntegrationHandler{PG: pool, CH: chConn, EncryptionKey: cfg.IntegrationKey, ApplicationName: cfg.SensorsApplication}).Register(projectScoped)
 	analytics.Register(projectScoped)
 	queryJobs.Register(projectScoped)
