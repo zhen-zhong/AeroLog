@@ -51,19 +51,15 @@ export function AnalyticsHeader({
   action?: ReactNode;
 }) {
   return (
-    <AnimatedContent className="mb-5 overflow-hidden rounded-lg border bg-card">
-      <div className="relative px-4 py-5 sm:px-6">
+    <AnimatedContent className="mb-4 overflow-hidden rounded-lg border bg-card">
+      <div className="relative px-4 py-3 sm:px-5">
         <div className="pointer-events-none absolute inset-0 aero-signal-surface" />
-        <div className="relative flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+        <div className="relative flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="max-w-3xl">
-            <div className="mb-2 inline-flex items-center gap-2 rounded-full border bg-background px-3 py-1 text-xs font-medium text-muted-foreground">
-              <Sparkles className="h-3.5 w-3.5 text-primary" />
-              实时行为分析
-            </div>
-            <h1 className="text-2xl font-semibold tracking-normal text-foreground sm:text-3xl">
+            <h1 className="text-xl font-semibold tracking-normal text-foreground sm:text-2xl">
               {title}
             </h1>
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
+            <p className="mt-1 max-w-2xl text-sm leading-5 text-muted-foreground">
               {description}
             </p>
           </div>
