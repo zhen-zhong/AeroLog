@@ -20,6 +20,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { AnalyticsHeader, DateTimeRange, EmptyAnalysis, EventCollectionPicker } from "@/features/analytics/analytics-ui";
+import { coreReportTemplates } from "@/features/analytics/core-report-templates";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -73,6 +74,15 @@ type CohortWidgetResult = { kind: "cohort"; rows: CohortTableRow[]; config: Repo
 type FunnelWidgetResult = { kind: "funnel"; steps: ConversionStep[] };
 type WidgetResult = StandardWidgetResult | CohortWidgetResult | FunnelWidgetResult;
 type MetricOption = { value: string; label: string };
+type DashboardReportSource = {
+  key: string;
+  group: "核心模板" | "我的报表";
+  name: string;
+  description: string;
+  config: ReportConfig;
+  sourceType: "query_template" | "custom_report";
+  sourceId?: number;
+};
 
 function defaultLayout(type: DashboardWidgetType, index: number): WidgetLayout {
   if (type === "metric") return { x: (index * 6) % 24, y: Math.floor(index / 4) * 5, w: 6, h: 5, minW: 4, minH: 4 };
@@ -270,10 +280,30 @@ export default function DashboardsPage() {
   const dashboardRows = dashboards.data?.data || [];
   const selected = dashboard.data?.data;
   const widgets = selected?.widgets || [];
-  const reportRows = (reports.data?.data || []).filter((item) => (item.config as ReportConfig).kind === "custom_report_v1");
+  const reportRows = useMemo<DashboardReportSource[]>(() => [
+    ...coreReportTemplates().flatMap((item) => item.config ? [{
+      key: `core:${item.id}`,
+      group: "核心模板" as const,
+      name: item.name,
+      description: item.description,
+      config: item.config as ReportConfig,
+      sourceType: "custom_report" as const,
+    }] : []),
+    ...(reports.data?.data || [])
+      .filter((item) => (item.config as ReportConfig).kind === "custom_report_v1")
+      .map((item) => ({
+        key: `saved:${item.id}`,
+        group: "我的报表" as const,
+        name: item.name,
+        description: item.description || "已保存的自定义报表",
+        config: item.config as ReportConfig,
+        sourceType: "query_template" as const,
+        sourceId: item.id,
+      })),
+  ], [reports.data]);
   const eventNames = events.data?.data.map((item) => item.name) || [];
-  const selectedTemplate = reportRows.find((item) => item.id === Number(templateId));
-  const selectedTemplateConfig = selectedTemplate?.config as ReportConfig | undefined;
+  const selectedTemplate = reportRows.find((item) => item.key === templateId);
+  const selectedTemplateConfig = selectedTemplate?.config;
 
   useEffect(() => {
     setSelectedId(undefined);
@@ -391,14 +421,14 @@ export default function DashboardsPage() {
   }
 
   function addReportWidget() {
-    const template = reportRows.find((item) => item.id === Number(templateId));
+    const template = reportRows.find((item) => item.key === templateId);
     if (!template) return;
     const index = widgets.length;
     createWidget.mutate({
       title: newWidgetTitle.trim() || template.name,
       widget_type: newWidgetType,
-      source_type: "query_template",
-      source_id: template.id,
+      source_type: template.sourceType,
+      source_id: template.sourceId,
       query_config: template.config,
       display_config: { metric: newMetric || defaultMetric(template.config as ReportConfig) },
       layout_config: defaultLayout(newWidgetType, index),
@@ -523,11 +553,18 @@ export default function DashboardsPage() {
 
       <Dialog open={addOpen} onOpenChange={setAddOpen}>
         <DialogContent className="max-w-2xl">
-          <DialogHeader><DialogTitle>添加组件</DialogTitle><DialogDescription>复用已保存报表，或配置一个新的漏斗。</DialogDescription></DialogHeader>
-          <div className="flex gap-2"><Button size="sm" variant={addMode === "report" ? "default" : "outline"} onClick={() => setAddMode("report")}>已有报表</Button><Button size="sm" variant={addMode === "funnel" ? "default" : "outline"} onClick={() => { setAddMode("funnel"); setNewWidgetType("funnel"); }}>漏斗</Button></div>
+          <DialogHeader><DialogTitle>添加组件</DialogTitle><DialogDescription>直接使用核心指标模板、已保存报表，或配置一个新的漏斗。</DialogDescription></DialogHeader>
+          <div className="flex gap-2"><Button size="sm" variant={addMode === "report" ? "default" : "outline"} onClick={() => setAddMode("report")}>报表模板</Button><Button size="sm" variant={addMode === "funnel" ? "default" : "outline"} onClick={() => { setAddMode("funnel"); setNewWidgetType("funnel"); }}>漏斗</Button></div>
           {addMode === "report" ? (
             <div className="grid gap-3">
-              <div className="grid gap-1.5"><Label>已保存报表</Label><Select value={templateId} onValueChange={(value) => { const template = reportRows.find((item) => item.id === Number(value)); const config = template?.config as ReportConfig | undefined; setTemplateId(value); setNewWidgetTitle(template?.name || ""); setNewMetric(config ? defaultMetric(config) : "count"); const type = config?.chart; setNewWidgetType(type === "table" || type === "bar" ? type : "line"); }}><SelectTrigger><SelectValue placeholder="选择报表" /></SelectTrigger><SelectContent>{reportRows.map((item) => <SelectItem key={item.id} value={String(item.id)}>{item.name}</SelectItem>)}</SelectContent></Select></div>
+              <div className="grid gap-1.5">
+                <Label>报表来源</Label>
+                <Select value={templateId} onValueChange={(value) => { const template = reportRows.find((item) => item.key === value); const config = template?.config; setTemplateId(value); setNewWidgetTitle(template?.name || ""); setNewMetric(config ? defaultMetric(config) : "count"); const type = config?.chart; setNewWidgetType(type === "table" || type === "bar" ? type : "line"); }}>
+                  <SelectTrigger><SelectValue placeholder="选择核心模板或我的报表" /></SelectTrigger>
+                  <SelectContent>{reportRows.map((item) => <SelectItem key={item.key} value={item.key}>{item.group} · {item.name}</SelectItem>)}</SelectContent>
+                </Select>
+                {selectedTemplate ? <p className="text-xs text-muted-foreground">{selectedTemplate.description}</p> : null}
+              </div>
               <div className="grid gap-1.5"><Label>组件名称</Label><Input value={newWidgetTitle} onChange={(event) => setNewWidgetTitle(event.target.value)} /></div>
               <WidgetTypeSelect value={newWidgetType} onChange={setNewWidgetType} includeFunnel={false} />
               {newWidgetType === "metric" && selectedTemplateConfig ? <MetricSelect value={newMetric} onChange={setNewMetric} config={selectedTemplateConfig} /> : null}

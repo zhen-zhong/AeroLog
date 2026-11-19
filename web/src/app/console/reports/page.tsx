@@ -15,105 +15,30 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api, CohortTableRow, QueryDimension, QueryTableRow, QueryTemplate } from "@/lib/api";
+import {
+  coreReportTemplates,
+  createDefaultReportConfig,
+  type CoreReportConfig,
+  type CoreReportTemplate,
+  type ReportChartKind,
+  type ReportCohortConfig,
+  type ReportDimensionKind,
+  type ReportFormulaColumn,
+  type ReportMode,
+} from "@/features/analytics/core-report-templates";
 import { useProjectStore } from "@/stores/project-store";
 
 const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
 
-type DimensionKind = "day" | "hour" | "event" | "property";
-type ChartKind = "table" | "line" | "bar";
-type FormulaColumn = { id: string; label: string; expression: string };
-type ReportMode = "standard" | "cohort";
-type CohortConfig = {
-  cohortEvent: string;
-  cohortProperty: string;
-  cohortValue: string;
-  metricEvent: string;
-  offsets: number[];
-};
+type DimensionKind = ReportDimensionKind;
+type ChartKind = ReportChartKind;
+type FormulaColumn = ReportFormulaColumn;
+type CohortConfig = ReportCohortConfig;
+type ReportConfig = CoreReportConfig;
+type CoreTemplate = CoreReportTemplate;
 
-type ReportConfig = {
-  kind: "custom_report_v1";
-  mode: ReportMode;
-  from: number;
-  to: number;
-  events: string[];
-  segmentId: number;
-  dimension: DimensionKind;
-  property: string;
-  chart: ChartKind;
-  showCount: boolean;
-  showUsers: boolean;
-  sumProperties: string[];
-  formulas: FormulaColumn[];
-  cohort: CohortConfig;
-  shortcut: boolean;
-};
-
-const defaultConfig = (): ReportConfig => ({
-  kind: "custom_report_v1",
-  mode: "standard",
-  from: dayjs().subtract(7, "day").startOf("day").valueOf(),
-  to: dayjs().endOf("day").valueOf(),
-  events: [],
-  segmentId: 0,
-  dimension: "day",
-  property: "",
-  chart: "table",
-  showCount: true,
-  showUsers: true,
-  sumProperties: [],
-  formulas: [{ id: "per_user", label: "人均事件次数", expression: "count / users" }],
-  cohort: { cohortEvent: "$AppStart", cohortProperty: "$is_first_day", cohortValue: "true", metricEvent: "ad_show", offsets: [0, 1] },
-  shortcut: false,
-});
-
-type CoreTemplate = {
-  name: string;
-  description: string;
-  config?: ReportConfig;
-  href?: string;
-};
-
-function coreTemplates(): CoreTemplate[] {
-  const base = defaultConfig();
-  return [
-    {
-      name: "新增用户",
-      description: "首日启动用户，按新增日期趋势展示。",
-      config: { ...base, mode: "cohort", chart: "line", showCount: false, showUsers: false, formulas: [], cohort: { ...base.cohort, metricEvent: "$AppStart", offsets: [0] } },
-    },
-    {
-      name: "广告展示次数",
-      description: "按天统计 ad_show 事件次数与去重用户。",
-      config: { ...base, events: ["ad_show"], chart: "line", formulas: [] },
-    },
-    {
-      name: "人均广告展示",
-      description: "ad_show 次数 ÷ 当日去重用户数。",
-      config: { ...base, events: ["ad_show"], chart: "line", formulas: [{ id: "ad_per_user", label: "人均广告展示", expression: "count / users" }] },
-    },
-    {
-      name: "广告收入（金币）",
-      description: "汇总 coin_earned.coin_amount，作为当前确认的广告收入口径。",
-      config: { ...base, events: ["coin_earned"], chart: "bar", showCount: false, showUsers: false, sumProperties: ["coin_amount"], formulas: [] },
-    },
-    {
-      name: "广告分析",
-      description: "广告展示、完成率、失败率与广告位分组表现。",
-      href: "/console/ads",
-    },
-    {
-      name: "留存",
-      description: "新用户启动后 Day0～Day7 回访。",
-      href: "/console/retention?initial_event=%24AppStart&return_event=%24AppStart&days=7",
-    },
-    {
-      name: "转化漏斗",
-      description: "启动 → 广告展示 → 广告完成 → 金币到账。",
-      href: "/console/funnel?events=%24AppStart%2Cad_show%2Cad_complete%2Ccoin_earned",
-    },
-  ];
-}
+const defaultConfig = createDefaultReportConfig;
+const coreTemplates = coreReportTemplates;
 
 function metricFormula(expression: string, variables: Record<string, number>): number | null {
   const tokens = expression.match(/[A-Za-z_][A-Za-z0-9_]*|\d+(?:\.\d+)?|[()+\-*/]/g);
