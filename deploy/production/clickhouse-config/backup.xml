@@ -1,0 +1,6 @@
+<clickhouse>
+    <!-- 仅允许恢复演练脚本在 ClickHouse 数据目录的专用子目录读写备份。 -->
+    <backups>
+        <allowed_path>/var/lib/clickhouse/backups/</allowed_path>
+    </backups>
+</clickhouse>

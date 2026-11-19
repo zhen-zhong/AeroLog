@@ -281,7 +281,51 @@ sudo docker compose restart consumer
 
 不要使用 `docker compose down -v`，除非明确要删除所有数据库、队列与分析数据。
 
-### 6.1 神策 Kafka 订阅入口
+### 6.1 备份与隔离恢复演练
+
+生产恢复使用逻辑备份，不直接修改正式数据库。ClickHouse 原生备份只允许写入
+`/var/lib/clickhouse/backups/`，脚本完成后会把文件移到宿主机受限备份目录并删除容器内副本。
+
+首次启用或修改 ClickHouse 备份配置后，重建 ClickHouse：
+
+```bash
+cd <deployment-root>/deploy/production
+sudo docker compose up -d --no-deps --force-recreate clickhouse
+sudo docker compose ps clickhouse
+```
+
+创建 PostgreSQL、ClickHouse 备份并导出所有 `aerolog-*` Kafka 消费组 offset：
+
+```bash
+cd <deployment-root>/deploy/production
+sudo ./scripts/backup-data.sh
+```
+
+使用最新备份执行隔离演练：
+
+```bash
+sudo ./scripts/restore-drill.sh latest
+```
+
+也可指定备份 ID：
+
+```bash
+sudo ./scripts/restore-drill.sh 20261119T120000Z
+```
+
+演练流程：
+
+1. 校验全部备份文件 SHA-256。
+2. PostgreSQL 恢复到 `aerolog_drill_*` 临时库，逐表比对行数。
+3. ClickHouse 恢复到 `aerolog_drill_*` 临时库，逐表比对行数。
+4. Kafka 创建独立 `aerolog.recovery.drill.*` Topic 和消费组，消费后回退 offset，再次消费并比对消息。
+5. 无论成功或失败均清理临时数据库、临时备份文件、测试 Topic 和测试消费组。
+
+脚本不会修改正式 Kafka 消费组 offset。备份目录默认为 `/var/backups/aerolog`，权限为
+`0700`；执行前默认要求至少 5 GiB 可用空间。可通过 `AEROLOG_BACKUP_ROOT` 和
+`AEROLOG_BACKUP_MIN_FREE_KB` 覆盖。
+
+### 6.2 神策 Kafka 订阅入口
 
 Redpanda 保留容器内 `redpanda:9092` 给 AeroLog 自身使用，并单独映射主机 IPv4 `9092` 给神策私有化服务器。外部 listener 的公告地址仅通过服务器私有 `.env` 的 `AEROLOG_KAFKA_EXTERNAL_ADVERTISED_ADDR` 配置，不能提交真实 IP 或域名。
 

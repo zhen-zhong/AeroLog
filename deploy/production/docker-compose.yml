@@ -305,6 +305,7 @@ services:
     volumes:
       - /var/lib/aerolog/clickhouse:/var/lib/clickhouse
       - ../init/clickhouse:/docker-entrypoint-initdb.d:ro
+      - ./clickhouse-config/backup.xml:/etc/clickhouse-server/config.d/backup.xml:ro
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8123/ping"]
       interval: 5s
