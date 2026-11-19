@@ -326,9 +326,28 @@ sudo ./scripts/restore-drill.sh 20261119T120000Z
 
 脚本不会修改正式 Kafka 消费组 offset。备份目录默认为 `/var/backups/aerolog`，权限为
 `0700`；执行前默认要求至少 5 GiB 可用空间。可通过 `AEROLOG_BACKUP_ROOT` 和
-`AEROLOG_BACKUP_MIN_FREE_KB` 覆盖。
+`AEROLOG_BACKUP_MIN_FREE_KB` 覆盖。新备份成功后自动删除超过 14 天的历史备份，可通过
+`AEROLOG_BACKUP_RETENTION_DAYS` 调整。
 
-### 6.2 神策 Kafka 订阅入口
+### 6.2 数据生命周期
+
+API 每 6 小时执行一次元数据清理，单批最多删除 5000 行。默认策略：成功调试记录 7 天，错误、
+DLQ 与 Schema 问题 30 天，完成的异步查询任务 7 天，过期登录会话宽限 7 天。多个 API 实例通过
+PostgreSQL advisory lock 互斥，不会并发执行清理。
+
+```bash
+AEROLOG_DEBUG_ACCEPTED_RETENTION_DAYS=7
+AEROLOG_DEBUG_ERROR_RETENTION_DAYS=30
+AEROLOG_SCHEMA_ISSUE_RETENTION_DAYS=30
+AEROLOG_ANALYTICS_JOB_RETENTION_DAYS=7
+AEROLOG_SESSION_RETENTION_GRACE_DAYS=7
+AEROLOG_BACKUP_RETENTION_DAYS=14
+```
+
+Kafka 原始消息当前按 Topic 保留 3 天、单 Topic 上限 2 GB；ClickHouse `events` 通过表 TTL 保留
+365 天。修改这些保留期属于数据删除策略变更，上线前必须先完成备份和恢复演练。
+
+### 6.3 神策 Kafka 订阅入口
 
 Redpanda 保留容器内 `redpanda:9092` 给 AeroLog 自身使用，并单独映射主机 IPv4 `9092` 给神策私有化服务器。外部 listener 的公告地址仅通过服务器私有 `.env` 的 `AEROLOG_KAFKA_EXTERNAL_ADVERTISED_ADDR` 配置，不能提交真实 IP 或域名。
 
@@ -347,7 +366,7 @@ sudo systemctl status aerolog-kafka-firewall.service --no-pager
 
 从神策服务器验证时使用 `nc -vz -w 5 <aerolog-kafka-public-host> 9092`，再使用 `kcat -b '<aerolog-kafka-public-host>:9092' -L`。不得对其他公网地址开放该端口；本期也不启用离线导出、JDBC 或历史回补。
 
-### 6.2 复用已有 Kafka
+### 6.4 复用已有 Kafka
 
 若服务器已有独立管理的 Kafka，可不启动本编排的 `redpanda`，并在仅服务器可读的 `.env` 中设置：
 

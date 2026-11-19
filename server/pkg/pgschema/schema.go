@@ -1,8 +1,9 @@
-// Package pgschema owns Postgres metadata schema bootstrap and debug retention.
+// Package pgschema owns Postgres metadata schema bootstrap and lifecycle cleanup.
 package pgschema
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"time"
 
@@ -18,35 +19,146 @@ func Ensure(ctx context.Context, pg *pgxpool.Pool) error {
 	return err
 }
 
-// CleanupDebugData removes old debugger records.
-func CleanupDebugData(ctx context.Context, pg *pgxpool.Pool, retentionDays int) error {
-	if pg == nil || retentionDays <= 0 {
-		return nil
-	}
-	statements := []string{
-		`DELETE FROM debug_events WHERE created_at < now() - make_interval(days => $1)`,
-		`DELETE FROM schema_issues WHERE created_at < now() - make_interval(days => $1)`,
-		`DELETE FROM schema_issue_groups WHERE updated_at < now() - make_interval(days => $1)`,
-	}
-	for _, stmt := range statements {
-		if _, err := pg.Exec(ctx, stmt, retentionDays); err != nil {
-			return err
-		}
-	}
-	return nil
+const lifecycleAdvisoryLock int64 = 0x4145524f4c4f47
+
+// RetentionPolicy defines global metadata retention. ClickHouse and Kafka
+// retention are configured by their own storage engines.
+type RetentionPolicy struct {
+	DebugAcceptedDays int
+	DebugErrorDays    int
+	SchemaIssueDays   int
+	AnalyticsJobDays  int
+	SessionGraceDays  int
 }
 
-// StartRetentionLoop periodically applies debug data retention.
-func StartRetentionLoop(ctx context.Context, pg *pgxpool.Pool, retentionDays int) {
-	if pg == nil || retentionDays <= 0 {
+// Normalize replaces invalid values with conservative defaults.
+func (p RetentionPolicy) Normalize() RetentionPolicy {
+	if p.DebugAcceptedDays <= 0 {
+		p.DebugAcceptedDays = 7
+	}
+	if p.DebugErrorDays <= 0 {
+		p.DebugErrorDays = 30
+	}
+	if p.SchemaIssueDays <= 0 {
+		p.SchemaIssueDays = 30
+	}
+	if p.AnalyticsJobDays <= 0 {
+		p.AnalyticsJobDays = 7
+	}
+	if p.SessionGraceDays <= 0 {
+		p.SessionGraceDays = 7
+	}
+	return p
+}
+
+type lifecycleDelete struct {
+	name  string
+	query string
+	days  int
+}
+
+// CleanupLifecycleData removes expired metadata in small batches. An advisory
+// lock guarantees only one service instance performs cleanup at a time.
+func CleanupLifecycleData(ctx context.Context, pg *pgxpool.Pool, policy RetentionPolicy) (map[string]int64, error) {
+	stats := map[string]int64{}
+	if pg == nil {
+		return stats, nil
+	}
+	policy = policy.Normalize()
+	conn, err := pg.Acquire(ctx)
+	if err != nil {
+		return stats, err
+	}
+	defer conn.Release()
+
+	var locked bool
+	if err := conn.QueryRow(ctx, `SELECT pg_try_advisory_lock($1)`, lifecycleAdvisoryLock).Scan(&locked); err != nil {
+		return stats, err
+	}
+	if !locked {
+		return stats, nil
+	}
+	defer func() {
+		var unlocked bool
+		_ = conn.QueryRow(context.Background(), `SELECT pg_advisory_unlock($1)`, lifecycleAdvisoryLock).Scan(&unlocked)
+	}()
+
+	deletes := []lifecycleDelete{
+		{name: "debug_accepted", days: policy.DebugAcceptedDays, query: `
+DELETE FROM debug_events WHERE id IN (
+    SELECT id FROM debug_events
+    WHERE result = 'accepted' AND created_at < now() - make_interval(days => $1)
+    ORDER BY id LIMIT 5000
+)`},
+		{name: "debug_error", days: policy.DebugErrorDays, query: `
+DELETE FROM debug_events WHERE id IN (
+    SELECT id FROM debug_events
+    WHERE result <> 'accepted' AND created_at < now() - make_interval(days => $1)
+    ORDER BY id LIMIT 5000
+)`},
+		{name: "schema_issues", days: policy.SchemaIssueDays, query: `
+DELETE FROM schema_issues WHERE id IN (
+    SELECT id FROM schema_issues
+    WHERE created_at < now() - make_interval(days => $1)
+    ORDER BY id LIMIT 5000
+)`},
+		{name: "schema_issue_groups", days: policy.SchemaIssueDays, query: `
+DELETE FROM schema_issue_groups WHERE id IN (
+    SELECT id FROM schema_issue_groups
+    WHERE updated_at < now() - make_interval(days => $1)
+    ORDER BY id LIMIT 5000
+)`},
+		{name: "analytics_jobs", days: policy.AnalyticsJobDays, query: `
+DELETE FROM analytics_jobs WHERE id IN (
+    SELECT id FROM analytics_jobs
+    WHERE status IN ('succeeded','failed','cancelled')
+      AND COALESCE(finished_at, updated_at) < now() - make_interval(days => $1)
+    ORDER BY id LIMIT 5000
+)`},
+		{name: "auth_sessions", days: policy.SessionGraceDays, query: `
+DELETE FROM auth_sessions WHERE id IN (
+    SELECT id FROM auth_sessions
+    WHERE expires_at < now() - make_interval(days => $1)
+    ORDER BY id LIMIT 5000
+)`},
+	}
+
+	for _, item := range deletes {
+		for {
+			result, err := conn.Exec(ctx, item.query, item.days)
+			if err != nil {
+				return stats, fmt.Errorf("cleanup %s: %w", item.name, err)
+			}
+			rows := result.RowsAffected()
+			stats[item.name] += rows
+			if rows < 5000 {
+				break
+			}
+		}
+	}
+	return stats, nil
+}
+
+// StartLifecycleLoop periodically applies metadata retention.
+func StartLifecycleLoop(ctx context.Context, pg *pgxpool.Pool, policy RetentionPolicy) {
+	if pg == nil {
 		return
 	}
 	go func() {
 		run := func() {
-			cleanupCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+			cleanupCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 			defer cancel()
-			if err := CleanupDebugData(cleanupCtx, pg, retentionDays); err != nil {
-				log.Printf("debug retention cleanup err: %v", err)
+			stats, err := CleanupLifecycleData(cleanupCtx, pg, policy)
+			if err != nil {
+				log.Printf("lifecycle cleanup err: %v", err)
+				return
+			}
+			var total int64
+			for _, count := range stats {
+				total += count
+			}
+			if total > 0 {
+				log.Printf("lifecycle cleanup removed=%d details=%v", total, stats)
 			}
 		}
 		run()

@@ -95,7 +95,6 @@ func inputDecoder(cfg *config.Config, pool *pgxpool.Pool) (worker.DecodeFunc, er
 // Run starts the consumer and blocks until ctx is canceled or the consumer fails.
 func (a *App) Run(ctx context.Context) error {
 	a.metricsSrv = metrics.Serve(a.cfg.MetricsAddr)
-	pgschema.StartRetentionLoop(ctx, a.pgPool, a.cfg.DebugRetentionDays)
 	log.Printf("consumer started, brokers=%v topic=%s group=%s", a.cfg.KafkaBrokers, a.cfg.KafkaTopic, a.cfg.GroupID)
 	err := a.worker.Run(ctx)
 	a.Shutdown()

@@ -86,7 +86,13 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 // Run starts the API and blocks until ctx is canceled or a listener fails.
 func (a *App) Run(ctx context.Context) error {
 	a.metricsSrv = metrics.Serve(a.cfg.MetricsAddr)
-	pgschema.StartRetentionLoop(ctx, a.pgPool, a.cfg.DebugRetentionDays)
+	pgschema.StartLifecycleLoop(ctx, a.pgPool, pgschema.RetentionPolicy{
+		DebugAcceptedDays: a.cfg.DebugAcceptedRetentionDays,
+		DebugErrorDays:    a.cfg.DebugErrorRetentionDays,
+		SchemaIssueDays:   a.cfg.SchemaIssueRetentionDays,
+		AnalyticsJobDays:  a.cfg.AnalyticsJobRetentionDays,
+		SessionGraceDays:  a.cfg.SessionRetentionGraceDays,
+	})
 	if a.queryJobs != nil {
 		a.queryJobs.StartJobWorker(ctx)
 	}

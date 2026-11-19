@@ -13,7 +13,11 @@ type Config struct {
 	ClickHouse                               ClickHouseConf
 	JWTSecret                                string
 	AllowOrigins                             []string
-	DebugRetentionDays                       int
+	DebugAcceptedRetentionDays               int
+	DebugErrorRetentionDays                  int
+	SchemaIssueRetentionDays                 int
+	AnalyticsJobRetentionDays                int
+	SessionRetentionGraceDays                int
 	IntegrationKey                           string
 	SensorsApplication                       string
 	SensorsEventsTopic                       string
@@ -50,7 +54,11 @@ func FromEnv() *Config {
 		},
 		JWTSecret:                                getEnv("AEROLOG_JWT_SECRET", "change-me"),
 		AllowOrigins:                             strings.Split(getEnv("AEROLOG_CORS", "*"), ","),
-		DebugRetentionDays:                       getEnvInt("AEROLOG_DEBUG_RETENTION_DAYS", 7),
+		DebugAcceptedRetentionDays:               getEnvInt("AEROLOG_DEBUG_ACCEPTED_RETENTION_DAYS", getEnvInt("AEROLOG_DEBUG_RETENTION_DAYS", 7)),
+		DebugErrorRetentionDays:                  getEnvInt("AEROLOG_DEBUG_ERROR_RETENTION_DAYS", 30),
+		SchemaIssueRetentionDays:                 getEnvInt("AEROLOG_SCHEMA_ISSUE_RETENTION_DAYS", 30),
+		AnalyticsJobRetentionDays:                getEnvInt("AEROLOG_ANALYTICS_JOB_RETENTION_DAYS", 7),
+		SessionRetentionGraceDays:                getEnvInt("AEROLOG_SESSION_RETENTION_GRACE_DAYS", 7),
 		IntegrationKey:                           getEnv("AEROLOG_INTEGRATION_ENCRYPTION_KEY", ""),
 		SensorsApplication:                       getEnv("AEROLOG_SENSORS_APPLICATION_NAME", ""),
 		SensorsEventsTopic:                       getEnv("AEROLOG_SENSORS_EVENTS_TOPIC", "sensors.events.v1"),

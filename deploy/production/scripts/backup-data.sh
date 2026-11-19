@@ -7,6 +7,7 @@ umask 077
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 COMPOSE_DIR=$(cd -- "${SCRIPT_DIR}/.." && pwd)
 BACKUP_ROOT=${AEROLOG_BACKUP_ROOT:-/var/backups/aerolog}
+BACKUP_RETENTION_DAYS=${AEROLOG_BACKUP_RETENTION_DAYS:-14}
 ENV_FILE=${AEROLOG_ENV_FILE:-${COMPOSE_DIR}/.env}
 STAMP=${AEROLOG_BACKUP_STAMP:-$(date -u +%Y%m%dT%H%M%SZ)}
 BACKUP_DIR=${BACKUP_ROOT}/${STAMP}
@@ -18,6 +19,11 @@ KAFKA_NETWORK=${AEROLOG_KAFKA_NETWORK:-aerolog_kafka-ingress}
 
 if [[ ! ${STAMP} =~ ^[0-9]{8}T[0-9]{6}Z$ ]]; then
   echo "AEROLOG_BACKUP_STAMP 格式必须为 YYYYMMDDTHHMMSSZ" >&2
+  exit 2
+fi
+
+if [[ ! ${BACKUP_RETENTION_DAYS} =~ ^[1-9][0-9]*$ ]]; then
+  echo "AEROLOG_BACKUP_RETENTION_DAYS 必须为正整数" >&2
   exit 2
 fi
 
@@ -128,3 +134,11 @@ trap - EXIT
 compose exec -T --user root clickhouse rm -f -- "${CLICKHOUSE_CONTAINER_PATH}"
 
 echo "备份完成：${BACKUP_DIR}"
+
+while IFS= read -r expired_dir; do
+  expired_name=$(basename -- "${expired_dir}")
+  [[ ${expired_name} =~ ^[0-9]{8}T[0-9]{6}Z$ ]] || continue
+  rm -rf -- "${expired_dir}"
+  echo "已清理过期备份：${expired_name}"
+done < <(find "${BACKUP_ROOT}" -mindepth 1 -maxdepth 1 -type d \
+  -name '20??????T??????Z' -mtime "+${BACKUP_RETENTION_DAYS}" -print)

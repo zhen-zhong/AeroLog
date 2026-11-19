@@ -66,6 +66,21 @@ Prometheus ◄── API / Collector / Consumer / Node Exporter ──► Grafan
 
 Redpanda 对容器使用 `redpanda:9092`。神策订阅使用专用外部 listener `9092`，必须同时受云安全组和宿主机防火墙来源白名单保护，不能开放给任意公网地址。
 
+### 2.4 数据生命周期
+
+| 数据 | 默认保留 | 清理方式 |
+|---|---:|---|
+| ClickHouse 事件 | 365 天 | `events` 表 TTL |
+| Kafka 原始消息 | 3 天或单 Topic 2 GB | Kafka Topic `retention.ms` / `retention.bytes` |
+| 成功调试记录 | 7 天 | API 生命周期调度器，5000 行分批删除 |
+| 错误、DLQ、Schema 问题 | 30 天 | API 生命周期调度器，5000 行分批删除 |
+| 异步查询任务结果 | 7 天 | 仅删除已成功、失败或取消任务 |
+| 过期登录会话 | 过期后宽限 7 天 | API 生命周期调度器 |
+| 生产逻辑备份 | 14 天 | 新备份成功后清理过期备份目录 |
+
+生命周期调度器只在 API 中运行，并使用 PostgreSQL advisory lock 防止多 API 实例重复清理。保留期可通过
+`AEROLOG_*_RETENTION_DAYS` 环境变量调整；正式事件、审计记录和仍在执行的查询任务不会被元数据清理器删除。
+
 ### 2.4 监控层
 
 | 服务 | 作用 |

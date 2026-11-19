@@ -61,8 +61,6 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 // Run starts the collector and blocks until ctx is canceled or a listener fails.
 func (a *App) Run(ctx context.Context) error {
 	a.metricsSrv = metrics.Serve(a.cfg.MetricsAddr)
-	pgschema.StartRetentionLoop(ctx, a.pgPool, a.cfg.DebugRetentionDays)
-
 	errCh := make(chan error, 1)
 	go func() {
 		log.Printf("collector listening on %s", a.cfg.Addr)
