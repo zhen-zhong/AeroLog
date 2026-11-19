@@ -38,7 +38,7 @@
 
 1. [x] Singular 渠道归因分析：将 `mmp_singular_*` 映射为统一 MMP 字段，完成历史字段补齐；事件、漏斗、留存、归因可直接筛选与拆解。
 2. [x] 广告经营指标：广告页支持按媒体来源、广告活动统计归因用户、展示、完成、收入、成本、期间 LTV、ROI、ROAS；项目管理可配置多条收入规则及按日渠道成本，支持 CSV 批量导入。Singular 成本 API 自动同步等待凭证与报表口径确认。
-3. [ ] 生产恢复演练：Redpanda、ClickHouse、PostgreSQL 备份恢复与订阅 offset 回放验证。
+3. [x] 生产恢复演练：PostgreSQL、ClickHouse 在线逻辑备份及隔离临时库恢复通过；外部 Kafka 使用独立测试 Topic 完成 offset 回退与重复消费验证，正式消费组 offset 仅导出不修改。
 4. [ ] 明确神策 `details` Topic 是否接入；确认需要后再实现消费者、映射、幂等与数据质量校验。
 5. [x] 神策订阅运行状态巡检、对账异常闭环与企业微信固定数据分析 Skill。
 
@@ -50,7 +50,7 @@
 - [x] 为神策订阅增加运行状态巡检：订阅应用、消费者组、Topic、lag、DLQ、最近入库时间统一展示。
 - [ ] 明确神策 `details` Topic 是否需要接入；若需要，增加独立消费者、映射、幂等规则与数据质量校验。
 - [x] 对账异常增加阈值、静默期、确认/关闭记录，避免相同异常重复告警。
-- [ ] 补充生产恢复演练：Redpanda、ClickHouse、PostgreSQL 的备份、恢复与订阅 offset 回放验证。
+- [x] 补充生产恢复演练：PostgreSQL、ClickHouse 的备份与隔离恢复、Kafka 独立 Topic offset 回放验证均已通过；正式消费组 offset 已纳入备份。
 
 ## 暂缓：神策历史回灌
 
