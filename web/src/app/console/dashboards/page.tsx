@@ -496,6 +496,7 @@ export default function DashboardsPage() {
               {widgets.length ? (
                 <div className="dashboard-grid-surface rounded-lg border bg-secondary/15 p-2">
                   <ResponsiveGridLayout
+                    key={selected.id}
                     className="layout"
                     layouts={{ lg: localLayouts }}
                     breakpoints={{ lg: 1200, md: 996, sm: 768, xs: 480, xxs: 0 }}
@@ -650,7 +651,7 @@ function DashboardWidgetCard({ widget, projectId, range, editing, onEdit, onCopy
         {editing ? <div className="flex shrink-0 items-center gap-0.5"><button className="dashboard-drag-handle cursor-grab rounded p-1.5 text-muted-foreground hover:bg-muted" title="拖动组件"><GripVertical className="h-4 w-4" /></button><Button size="icon" variant="ghost" className="h-7 w-7" onClick={onEdit} title="编辑"><Pencil className="h-3.5 w-3.5" /></Button><Button size="icon" variant="ghost" className="h-7 w-7" onClick={onCopy} title="复制"><Copy className="h-3.5 w-3.5" /></Button><Button size="icon" variant="ghost" className="h-7 w-7 text-destructive" onClick={onDelete} title="删除"><Trash2 className="h-3.5 w-3.5" /></Button></div> : null}
       </CardHeader>
       <CardContent className="min-h-0 flex-1 overflow-auto p-3">
-        {result.isLoading ? <div className="flex h-full min-h-24 items-center justify-center text-sm text-muted-foreground">加载中…</div> : result.error ? <div className="flex h-full min-h-24 items-center justify-center text-sm text-destructive">{String(result.error)}</div> : result.data ? <WidgetVisualization widget={widget} result={result.data} /> : <EmptyAnalysis className="min-h-24" title="暂无数据" />}
+        {result.isLoading ? <div className="flex h-full min-h-24 items-center justify-center text-sm text-muted-foreground">加载中…</div> : result.error ? <div className="flex h-full min-h-24 items-center justify-center text-sm text-destructive">{String(result.error)}</div> : result.data ? <WidgetVisualization widget={widget} result={result.data} /> : <EmptyAnalysis className="mt-2 min-h-24" title="暂无数据" />}
       </CardContent>
     </Card>
   );
@@ -658,12 +659,12 @@ function DashboardWidgetCard({ widget, projectId, range, editing, onEdit, onCopy
 
 function WidgetVisualization({ widget, result }: { widget: DashboardWidget; result: WidgetResult }) {
   if (result.kind === "funnel") {
-    if (!result.steps.length) return <EmptyAnalysis className="min-h-24" title="漏斗暂无数据" />;
+    if (!result.steps.length) return <EmptyAnalysis className="mt-2 min-h-24" title="漏斗暂无数据" />;
     const option = { tooltip: { trigger: "item", formatter: "{b}: {c} 人" }, series: [{ type: "funnel", left: "8%", right: "8%", top: 12, bottom: 12, minSize: "10%", label: { show: true, position: "inside", formatter: "{b}", color: "#fff" }, data: result.steps.map((step) => ({ name: `${step.event} ${(step.conversion * 100).toFixed(1)}%`, value: step.users })) }] };
     return <ReactECharts option={option} style={{ height: "100%", minHeight: 220 }} />;
   }
 
-  if (!result.rows.length) return <EmptyAnalysis className="min-h-24" title="当前范围暂无数据" />;
+  if (!result.rows.length) return <EmptyAnalysis className="mt-2 min-h-24" title="当前范围暂无数据" />;
   if (widget.widget_type === "metric") {
     const metric = metricDisplay(widget, result);
     return <div className="flex h-full min-h-24 flex-col items-center justify-center"><div className="text-3xl font-semibold tabular-nums">{metric.value.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div><div className="mt-2 text-xs text-muted-foreground">{metric.label}</div></div>;
