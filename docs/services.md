@@ -37,6 +37,10 @@ Prometheus ◄── API / Collector / Consumer / Node Exporter ──► Grafan
 
 神策消费者不会消费自研 SDK 的 `events.raw`；路由依据神策 `project_id` 与已启用的 `sensors_integrations` 映射。解析或写入失败进入 DLQ，成功写入后才提交 Kafka offset。
 
+神策订阅应用保留 `details` Topic，但当前未产生消息，因此未启动 `details` 消费者。事件数据由
+`sensors-consumer` 接收，用户属性由 `sensors-profile-consumer` 接收；仅在 `details` Topic 首次出现
+实际消息并确认业务语义后，才增加独立映射和幂等规则。
+
 控制台“数据健康”每 30 秒汇总神策接入状态：项目级订阅应用、订阅方、最后入库时间与项目 DLQ；共享链路级事件/用户属性 Topic、消费者组、各消费者运行状态、lag 与全局 DLQ。
 
 对账异常仅在完整覆盖且绝对差值、比例同时达到 `AEROLOG_SENSORS_RECONCILIATION_ALERT_MIN_COUNT`、`AEROLOG_SENSORS_RECONCILIATION_ALERT_MIN_RATE` 时创建告警；相同项目、日期、异常类型按 `AEROLOG_SENSORS_RECONCILIATION_ALERT_SILENCE_MINUTES` 静默。控制台可确认或关闭告警，并保存处理人、时间与关闭备注。
