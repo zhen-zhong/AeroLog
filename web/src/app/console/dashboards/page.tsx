@@ -255,6 +255,7 @@ export default function DashboardsPage() {
   const [widgetType, setWidgetType] = useState<DashboardWidgetType>("line");
   const [widgetMetric, setWidgetMetric] = useState("count");
   const [localLayouts, setLocalLayouts] = useState<Layout[]>([]);
+  const [layoutDashboardId, setLayoutDashboardId] = useState<number>();
 
   const dashboards = useQuery({
     queryKey: ["dashboards", projectId],
@@ -278,8 +279,18 @@ export default function DashboardsPage() {
   });
 
   const dashboardRows = dashboards.data?.data || [];
-  const selected = dashboard.data?.data;
+  const loadedDashboard = dashboard.data?.data;
+  const selected = loadedDashboard?.id === selectedId ? loadedDashboard : undefined;
   const widgets = selected?.widgets || [];
+  const dashboardLayouts = useMemo(
+    () => widgets.map((widget, index) => ({ i: String(widget.id), ...widgetLayout(widget, index) })),
+    [selected?.id, dashboard.dataUpdatedAt],
+  );
+  const activeLayouts = layoutDashboardId === selected?.id ? localLayouts : dashboardLayouts;
+  const layoutByWidgetId = useMemo(
+    () => new Map(activeLayouts.map((layout) => [layout.i, layout])),
+    [activeLayouts],
+  );
   const reportRows = useMemo<DashboardReportSource[]>(() => [
     ...coreReportTemplates().flatMap((item) => item.config ? [{
       key: `core:${item.id}`,
@@ -319,8 +330,10 @@ export default function DashboardsPage() {
   }, [dashboardRows, selectedId]);
 
   useEffect(() => {
-    setLocalLayouts(widgets.map((widget, index) => ({ i: String(widget.id), ...widgetLayout(widget, index) })));
-  }, [dashboard.dataUpdatedAt]);
+    if (!selected) return;
+    setLocalLayouts(dashboardLayouts);
+    setLayoutDashboardId(selected.id);
+  }, [selected, dashboardLayouts]);
 
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ["dashboards", projectId] });
@@ -461,7 +474,7 @@ export default function DashboardsPage() {
           <CardHeader className="pb-3"><CardTitle className="text-sm">我的看板</CardTitle></CardHeader>
           <CardContent className="space-y-1 px-2 pb-3">
             {dashboardRows.length ? dashboardRows.map((item) => (
-              <button key={item.id} type="button" onClick={() => setSelectedId(item.id)} className={`flex w-full items-center justify-between gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors ${selectedId === item.id ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}>
+              <button key={item.id} type="button" onClick={() => { setEditing(false); setSelectedId(item.id); }} className={`flex w-full items-center justify-between gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors ${selectedId === item.id ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}>
                 <span className="min-w-0 flex-1 truncate">{item.name}</span>
                 <span className="text-xs">{item.widget_count}</span>
               </button>
@@ -498,7 +511,7 @@ export default function DashboardsPage() {
                   <ResponsiveGridLayout
                     key={selected.id}
                     className="layout"
-                    layouts={{ lg: localLayouts }}
+                    layouts={{ lg: activeLayouts }}
                     breakpoints={{ lg: 1200, md: 996, sm: 768, xs: 480, xxs: 0 }}
                     cols={{ lg: 24, md: 12, sm: 8, xs: 4, xxs: 2 }}
                     rowHeight={44}
@@ -507,12 +520,15 @@ export default function DashboardsPage() {
                     isDraggable={editing}
                     isResizable={editing}
                     draggableHandle=".dashboard-drag-handle"
-                    onLayoutChange={(layout) => setLocalLayouts(layout)}
+                    onLayoutChange={(layout) => {
+                      setLocalLayouts(layout);
+                      setLayoutDashboardId(selected.id);
+                    }}
                     onDragStop={(layout) => saveLayouts.mutate(layout)}
                     onResizeStop={(layout) => saveLayouts.mutate(layout)}
                   >
-                    {widgets.map((widget) => (
-                      <div key={String(widget.id)}>
+                    {widgets.map((widget, index) => (
+                      <div key={String(widget.id)} data-grid={layoutByWidgetId.get(String(widget.id)) || { i: String(widget.id), ...widgetLayout(widget, index) }}>
                         <DashboardWidgetCard
                           widget={widget}
                           projectId={projectId!}
