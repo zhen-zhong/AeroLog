@@ -543,7 +543,7 @@ export default function DashboardsPage() {
                   </ResponsiveGridLayout>
                 </div>
               ) : (
-                <Card><CardContent className="p-4"><EmptyAnalysis className="min-h-[420px]" title="看板暂无组件" description="进入编辑模式，从已保存报表添加图表，或创建漏斗组件。" /><div className="mt-4 flex justify-center"><Button onClick={() => { setEditing(true); setAddMode("report"); setNewWidgetType("line"); setNewMetric("count"); setAddOpen(true); }}><Plus className="h-4 w-4" />添加第一个组件</Button></div></CardContent></Card>
+                <Card><CardContent className="p-4 pt-4 sm:p-4 sm:pt-4"><EmptyAnalysis className="min-h-[420px]" title="看板暂无组件" description="进入编辑模式，从已保存报表添加图表，或创建漏斗组件。" /><div className="mt-4 flex justify-center"><Button onClick={() => { setEditing(true); setAddMode("report"); setNewWidgetType("line"); setNewMetric("count"); setAddOpen(true); }}><Plus className="h-4 w-4" />添加第一个组件</Button></div></CardContent></Card>
               )}
               {saveLayouts.isPending ? <div className="mt-2 text-right text-xs text-muted-foreground"><Save className="mr-1 inline h-3.5 w-3.5" />正在保存布局…</div> : null}
             </>
