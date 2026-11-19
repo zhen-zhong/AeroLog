@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import dayjs, { Dayjs } from "dayjs";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -677,7 +677,7 @@ function WidgetVisualization({ widget, result }: { widget: DashboardWidget; resu
   if (result.kind === "funnel") {
     if (!result.steps.length) return <EmptyAnalysis className="mt-2 min-h-24" title="漏斗暂无数据" />;
     const option = { tooltip: { trigger: "item", formatter: "{b}: {c} 人" }, series: [{ type: "funnel", left: "8%", right: "8%", top: 12, bottom: 12, minSize: "10%", label: { show: true, position: "inside", formatter: "{b}", color: "#fff" }, data: result.steps.map((step) => ({ name: `${step.event} ${(step.conversion * 100).toFixed(1)}%`, value: step.users })) }] };
-    return <ReactECharts option={option} style={{ height: "100%", minHeight: 220 }} />;
+    return <DashboardChart option={option} />;
   }
 
   if (!result.rows.length) return <EmptyAnalysis className="mt-2 min-h-24" title="当前范围暂无数据" />;
@@ -690,7 +690,43 @@ function WidgetVisualization({ widget, result }: { widget: DashboardWidget; resu
   const labels = result.kind === "cohort" ? result.rows.map((row) => row.cohort) : result.rows.map((row) => row.dimensions[0]?.label || "-");
   const series = result.kind === "cohort" ? cohortSeries(result.rows, result.config, widget.widget_type) : standardSeries(result.rows, result.config, widget.widget_type);
   const option = { tooltip: { trigger: "axis" }, legend: { bottom: 0, type: "scroll" }, grid: { left: 48, right: 20, top: 24, bottom: 48 }, xAxis: { type: "category", data: labels }, yAxis: { type: "value" }, series };
-  return <ReactECharts option={option} style={{ height: "100%", minHeight: 220 }} />;
+  return <DashboardChart option={option} />;
+}
+
+function DashboardChart({ option }: { option: Record<string, unknown> }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const chartRef = useRef<{ resize: () => void } | null>(null);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    let frame = 0;
+    const resize = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => chartRef.current?.resize());
+    };
+    const observer = new ResizeObserver(resize);
+    observer.observe(container);
+    frame = requestAnimationFrame(() => {
+      frame = requestAnimationFrame(() => chartRef.current?.resize());
+    });
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
+  }, []);
+
+  return (
+    <div ref={containerRef} className="h-full min-h-[220px] w-full">
+      <ReactECharts
+        option={option}
+        onChartReady={(instance) => {
+          chartRef.current = instance;
+        }}
+        style={{ height: "100%", minHeight: 220, width: "100%" }}
+      />
+    </div>
+  );
 }
 
 function standardSeries(rows: QueryTableRow[], config: ReportConfig, type: DashboardWidgetType) {
