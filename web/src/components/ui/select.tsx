@@ -45,7 +45,7 @@ const SelectContent = React.forwardRef<
       let matches = 0;
 
       items.forEach((item) => {
-        const text = item.textContent?.trim().toLocaleLowerCase() || "";
+        const text = `${item.textContent || ""} ${item.dataset.searchText || ""}`.trim().toLocaleLowerCase();
         const visible = !normalizedQuery || fuzzyMatch(text, normalizedQuery);
         item.hidden = !visible;
         // SelectItem 自带 display:flex；作者样式会覆盖浏览器对 hidden
@@ -120,12 +120,17 @@ function fuzzyMatch(text: string, query: string) {
   return true;
 }
 
+type SelectItemProps = React.ComponentPropsWithoutRef<typeof SelectPrimitive.Item> & {
+  searchText?: string;
+};
+
 const SelectItem = React.forwardRef<
   React.ElementRef<typeof SelectPrimitive.Item>,
-  React.ComponentPropsWithoutRef<typeof SelectPrimitive.Item>
->(({ className, children, ...props }, ref) => (
+  SelectItemProps
+>(({ className, children, searchText, ...props }, ref) => (
   <SelectPrimitive.Item
     ref={ref}
+    data-search-text={`${searchText || ""} ${String(props.value)}`.trim()}
     className={cn(
       "relative flex min-w-full w-max cursor-default select-none items-center whitespace-nowrap rounded-sm py-1.5 pl-8 pr-2 text-sm outline-none focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
       className,

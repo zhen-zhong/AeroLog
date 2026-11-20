@@ -272,6 +272,8 @@ export interface PropertyDefinition {
     hidden: boolean;
     first_seen?: string;
     last_seen?: string;
+    observed: boolean;
+    observed_events: string[];
 }
 export interface PropertyChangeLogEntry {
     id: number;
@@ -953,6 +955,7 @@ export const api = {
             include_global?: boolean;
             include_archived?: boolean;
             include_hidden?: boolean;
+            include_unobserved?: boolean;
         },
     ) => {
         const q = new URLSearchParams();
@@ -961,6 +964,7 @@ export const api = {
         if (params?.include_global) q.set("include_global", "1");
         if (params?.include_archived) q.set("include_archived", "1");
         if (params?.include_hidden) q.set("include_hidden", "1");
+        if (params?.include_unobserved) q.set("include_unobserved", "1");
         return req<ApiList<PropertyDefinition>>(`/projects/${id}/properties?${q}`);
     },
     updatePropertySchema: (

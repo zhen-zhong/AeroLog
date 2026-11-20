@@ -26,3 +26,12 @@ func TestOptionalPositiveInt64(t *testing.T) {
 		})
 	}
 }
+
+func TestContainsString(t *testing.T) {
+	if !containsString([]string{"$AppStart", "$AppViewScreen"}, "$AppViewScreen") {
+		t.Fatal("应找到事件")
+	}
+	if containsString([]string{"$AppStart"}, "AppCrashed") {
+		t.Fatal("不应找到不存在事件")
+	}
+}

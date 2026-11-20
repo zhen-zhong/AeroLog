@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -9,7 +10,9 @@ import (
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/aerolog/server/pkg/sensorspreset"
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -40,36 +43,49 @@ func (h *GovernanceHandler) properties(c *gin.Context) {
 		return
 	}
 	event := c.Query("event")
+	if event != "" {
+		if err := h.ensureEventPropertyRelations(c.Request.Context(), id, event); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"err": "同步历史事件参数失败: " + err.Error()})
+			return
+		}
+	}
 	includeGlobal := c.Query("include_global") == "1" || c.Query("include_global") == "true"
 	includeArchived := c.Query("include_archived") == "1" || c.Query("include_archived") == "true"
 	includeHidden := c.Query("include_hidden") == "1" || c.Query("include_hidden") == "true"
+	includeUnobserved := c.Query("include_unobserved") == "1" || c.Query("include_unobserved") == "true"
 
 	q := `SELECT id, name, COALESCE(display_name,''), data_type, scope, COALESCE(event,''), COALESCE(description,''),
 	            schema_required, schema_locked, enum_values, status, COALESCE(owner,''),
-	            COALESCE(archived,false), COALESCE(hidden,false), first_seen, last_seen
-	      FROM property_definitions
-	      WHERE project_id=$1`
+	            COALESCE(archived,false), COALESCE(hidden,false), first_seen, last_seen,
+	            ARRAY(SELECT epr.event FROM event_property_relations epr
+	                  WHERE epr.project_id=pd.project_id AND epr.property=pd.name
+	                  ORDER BY epr.event)
+	      FROM property_definitions pd
+	      WHERE pd.project_id=$1`
 	args := []any{id}
 	if scope != "" {
 		args = append(args, scope)
-		q += ` AND scope=$` + strconv.Itoa(len(args))
+		q += ` AND pd.scope=$` + strconv.Itoa(len(args))
 	}
 	if event != "" {
+		args = append(args, event)
+		eventArg := `$` + strconv.Itoa(len(args))
+		eventFilter := `pd.event=` + eventArg + ` OR (pd.event='' AND EXISTS (
+			SELECT 1 FROM event_property_relations epr
+			WHERE epr.project_id=pd.project_id AND epr.event=` + eventArg + ` AND epr.property=pd.name
+		))`
 		if includeGlobal {
-			args = append(args, event)
-			q += ` AND (event='' OR event=$` + strconv.Itoa(len(args)) + `)`
-		} else {
-			args = append(args, event)
-			q += ` AND event=$` + strconv.Itoa(len(args))
+			eventFilter += ` OR (pd.event='' AND (pd.schema_required OR pd.schema_locked))`
 		}
+		q += ` AND (` + eventFilter + `)`
 	}
 	if !includeArchived {
-		q += ` AND COALESCE(archived,false)=false`
+		q += ` AND COALESCE(pd.archived,false)=false`
 	}
 	if !includeHidden {
-		q += ` AND COALESCE(hidden,false)=false`
+		q += ` AND COALESCE(pd.hidden,false)=false`
 	}
-	q += ` ORDER BY scope, event, last_seen DESC NULLS LAST, id DESC LIMIT 1000`
+	q += ` ORDER BY pd.scope, pd.event, pd.last_seen DESC NULLS LAST, pd.id DESC LIMIT 1000`
 
 	rows, err := h.PG.Query(c, q, args...)
 	if err != nil {
@@ -79,15 +95,118 @@ func (h *GovernanceHandler) properties(c *gin.Context) {
 	defer rows.Close()
 
 	out := []PropertyDef{}
+	observedNames := map[string]struct{}{}
 	for rows.Next() {
 		var p PropertyDef
 		var rawEnum []byte
-		if err := rows.Scan(&p.ID, &p.Name, &p.DisplayName, &p.DataType, &p.Scope, &p.Event, &p.Description, &p.SchemaRequired, &p.SchemaLocked, &rawEnum, &p.Status, &p.Owner, &p.Archived, &p.Hidden, &p.FirstSeen, &p.LastSeen); err == nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.DisplayName, &p.DataType, &p.Scope, &p.Event, &p.Description, &p.SchemaRequired, &p.SchemaLocked, &rawEnum, &p.Status, &p.Owner, &p.Archived, &p.Hidden, &p.FirstSeen, &p.LastSeen, &p.ObservedEvents); err == nil {
+			if p.DisplayName == "" {
+				p.DisplayName = sensorspreset.PropertyDisplayName(p.Name)
+			}
 			p.EnumValues = parseStringList(rawEnum)
+			p.Observed = event == "" || containsString(p.ObservedEvents, event)
+			observedNames[p.Name] = struct{}{}
 			out = append(out, p)
 		}
 	}
+	if includeUnobserved && scope == "event" && event != "" {
+		for _, preset := range sensorspreset.PropertiesForEvent(event) {
+			if _, ok := observedNames[preset.Name]; ok {
+				continue
+			}
+			out = append(out, PropertyDef{
+				Name: preset.Name, DisplayName: preset.DisplayName, DataType: preset.DataType,
+				Scope: "event", Event: event, Status: 0, Observed: false, EnumValues: []string{}, ObservedEvents: []string{},
+			})
+		}
+	}
 	c.JSON(http.StatusOK, gin.H{"data": out})
+}
+
+func containsString(items []string, target string) bool {
+	for _, item := range items {
+		if item == target {
+			return true
+		}
+	}
+	return false
+}
+
+// ensureEventPropertyRelations 为升级前的 ClickHouse 历史事件延迟建立参数关联。
+// 新事件由 consumer 实时写入；每个历史事件只执行一次全量回填并记录完成标记。
+func (h *GovernanceHandler) ensureEventPropertyRelations(ctx context.Context, projectIDRaw, event string) error {
+	if h == nil || h.PG == nil || h.CH == nil || event == "" {
+		return nil
+	}
+	projectID, err := strconv.ParseUint(projectIDRaw, 10, 64)
+	if err != nil || projectID == 0 {
+		return nil
+	}
+	var backfilled bool
+	if err := h.PG.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM event_property_relation_backfills WHERE project_id=$1 AND event=$2)`, projectID, event).Scan(&backfilled); err != nil {
+		return err
+	}
+	if backfilled {
+		return nil
+	}
+
+	rows, err := h.CH.Query(ctx, `
+		SELECT property, min(time), max(time)
+		FROM (
+			SELECT time, arrayJoin(JSONExtractKeys(properties)) AS property
+			FROM events
+			WHERE project_id = ? AND event = ?
+		)
+		WHERE property != ''
+		GROUP BY property
+		LIMIT 1000
+	`, projectID, event)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	type relation struct {
+		property string
+		first    time.Time
+		last     time.Time
+	}
+	relations := []relation{}
+	for rows.Next() {
+		var item relation
+		if err := rows.Scan(&item.property, &item.first, &item.last); err != nil {
+			return err
+		}
+		relations = append(relations, item)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	var batch pgx.Batch
+	for _, item := range relations {
+		batch.Queue(`
+			INSERT INTO event_property_relations(project_id,event,property,data_type,first_seen,last_seen)
+			VALUES($1,$2,$3,'unknown',$4,$5)
+			ON CONFLICT (project_id,event,property) DO UPDATE SET
+				first_seen=COALESCE(LEAST(event_property_relations.first_seen,EXCLUDED.first_seen),EXCLUDED.first_seen),
+				last_seen=GREATEST(COALESCE(event_property_relations.last_seen,EXCLUDED.last_seen),EXCLUDED.last_seen),
+				updated_at=now()
+		`, projectID, event, item.property, item.first, item.last)
+	}
+	batch.Queue(`
+		INSERT INTO event_property_relation_backfills(project_id,event,completed_at)
+		VALUES($1,$2,now())
+		ON CONFLICT (project_id,event) DO UPDATE SET completed_at=EXCLUDED.completed_at
+	`, projectID, event)
+	results := h.PG.SendBatch(ctx, &batch)
+	defer results.Close()
+	for range len(relations) + 1 {
+		if _, err := results.Exec(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // PropertyDef 是属性定义的对外结构。
@@ -108,6 +227,8 @@ type PropertyDef struct {
 	Hidden         bool       `json:"hidden"`
 	FirstSeen      *time.Time `json:"first_seen,omitempty"`
 	LastSeen       *time.Time `json:"last_seen,omitempty"`
+	Observed       bool       `json:"observed"`
+	ObservedEvents []string   `json:"observed_events"`
 }
 
 func (h *GovernanceHandler) updatePropertySchema(c *gin.Context) {

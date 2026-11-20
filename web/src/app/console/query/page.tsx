@@ -146,6 +146,7 @@ export default function QueryBuilderPage() {
     const names = allEvents.data?.data.map((item) => item.name) || [];
     return names.length ? names : eventRows.map((item) => item.event);
   }, [allEvents.data, eventRows]);
+  const eventLabels = useMemo(() => Object.fromEntries((allEvents.data?.data || []).map((item) => [item.name, item.display_name])), [allEvents.data]);
   const propertyRows = props.data?.data || [];
   const dimensionOptions = useMemo(() => [
     { value: "time:day", label: "按天", dimension: { type: "time", key: "day" } as QueryDimension },
@@ -334,7 +335,7 @@ export default function QueryBuilderPage() {
                   <div className="text-sm font-medium">事件集合</div>
                   <Badge variant="secondary" className="shrink-0">{selectedEventLabel}</Badge>
                 </div>
-                <EventCollectionPicker events={eventOptions} value={events} onChange={setEvents} />
+                <EventCollectionPicker events={eventOptions} labels={eventLabels} value={events} onChange={setEvents} />
               </div>
             </CardContent>
           </Card>

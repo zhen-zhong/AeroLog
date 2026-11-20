@@ -229,6 +229,27 @@ ALTER TABLE property_definitions ADD COLUMN IF NOT EXISTS owner VARCHAR(128) NOT
 ALTER TABLE property_definitions ADD COLUMN IF NOT EXISTS archived BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE property_definitions ADD COLUMN IF NOT EXISTS hidden BOOLEAN NOT NULL DEFAULT false;
 
+-- 事件与实际出现属性的关联。用于只展示当前事件真正上报过的参数。
+CREATE TABLE IF NOT EXISTS event_property_relations (
+    project_id   BIGINT       NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    event        VARCHAR(128) NOT NULL,
+    property     VARCHAR(128) NOT NULL,
+    data_type    VARCHAR(32)  NOT NULL DEFAULT 'unknown',
+    first_seen   TIMESTAMPTZ,
+    last_seen    TIMESTAMPTZ,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (project_id, event, property)
+);
+CREATE INDEX IF NOT EXISTS idx_event_property_relations_lookup
+    ON event_property_relations(project_id, event, last_seen DESC);
+CREATE TABLE IF NOT EXISTS event_property_relation_backfills (
+    project_id   BIGINT       NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    event        VARCHAR(128) NOT NULL,
+    completed_at TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    PRIMARY KEY (project_id, event)
+);
+
 -- 属性变更审计
 CREATE TABLE IF NOT EXISTS property_change_log (
     id            BIGSERIAL PRIMARY KEY,

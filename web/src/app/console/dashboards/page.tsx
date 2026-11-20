@@ -353,6 +353,7 @@ export default function DashboardsPage() {
       })),
   ], [reports.data]);
   const eventNames = events.data?.data.map((item) => item.name) || [];
+  const eventLabels = Object.fromEntries((events.data?.data || []).map((item) => [item.name, item.display_name]));
   const selectedTemplate = reportRows.find((item) => item.key === templateId);
   const selectedTemplateConfig = selectedTemplate?.config;
 
@@ -732,7 +733,7 @@ export default function DashboardsPage() {
             </div>
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
               <div className="grid gap-1.5 md:col-span-2"><Label>规则名称</Label><Input value={ruleName} onChange={(event) => setRuleName(event.target.value)} placeholder="例如 ad_show 一小时低于 100" /></div>
-              <div className="grid gap-1.5"><Label>事件</Label><Select value={ruleEvent} onValueChange={setRuleEvent}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="__all__">全部事件</SelectItem>{eventNames.map((event) => <SelectItem key={event} value={event}>{event}</SelectItem>)}</SelectContent></Select></div>
+              <div className="grid gap-1.5"><Label>事件</Label><Select value={ruleEvent} onValueChange={setRuleEvent}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="__all__">全部事件</SelectItem>{eventNames.map((event) => <SelectItem key={event} value={event} searchText={eventLabels[event]}>{eventLabels[event] ? `${eventLabels[event]}（${event}）` : event}</SelectItem>)}</SelectContent></Select></div>
               <div className="grid gap-1.5"><Label>指标</Label><Select value={ruleMetric} onValueChange={(value) => setRuleMetric(value as DashboardAlertRule["metric"])}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="event_count">事件次数</SelectItem><SelectItem value="unique_users">去重用户数</SelectItem></SelectContent></Select></div>
               <div className="grid gap-1.5"><Label>条件</Label><Select value={ruleOperator} onValueChange={(value) => setRuleOperator(value as DashboardAlertRule["operator"])}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="lt">小于</SelectItem><SelectItem value="lte">小于等于</SelectItem><SelectItem value="gt">大于</SelectItem><SelectItem value="gte">大于等于</SelectItem></SelectContent></Select></div>
               <div className="grid gap-1.5"><Label>阈值</Label><Input type="number" min="0" value={ruleThreshold} onChange={(event) => setRuleThreshold(event.target.value)} /></div>
@@ -787,7 +788,7 @@ export default function DashboardsPage() {
           ) : (
             <div className="grid gap-3">
               <div className="grid gap-1.5"><Label>组件名称</Label><Input value={newWidgetTitle} onChange={(event) => setNewWidgetTitle(event.target.value)} placeholder="转化漏斗" /></div>
-              <div><div className="mb-1.5 text-sm font-medium">漏斗步骤（按选择顺序）</div><EventCollectionPicker events={eventNames} value={funnelEvents} onChange={setFunnelEvents} emptyLabel="至少选择两个事件" max={8} /></div>
+              <div><div className="mb-1.5 text-sm font-medium">漏斗步骤（按选择顺序）</div><EventCollectionPicker events={eventNames} labels={eventLabels} value={funnelEvents} onChange={setFunnelEvents} emptyLabel="至少选择两个事件" max={8} /></div>
             </div>
           )}
           {createWidget.error ? <Badge variant="danger">{String(createWidget.error)}</Badge> : null}

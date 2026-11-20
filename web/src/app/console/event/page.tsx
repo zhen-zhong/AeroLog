@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import dynamic from "next/dynamic";
 import dayjs, { Dayjs } from "dayjs";
 import { Plus, Trash2 } from "lucide-react";
@@ -95,6 +95,17 @@ export default function EventAnalysisPage() {
     queryKey: ["event_properties_for_analysis", projectId],
     queryFn: () => api.listProperties(projectId!, { scope: "event" }),
     enabled: !!projectId,
+  });
+  const parameterEvents = useMemo(
+    () => Array.from(new Set(metrics.map((metric) => metric.event).filter(Boolean))),
+    [metrics],
+  );
+  const eventPropertyQueries = useQueries({
+    queries: parameterEvents.map((event) => ({
+      queryKey: ["observed_event_properties_for_analysis", projectId, event],
+      queryFn: () => api.listProperties(projectId!, { scope: "event", event, include_global: true, include_unobserved: true }),
+      enabled: !!projectId,
+    })),
   });
   const numericProperties = useMemo(
     () => (properties.data?.data || []).filter((property) => /number|int|float|double|decimal/i.test(property.data_type)),
@@ -200,18 +211,14 @@ export default function EventAnalysisPage() {
   };
   const selectedEvents = new Set(activeMetrics.map((metric) => metric.event));
   const selectedSegment = (segments.data?.data || []).find((segment) => segment.id === segmentId);
-  const parameterEvents = useMemo(
-    () => Array.from(new Set(metrics.map((metric) => metric.event).filter(Boolean))),
-    [metrics],
-  );
   const propertyTypes = useMemo(() => Array.from(new Set(propertyRows.map((property) => property.data_type))).sort(), [propertyRows]);
-  const filteredProperties = useMemo(() => {
+  const filterProperties = (rows: typeof propertyRows) => {
     const needle = propertySearch.trim().toLowerCase();
-    return propertyRows.filter((property) => {
+    return rows.filter((property) => {
       const name = `${property.name} ${property.display_name}`.toLowerCase();
       return (!needle || name.includes(needle)) && (propertyType === "all" || property.data_type === propertyType);
     });
-  }, [propertyRows, propertySearch, propertyType]);
+  };
 
   return (
     <div>
@@ -244,7 +251,7 @@ export default function EventAnalysisPage() {
                   <span className="text-xs font-medium text-muted-foreground">{String.fromCharCode(65 + index)} · 事件</span>
                   <Select value={metric.event} onValueChange={(event) => updateMetric(metric.id, { event })}>
                     <SelectTrigger><SelectValue placeholder="选择事件" /></SelectTrigger>
-                    <SelectContent>{allEvents.map((item) => <SelectItem key={item.id} value={item.name}>{item.display_name || item.name}</SelectItem>)}</SelectContent>
+                    <SelectContent>{allEvents.map((item) => <SelectItem key={item.id} value={item.name}>{item.display_name ? `${item.display_name}（${item.name}）` : item.name}</SelectItem>)}</SelectContent>
                   </Select>
                 </div>
                 <div className="grid gap-1.5">
@@ -259,7 +266,7 @@ export default function EventAnalysisPage() {
                     </SelectContent>
                   </Select>
                 </div>
-                {metric.kind === "sum" || metric.kind === "avg" ? <div className="grid gap-1.5"><span className="text-xs font-medium text-muted-foreground">数值事件属性</span><Select value={metric.property} onValueChange={(property) => updateMetric(metric.id, { property })}><SelectTrigger><SelectValue placeholder="选择数值属性" /></SelectTrigger><SelectContent>{numericProperties.map((property) => <SelectItem key={property.id} value={property.name}>{property.display_name || property.name}</SelectItem>)}</SelectContent></Select></div> : <div className="flex h-9 items-center rounded-md border border-dashed px-3 text-xs text-muted-foreground">{metricLabel[metric.kind]}</div>}
+                {metric.kind === "sum" || metric.kind === "avg" ? <div className="grid gap-1.5"><span className="text-xs font-medium text-muted-foreground">数值事件属性</span><Select value={metric.property} onValueChange={(property) => updateMetric(metric.id, { property })}><SelectTrigger><SelectValue placeholder="选择数值属性" /></SelectTrigger><SelectContent>{numericProperties.map((property) => <SelectItem key={property.id} value={property.name}>{property.display_name ? `${property.display_name}（${property.name}）` : property.name}</SelectItem>)}</SelectContent></Select></div> : <div className="flex h-9 items-center rounded-md border border-dashed px-3 text-xs text-muted-foreground">{metricLabel[metric.kind]}</div>}
                 <Button type="button" variant="ghost" size="icon" disabled={metrics.length <= 1} onClick={() => removeMetric(metric.id)} aria-label={`删除指标 ${index + 1}`}><Trash2 className="h-4 w-4" /></Button>
               </div>
             ))}
@@ -301,7 +308,7 @@ export default function EventAnalysisPage() {
                 <SelectContent><SelectItem value="all">全部类型</SelectItem>{propertyTypes.map((type) => <SelectItem key={type} value={type}>{type}</SelectItem>)}</SelectContent>
               </Select>
             </div>
-            {!parameterEvents.length ? <EmptyAnalysis className="min-h-40" title="暂无已选事件" description="先在「事件与指标」中选择事件。" /> : <div className="grid gap-3">{parameterEvents.map((event) => <div key={event} className="rounded-md border bg-background"><div className="border-b px-3 py-2"><div className="break-all text-sm font-medium">{event}</div><div className="mt-0.5 text-xs text-muted-foreground">{filteredProperties.length} 个匹配参数</div></div><div className="max-h-64 overflow-y-auto">{filteredProperties.map((property) => { const active = activeProperty?.event === event && activeProperty.property === property.name; return <div key={property.id} className="border-b last:border-b-0"><button type="button" onClick={() => setActiveProperty(active ? undefined : { event, property: property.name })} className={`flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm hover:bg-accent/60 ${active ? "bg-accent" : ""}`}><span className="min-w-0 break-all font-medium">{property.display_name || property.name}</span><Badge variant={/number|int|float|double|decimal/i.test(property.data_type) ? "info" : "secondary"}>{property.data_type}</Badge></button>{active ? <div className="border-t bg-card px-3 py-3"><div className="mb-2 text-xs font-medium text-muted-foreground">{property.name} · Top values</div>{propertyValues.isFetching ? <div className="text-sm text-muted-foreground">加载中…</div> : propertyValues.data?.data.length ? <div className="grid gap-2">{propertyValues.data.data.map((item) => <div key={item.raw} className="grid gap-1"><div className="flex items-center justify-between gap-3 text-xs"><span className="min-w-0 break-all font-medium">{item.label}</span><span className="shrink-0 font-mono text-muted-foreground">{item.count.toLocaleString()} 次</span></div><div className="h-1.5 overflow-hidden rounded-full bg-secondary"><div className="h-full rounded-full bg-primary" style={{ width: `${Math.max(4, item.share * 100)}%` }} /></div></div>)}</div> : <div className="text-sm text-muted-foreground">当前事件没有该参数值。</div>}</div> : null}</div>; })}{!properties.isLoading && !filteredProperties.length ? <div className="px-3 py-5 text-center text-sm text-muted-foreground">没有匹配参数。</div> : null}</div></div>)}</div>}
+            {!parameterEvents.length ? <EmptyAnalysis className="min-h-40" title="暂无已选事件" description="先在「事件与指标」中选择事件。" /> : <div className="grid gap-3">{parameterEvents.map((event, eventIndex) => { const eventProperties = filterProperties(eventPropertyQueries[eventIndex]?.data?.data || []); return <div key={event} className="rounded-md border bg-background"><div className="border-b px-3 py-2"><div className="break-all text-sm font-medium">{event}</div><div className="mt-0.5 text-xs text-muted-foreground">{eventProperties.filter((property) => property.observed).length} 个已上报参数</div></div><div className="max-h-64 overflow-y-auto">{eventProperties.map((property) => { const active = property.observed && activeProperty?.event === event && activeProperty.property === property.name; return <div key={`${property.name}:${property.observed}`} className="border-b last:border-b-0"><button type="button" disabled={!property.observed} onClick={() => setActiveProperty(active ? undefined : { event, property: property.name })} className={`flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm hover:bg-accent/60 disabled:cursor-not-allowed disabled:bg-muted/30 ${active ? "bg-accent" : ""}`}><span className="min-w-0"><span className="block break-all font-medium">{property.display_name || property.name}</span>{property.display_name ? <span className="block break-all text-xs text-muted-foreground">{property.name}</span> : null}</span>{property.observed ? <Badge variant={/number|int|float|double|decimal/i.test(property.data_type) ? "info" : "secondary"}>{property.data_type}</Badge> : <Badge variant="warning">源端未采集</Badge>}</button>{active ? <div className="border-t bg-card px-3 py-3"><div className="mb-2 text-xs font-medium text-muted-foreground">{property.name} · Top values</div>{propertyValues.isFetching ? <div className="text-sm text-muted-foreground">加载中…</div> : propertyValues.data?.data.length ? <div className="grid gap-2">{propertyValues.data.data.map((item) => <div key={item.raw} className="grid gap-1"><div className="flex items-center justify-between gap-3 text-xs"><span className="min-w-0 break-all font-medium">{item.label}</span><span className="shrink-0 font-mono text-muted-foreground">{item.count.toLocaleString()} 次</span></div><div className="h-1.5 overflow-hidden rounded-full bg-secondary"><div className="h-full rounded-full bg-primary" style={{ width: `${Math.max(4, item.share * 100)}%` }} /></div></div>)}</div> : <div className="text-sm text-muted-foreground">当前事件没有该参数值。</div>}</div> : null}</div>; })}{!eventPropertyQueries[eventIndex]?.isLoading && !eventProperties.length ? <div className="px-3 py-5 text-center text-sm text-muted-foreground">没有匹配参数。</div> : null}</div></div>; })}</div>}
           </div>
         </ChartPanel>
       </div>

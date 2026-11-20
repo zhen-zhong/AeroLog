@@ -113,8 +113,8 @@ export default function FunnelPage() {
   const propertyRows = properties?.data || [];
   const eventOptions = useMemo(() => {
     const definitions = eventDefinitions?.data || [];
-    const names = definitions.length ? definitions.map((item) => item.name) : top?.data?.map((item) => item.event) || [];
-    return names.map((event) => ({ event, count: 0, users: 0 }));
+    if (definitions.length) return definitions.map((item) => ({ event: item.name, label: item.display_name, count: 0, users: 0 }));
+    return (top?.data || []).map((item) => ({ event: item.event, count: 0, users: 0 }));
   }, [eventDefinitions?.data, top?.data]);
   const events = useMemo(() => steps.map((step) => step.event), [steps]);
 

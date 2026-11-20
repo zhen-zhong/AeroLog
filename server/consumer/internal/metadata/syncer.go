@@ -12,6 +12,7 @@ import (
 
 	"github.com/aerolog/server/pkg/model"
 	"github.com/aerolog/server/pkg/privacy"
+	"github.com/aerolog/server/pkg/sensorspreset"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -45,6 +46,7 @@ func (s *Syncer) Sync(ctx context.Context, events []*model.EnvelopedEvent) error
 
 	eventDefs := map[eventKey]seenAt{}
 	propDefs := map[propKey]seenProp{}
+	propRelations := map[propRelationKey]seenProp{}
 	identities := map[identityKey]seenAt{}
 
 	for _, env := range events {
@@ -61,6 +63,7 @@ func (s *Syncer) Sync(ctx context.Context, events []*model.EnvelopedEvent) error
 					continue
 				}
 				mergeProp(propDefs, propKey{projectID: env.ProjectID, name: name, scope: "event"}, inferType(value), at)
+				mergeRelation(propRelations, propRelationKey{projectID: env.ProjectID, event: e.Event, name: name}, inferType(value), at)
 			}
 		}
 
@@ -86,11 +89,15 @@ func (s *Syncer) Sync(ctx context.Context, events []*model.EnvelopedEvent) error
 	var batch pgx.Batch
 	queued := 0
 	for k, v := range eventDefs {
-		batch.Queue(upsertEventDefinitionSQL, int64(k.projectID), k.name, v.first, v.last)
+		batch.Queue(upsertEventDefinitionSQL, int64(k.projectID), k.name, sensorspreset.EventDisplayName(k.name), v.first, v.last)
 		queued++
 	}
 	for k, v := range propDefs {
 		batch.Queue(upsertPropertyDefinitionSQL, int64(k.projectID), k.name, propertyDisplayName(k.name), k.scope, v.dataType, v.first, v.last)
+		queued++
+	}
+	for k, v := range propRelations {
+		batch.Queue(upsertEventPropertyRelationSQL, int64(k.projectID), k.event, k.name, v.dataType, v.first, v.last)
 		queued++
 	}
 	for k, v := range identities {
@@ -112,6 +119,9 @@ func (s *Syncer) Sync(ctx context.Context, events []*model.EnvelopedEvent) error
 }
 
 func propertyDisplayName(name string) string {
+	if displayName := sensorspreset.PropertyDisplayName(name); displayName != "" {
+		return displayName
+	}
 	known := map[string]string{
 		"mmp_media_source":  "媒体来源",
 		"mmp_campaign_name": "广告活动",
@@ -134,6 +144,12 @@ type propKey struct {
 	projectID uint32
 	name      string
 	scope     string
+}
+
+type propRelationKey struct {
+	projectID uint32
+	event     string
+	name      string
 }
 
 type identityKey struct {
@@ -648,6 +664,22 @@ func mergeProp(m map[propKey]seenProp, k propKey, dataType string, at time.Time)
 	m[k] = cur
 }
 
+func mergeRelation(m map[propRelationKey]seenProp, k propRelationKey, dataType string, at time.Time) {
+	cur, ok := m[k]
+	if !ok {
+		m[k] = seenProp{first: at, last: at, dataType: dataType}
+		return
+	}
+	if at.Before(cur.first) {
+		cur.first = at
+	}
+	if at.After(cur.last) {
+		cur.last = at
+	}
+	cur.dataType = mergeType(cur.dataType, dataType)
+	m[k] = cur
+}
+
 func observedAt(env *model.EnvelopedEvent) time.Time {
 	if env.Event.Time > 0 {
 		return time.UnixMilli(env.Event.Time).UTC()
@@ -732,11 +764,27 @@ func mergeType(a, b string) string {
 }
 
 const upsertEventDefinitionSQL = `
-INSERT INTO event_definitions(project_id, name, first_seen, last_seen)
-VALUES($1, $2, $3, $4)
+INSERT INTO event_definitions(project_id, name, display_name, first_seen, last_seen)
+VALUES($1, $2, $3, $4, $5)
 ON CONFLICT (project_id, name) DO UPDATE SET
+	display_name = COALESCE(NULLIF(event_definitions.display_name, ''), NULLIF(EXCLUDED.display_name, '')),
 	first_seen = COALESCE(LEAST(event_definitions.first_seen, EXCLUDED.first_seen), EXCLUDED.first_seen),
 	last_seen = GREATEST(COALESCE(event_definitions.last_seen, EXCLUDED.last_seen), EXCLUDED.last_seen),
+	updated_at = now()
+`
+
+const upsertEventPropertyRelationSQL = `
+INSERT INTO event_property_relations(project_id, event, property, data_type, first_seen, last_seen)
+VALUES($1, $2, $3, $4, $5, $6)
+ON CONFLICT (project_id, event, property) DO UPDATE SET
+	data_type = CASE
+		WHEN event_property_relations.data_type = EXCLUDED.data_type THEN event_property_relations.data_type
+		WHEN event_property_relations.data_type = 'unknown' THEN EXCLUDED.data_type
+		WHEN EXCLUDED.data_type = 'unknown' THEN event_property_relations.data_type
+		ELSE 'mixed'
+	END,
+	first_seen = COALESCE(LEAST(event_property_relations.first_seen, EXCLUDED.first_seen), EXCLUDED.first_seen),
+	last_seen = GREATEST(COALESCE(event_property_relations.last_seen, EXCLUDED.last_seen), EXCLUDED.last_seen),
 	updated_at = now()
 `
 

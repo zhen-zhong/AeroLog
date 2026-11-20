@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aerolog/server/pkg/sensorspreset"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -557,6 +558,9 @@ func (h *EventDefHandler) list(c *gin.Context) {
 		var e EvDef
 		var rawProps []byte
 		if err := rows.Scan(&e.ID, &e.Name, &e.DisplayName, &e.Description, &rawProps, &e.SchemaLocked, &e.Status, &e.FirstSeen, &e.LastSeen); err == nil {
+			if e.DisplayName == "" {
+				e.DisplayName = sensorspreset.EventDisplayName(e.Name)
+			}
 			e.RequiredProps = parseStringList(rawProps)
 			out = append(out, e)
 		}

@@ -23,6 +23,7 @@ import { cn } from "@/lib/utils";
 
 export interface AnalyticsEvent {
   event: string;
+  label?: string;
   count: number;
   users: number;
 }
@@ -117,8 +118,8 @@ export function EventPicker({
       </SelectTrigger>
       <SelectContent>
         {events.map((item) => (
-          <SelectItem key={item.event} value={item.event}>
-            {item.event}
+          <SelectItem key={item.event} value={item.event} searchText={item.label}>
+            {item.label ? `${item.label}（${item.event}）` : item.event}
           </SelectItem>
         ))}
       </SelectContent>
@@ -128,6 +129,7 @@ export function EventPicker({
 
 export function EventCollectionPicker({
   events,
+  labels = {},
   value,
   onChange,
   placeholder = "添加事件",
@@ -135,6 +137,7 @@ export function EventCollectionPicker({
   max = 20,
 }: {
   events: string[];
+  labels?: Record<string, string>;
   value: string[];
   onChange: (value: string[]) => void;
   placeholder?: string;
@@ -147,7 +150,7 @@ export function EventCollectionPicker({
   const rootRef = useRef<HTMLDivElement>(null);
   const selected = Array.from(new Set(value));
   const unselected = options.filter((event) => !value.includes(event));
-  const visibleEvents = [...selected, ...unselected].filter((event) => fuzzyMatch(event, query));
+  const visibleEvents = [...selected, ...unselected].filter((event) => fuzzyMatch(`${event} ${labels[event] || ""}`, query));
 
   useEffect(() => {
     if (!open) return;
@@ -196,7 +199,7 @@ export function EventCollectionPicker({
                     onClick={() => toggleEvent(event)}
                   >
                     <Check className={cn("h-4 w-4 shrink-0", isSelected ? "opacity-100" : "opacity-0")} />
-                    <span className="min-w-0 flex-1 truncate" title={event}>{event}</span>
+                    <span className="min-w-0 flex-1 truncate" title={event}>{labels[event] ? `${labels[event]}（${event}）` : event}</span>
                     {isSelected ? <span className="text-xs text-muted-foreground">已选</span> : null}
                   </button>
                 );
@@ -211,7 +214,7 @@ export function EventCollectionPicker({
         <div className="flex min-w-0 flex-wrap gap-1.5 rounded-md border bg-background p-2">
           {value.map((event) => (
             <Button key={event} type="button" size="sm" variant="secondary" className="max-w-full" title={event} onClick={() => onChange(value.filter((item) => item !== event))}>
-              <span className="truncate">{event}</span><X className="h-3.5 w-3.5 shrink-0" />
+              <span className="truncate">{labels[event] || event}</span><X className="h-3.5 w-3.5 shrink-0" />
             </Button>
           ))}
         </div>
@@ -460,7 +463,8 @@ export function EventRankList({
                 {index + 1}
               </span>
               <span className="min-w-0">
-                <span className="block truncate font-medium">{item.event}</span>
+                <span className="block truncate font-medium">{item.label || item.event}</span>
+                {item.label ? <span className="block truncate text-xs text-muted-foreground">{item.event}</span> : null}
                 <span className="text-xs text-muted-foreground">{item.users.toLocaleString()} 用户</span>
               </span>
             </span>
@@ -518,7 +522,10 @@ export function EventStepSelector({
   return (
     <div className="grid min-w-0 gap-3">
       {value.map((step, index) => {
-        const availableProperties = properties.filter((property) => !property.event || property.event === step.event);
+        const availableProperties = properties.filter((property) => {
+          if (property.event) return property.event === step.event;
+          return !property.observed_events?.length || property.observed_events.includes(step.event);
+        });
         return (
           <div key={`${index}:${step.event}`} className="min-w-0 overflow-hidden rounded-lg border bg-background p-3 shadow-sm">
             <div className="flex min-w-0 flex-nowrap items-center gap-2">
@@ -527,7 +534,7 @@ export function EventStepSelector({
               </span>
               <Select value={step.event} onValueChange={(event) => updateStep(index, { event })}>
                 <SelectTrigger className="min-w-0 flex-1"><SelectValue placeholder="选择事件" /></SelectTrigger>
-                <SelectContent>{options.map((item) => <SelectItem key={item.event} value={item.event}>{item.event}</SelectItem>)}</SelectContent>
+                <SelectContent>{options.map((item) => <SelectItem key={item.event} value={item.event} searchText={item.label}>{item.label ? `${item.label}（${item.event}）` : item.event}</SelectItem>)}</SelectContent>
               </Select>
               <Button type="button" variant="outline" size="icon" title="前移" aria-label={`将步骤 ${index + 1} 前移`} disabled={index === 0} onClick={() => move(index, -1)}>
                 <ChevronLeft className="h-4 w-4" />
