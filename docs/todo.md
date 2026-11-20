@@ -69,10 +69,14 @@
 - [ ] 分享链接增加过期、撤销、访问日志与更细权限边界。
 - [ ] 导出文件增加本地 / MinIO / S3 适配、过期清理与下载鉴权。
 
+## 待处理：Singular 成本自动同步
+
+- [ ] 获取只读 Reporting API Key，确认各 AeroLog 项目对应的 Singular `app` 值后，按天同步 `adn_cost`；API Key 不进入代码、日志或聊天记录。
+
 ## P1：产品完善
 
 - [ ] SDK Debugger 全链路关联：`$insert_id`、设备、用户、session、Collector、Schema、Consumer、ClickHouse。
-- [ ] 数据生命周期：事件、原始消息、DLQ、调试数据、导出文件的保留策略与自动清理。
+- [x] 数据生命周期：事件、Kafka 原始消息、调试记录、错误/DLQ、Schema 问题、异步任务、过期会话与生产备份均有明确保留策略和自动清理；API 单实例调度并分批删除。
 - [ ] 指标看板保存、订阅与异常检测；支持项目级阈值配置。
 
 ## P2：分析深化
