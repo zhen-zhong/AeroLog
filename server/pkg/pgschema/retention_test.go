@@ -7,6 +7,7 @@ func TestRetentionPolicyNormalize(t *testing.T) {
 	want := RetentionPolicy{
 		DebugAcceptedDays: 7,
 		DebugErrorDays:    30,
+		DLQDays:           30,
 		SchemaIssueDays:   30,
 		AnalyticsJobDays:  7,
 		SessionGraceDays:  7,
@@ -20,6 +21,7 @@ func TestRetentionPolicyNormalizeKeepsPositiveValues(t *testing.T) {
 	want := RetentionPolicy{
 		DebugAcceptedDays: 2,
 		DebugErrorDays:    14,
+		DLQDays:           21,
 		SchemaIssueDays:   60,
 		AnalyticsJobDays:  3,
 		SessionGraceDays:  1,

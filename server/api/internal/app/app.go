@@ -89,6 +89,7 @@ func (a *App) Run(ctx context.Context) error {
 	pgschema.StartLifecycleLoop(ctx, a.pgPool, pgschema.RetentionPolicy{
 		DebugAcceptedDays: a.cfg.DebugAcceptedRetentionDays,
 		DebugErrorDays:    a.cfg.DebugErrorRetentionDays,
+		DLQDays:           a.cfg.DLQRetentionDays,
 		SchemaIssueDays:   a.cfg.SchemaIssueRetentionDays,
 		AnalyticsJobDays:  a.cfg.AnalyticsJobRetentionDays,
 		SessionGraceDays:  a.cfg.SessionRetentionGraceDays,

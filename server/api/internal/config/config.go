@@ -15,6 +15,7 @@ type Config struct {
 	AllowOrigins                             []string
 	DebugAcceptedRetentionDays               int
 	DebugErrorRetentionDays                  int
+	DLQRetentionDays                         int
 	SchemaIssueRetentionDays                 int
 	AnalyticsJobRetentionDays                int
 	SessionRetentionGraceDays                int
@@ -56,6 +57,7 @@ func FromEnv() *Config {
 		AllowOrigins:                             strings.Split(getEnv("AEROLOG_CORS", "*"), ","),
 		DebugAcceptedRetentionDays:               getEnvInt("AEROLOG_DEBUG_ACCEPTED_RETENTION_DAYS", getEnvInt("AEROLOG_DEBUG_RETENTION_DAYS", 7)),
 		DebugErrorRetentionDays:                  getEnvInt("AEROLOG_DEBUG_ERROR_RETENTION_DAYS", 30),
+		DLQRetentionDays:                         getEnvInt("AEROLOG_DLQ_RETENTION_DAYS", 30),
 		SchemaIssueRetentionDays:                 getEnvInt("AEROLOG_SCHEMA_ISSUE_RETENTION_DAYS", 30),
 		AnalyticsJobRetentionDays:                getEnvInt("AEROLOG_ANALYTICS_JOB_RETENTION_DAYS", 7),
 		SessionRetentionGraceDays:                getEnvInt("AEROLOG_SESSION_RETENTION_GRACE_DAYS", 7),

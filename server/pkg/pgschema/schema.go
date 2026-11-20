@@ -26,6 +26,7 @@ const lifecycleAdvisoryLock int64 = 0x4145524f4c4f47
 type RetentionPolicy struct {
 	DebugAcceptedDays int
 	DebugErrorDays    int
+	DLQDays           int
 	SchemaIssueDays   int
 	AnalyticsJobDays  int
 	SessionGraceDays  int
@@ -38,6 +39,9 @@ func (p RetentionPolicy) Normalize() RetentionPolicy {
 	}
 	if p.DebugErrorDays <= 0 {
 		p.DebugErrorDays = 30
+	}
+	if p.DLQDays <= 0 {
+		p.DLQDays = 30
 	}
 	if p.SchemaIssueDays <= 0 {
 		p.SchemaIssueDays = 30
@@ -94,6 +98,12 @@ DELETE FROM debug_events WHERE id IN (
 DELETE FROM debug_events WHERE id IN (
     SELECT id FROM debug_events
     WHERE result <> 'accepted' AND created_at < now() - make_interval(days => $1)
+    ORDER BY id LIMIT 5000
+)`},
+		{name: "event_dlq", days: policy.DLQDays, query: `
+DELETE FROM event_dlq WHERE id IN (
+    SELECT id FROM event_dlq
+    WHERE created_at < now() - make_interval(days => $1)
     ORDER BY id LIMIT 5000
 )`},
 		{name: "schema_issues", days: policy.SchemaIssueDays, query: `
@@ -408,6 +418,18 @@ BEGIN
             UNIQUE (project_id, name, scope, event);
     END IF;
 END$$;
+
+CREATE TABLE IF NOT EXISTS event_dlq (
+    id          BIGSERIAL PRIMARY KEY,
+    project_id  BIGINT,
+    payload     JSONB       NOT NULL,
+    reason      TEXT        NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_event_dlq_created
+    ON event_dlq(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_event_dlq_project_created
+    ON event_dlq(project_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS debug_events (
     id           BIGSERIAL PRIMARY KEY,

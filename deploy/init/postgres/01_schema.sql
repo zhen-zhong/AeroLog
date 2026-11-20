@@ -274,6 +274,10 @@ CREATE TABLE IF NOT EXISTS event_dlq (
     reason      TEXT      NOT NULL,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE INDEX IF NOT EXISTS idx_event_dlq_created
+    ON event_dlq(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_event_dlq_project_created
+    ON event_dlq(project_id, created_at DESC);
 
 -- SDK Debugger：保留最近消费到的 SDK 上报，用于排查 SDK 是否正常、属性是否符合 Schema。
 CREATE TABLE IF NOT EXISTS debug_events (
