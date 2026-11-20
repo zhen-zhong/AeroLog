@@ -112,6 +112,34 @@ type analyticsCohortFilter struct {
 	Value    string
 }
 
+type analyticsProfileFilter struct {
+	Property string
+	Value    string
+}
+
+// analyticsProfileMemberQuery 返回当前用户画像命中的用户集合。
+// Value 为空时只要求属性存在；非空时按 JSON 原始值精确匹配。
+func analyticsProfileMemberQuery(pid uint32, filter analyticsProfileFilter) (string, []any, error) {
+	filter.Property = strings.TrimSpace(filter.Property)
+	filter.Value = strings.TrimSpace(filter.Value)
+	if len(filter.Property) > 128 {
+		return "", nil, &queryTableError{Status: http.StatusBadRequest, Msg: "profile property length must be <= 128"}
+	}
+	if filter.Property == "" {
+		if filter.Value != "" {
+			return "", nil, &queryTableError{Status: http.StatusBadRequest, Msg: "profile_property required when profile_value is set"}
+		}
+		return "", nil, nil
+	}
+	query := `SELECT distinct_id FROM users FINAL WHERE project_id = ? AND JSONExtractRaw(properties, ?) != ''`
+	args := []any{pid, filter.Property}
+	if filter.Value != "" {
+		query += ` AND JSONExtractRaw(properties, ?) = ?`
+		args = append(args, filter.Property, rawJSONValue(filter.Value))
+	}
+	return query, args, nil
+}
+
 // normalizeBehaviorCohort 限定路径和 Session 的用户筛选条件。
 // 先按 cohort 选人，再读取完整事件序列，避免不含渠道属性的后续事件被错误排除。
 func normalizeBehaviorCohort(body *behaviorQueryBody) error {

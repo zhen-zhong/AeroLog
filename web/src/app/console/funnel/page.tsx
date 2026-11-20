@@ -35,7 +35,10 @@ export default function FunnelPage() {
   const [steps, setSteps] = useState<FunnelStepInput[]>([]);
   const [windowSeconds, setWindowSeconds] = useState<number>(24 * 3600);
   const [breakdownProperty, setBreakdownProperty] = useState("");
+  const [breakdownScope, setBreakdownScope] = useState<"event" | "user">("event");
   const [segmentId, setSegmentId] = useState<number | undefined>();
+  const [profileProperty, setProfileProperty] = useState("");
+  const [profileValue, setProfileValue] = useState("");
   const [cohortEvent, setCohortEvent] = useState("");
   const [cohortProperty, setCohortProperty] = useState("");
   const [cohortValue, setCohortValue] = useState("");
@@ -55,7 +58,10 @@ export default function FunnelPage() {
     setBreakdown([]);
     setBreakdownTruncated(false);
     setBreakdownProperty("");
+    setBreakdownScope("event");
     setSegmentId(undefined);
+    setProfileProperty("");
+    setProfileValue("");
     setCohortEvent("");
     setCohortProperty("");
     setCohortValue("");
@@ -89,6 +95,11 @@ export default function FunnelPage() {
     queryFn: () => api.listProperties(projectId!, { scope: "event" }),
     enabled: !!projectId,
   });
+  const { data: profileProperties } = useQuery({
+    queryKey: ["funnel_profile_properties", projectId],
+    queryFn: () => api.listProperties(projectId!, { scope: "user" }),
+    enabled: !!projectId,
+  });
   const { data: segments } = useQuery({
     queryKey: ["segments", projectId],
     queryFn: () => api.listSegments(projectId!),
@@ -116,10 +127,13 @@ export default function FunnelPage() {
         to: range[1].valueOf(),
         window_seconds: windowSeconds,
         breakdown_property: breakdownProperty || undefined,
+        breakdown_scope: breakdownProperty ? breakdownScope : undefined,
         segment_id: segmentId,
         cohort_event: cohortEvent || undefined,
         cohort_property: cohortProperty || undefined,
         cohort_value: cohortProperty && cohortValue ? cohortValue : undefined,
+        profile_property: profileProperty || undefined,
+        profile_value: profileProperty && profileValue ? profileValue : undefined,
       }),
     onSuccess: (res) => {
       setError("");
@@ -209,14 +223,25 @@ export default function FunnelPage() {
               <div className="grid gap-1.5">
                 <div className="text-sm font-medium">分组参数（可选）</div>
                 <Select
-                  value={breakdownProperty || NONE}
-                  onValueChange={(v) => setBreakdownProperty(v === NONE ? "" : v)}
+                  value={breakdownProperty ? `${breakdownScope}:${breakdownProperty}` : NONE}
+                  onValueChange={(value) => {
+                    if (value === NONE) {
+                      setBreakdownProperty("");
+                      return;
+                    }
+                    const separator = value.indexOf(":");
+                    setBreakdownScope(value.slice(0, separator) as "event" | "user");
+                    setBreakdownProperty(value.slice(separator + 1));
+                  }}
                 >
                   <SelectTrigger><SelectValue placeholder="不分组" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value={NONE}>不分组</SelectItem>
                     {propertyRows.map((p) => (
-                      <SelectItem key={p.id} value={p.name}>{p.name}</SelectItem>
+                      <SelectItem key={`event:${p.id}`} value={`event:${p.name}`}>事件属性 · {p.display_name || p.name}</SelectItem>
+                    ))}
+                    {(profileProperties?.data || []).map((p) => (
+                      <SelectItem key={`user:${p.id}`} value={`user:${p.name}`}>用户属性 · {p.display_name || p.name}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
@@ -229,6 +254,17 @@ export default function FunnelPage() {
                 </Select>
                 <p className="text-xs text-muted-foreground">仅圈选分群中的用户。</p>
               </div>
+              <div className="grid gap-1.5">
+                <Label>用户属性筛选（可选）</Label>
+                <Select value={profileProperty || NONE} onValueChange={(value) => { setProfileProperty(value === NONE ? "" : value); setProfileValue(""); }}>
+                  <SelectTrigger><SelectValue placeholder="不按用户属性筛选" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={NONE}>不按用户属性筛选</SelectItem>
+                    {(profileProperties?.data || []).map((property) => <SelectItem key={property.id} value={property.name}>{property.display_name || property.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              {profileProperty ? <div className="grid gap-1.5"><Label htmlFor="funnel-profile-value">用户属性值（可选）</Label><Input id="funnel-profile-value" value={profileValue} onChange={(event) => setProfileValue(event.target.value)} placeholder="留空表示属性存在" /></div> : null}
               <div className="grid gap-1.5">
                 <Label>筛选用户事件（可选）</Label>
                 <Select value={cohortEvent || NONE} onValueChange={(value) => { setCohortEvent(value === NONE ? "" : value); setCohortProperty(""); setCohortValue(""); }}>
@@ -268,6 +304,11 @@ export default function FunnelPage() {
                   setResult([]);
                   setBreakdown([]);
                   setBreakdownTruncated(false);
+                  setBreakdownProperty("");
+                  setBreakdownScope("event");
+                  setSegmentId(undefined);
+                  setProfileProperty("");
+                  setProfileValue("");
                   setCohortEvent("");
                   setCohortProperty("");
                   setCohortValue("");
@@ -341,7 +382,7 @@ export default function FunnelPage() {
               </ChartPanel>
               {breakdownProperty && breakdown.length > 0 ? (
                 <ChartPanel
-                  title={`按 ${breakdownProperty} 分组对比`}
+                  title={`按${breakdownScope === "user" ? "用户属性" : "事件属性"} ${breakdownProperty} 分组对比`}
                   description={`同步计算每个取值下的步骤转化率，用于定位哪个人群进入路径后表现更好。${breakdownTruncated ? " 当前仅展示起始用户最多的 12 个取值，其余已合并为“其他”。" : ""}`}
                 >
                   <div className="overflow-x-auto">

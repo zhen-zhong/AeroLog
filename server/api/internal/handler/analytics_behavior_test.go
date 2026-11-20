@@ -70,3 +70,37 @@ func TestAnalyticsCohortMemberQueryAndSegmentIntersectionKeepArgumentOrder(t *te
 		t.Fatalf("args = %#v, want %#v", args, want)
 	}
 }
+
+func TestAnalyticsProfileMemberQueryExists(t *testing.T) {
+	query, args, err := analyticsProfileMemberQuery(9, analyticsProfileFilter{Property: "country"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(query, "FROM users FINAL") || !strings.Contains(query, "JSONExtractRaw(properties, ?) != ''") {
+		t.Fatalf("unexpected query: %s", query)
+	}
+	want := []any{uint32(9), "country"}
+	if !reflect.DeepEqual(args, want) {
+		t.Fatalf("args = %#v, want %#v", args, want)
+	}
+}
+
+func TestAnalyticsProfileMemberQueryExactValue(t *testing.T) {
+	query, args, err := analyticsProfileMemberQuery(9, analyticsProfileFilter{Property: "country", Value: "CN"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(query, "JSONExtractRaw(properties, ?) = ?") {
+		t.Fatalf("unexpected query: %s", query)
+	}
+	want := []any{uint32(9), "country", "country", `"CN"`}
+	if !reflect.DeepEqual(args, want) {
+		t.Fatalf("args = %#v, want %#v", args, want)
+	}
+}
+
+func TestAnalyticsProfileMemberQueryRejectsValueWithoutProperty(t *testing.T) {
+	if _, _, err := analyticsProfileMemberQuery(9, analyticsProfileFilter{Value: "CN"}); err == nil {
+		t.Fatal("expected validation error")
+	}
+}

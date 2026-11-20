@@ -504,7 +504,10 @@ func (h *AnalyticsHandler) conversion(c *gin.Context) {
 		To                int64             `json:"to"`
 		WindowSeconds     int64             `json:"window_seconds"`
 		BreakdownProperty string            `json:"breakdown_property"`
+		BreakdownScope    string            `json:"breakdown_scope"`
 		SegmentID         int64             `json:"segment_id"`
+		ProfileProperty   string            `json:"profile_property"`
+		ProfileValue      string            `json:"profile_value"`
 		CohortEvent       string            `json:"cohort_event"`
 		CohortProperty    string            `json:"cohort_property"`
 		CohortValue       string            `json:"cohort_value"`
@@ -534,6 +537,12 @@ func (h *AnalyticsHandler) conversion(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
 		return
 	}
+	profileQuery, profileArgs, err := analyticsProfileMemberQuery(uint32(pid), analyticsProfileFilter{Property: body.ProfileProperty, Value: body.ProfileValue})
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
+		return
+	}
+	memberQuery, memberArgs = intersectMemberQueries(memberQuery, memberArgs, profileQuery, profileArgs)
 	cohortQuery, cohortArgs, err := analyticsCohortMemberQuery(uint32(pid), body.From, body.To, analyticsCohortFilter{Event: body.CohortEvent, Property: body.CohortProperty, Value: body.CohortValue})
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
@@ -548,7 +557,11 @@ func (h *AnalyticsHandler) conversion(c *gin.Context) {
 	breakdown := []conversionBreakdownRow{}
 	breakdownTruncated := false
 	if body.BreakdownProperty != "" {
-		breakdown, err = h.computeFunnelBreakdownForMembers(ctx, uint32(pid), stepsInput, body.From, body.To, body.WindowSeconds, body.BreakdownProperty, memberQuery, memberArgs)
+		if body.BreakdownScope == "user" {
+			breakdown, err = h.computeFunnelProfileBreakdownForMembers(ctx, uint32(pid), stepsInput, body.From, body.To, body.WindowSeconds, body.BreakdownProperty, memberQuery, memberArgs)
+		} else {
+			breakdown, err = h.computeFunnelBreakdownForMembers(ctx, uint32(pid), stepsInput, body.From, body.To, body.WindowSeconds, body.BreakdownProperty, memberQuery, memberArgs)
+		}
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
 			return
@@ -556,6 +569,70 @@ func (h *AnalyticsHandler) conversion(c *gin.Context) {
 		breakdown, breakdownTruncated = limitFunnelBreakdown(breakdown, maxBreakdownGroups)
 	}
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{"steps": steps, "breakdown": breakdown, "breakdown_truncated": breakdownTruncated}})
+}
+
+func (h *AnalyticsHandler) computeFunnelProfileBreakdownForMembers(ctx context.Context, pid uint32, steps []funnelInputStep, from, to, windowSeconds int64, property, memberQuery string, memberArgs []any) ([]conversionBreakdownRow, error) {
+	conds, conditionArgs := funnelConditions(steps, "e.")
+	args := []any{property, pid}
+	args = append(args, conditionArgs...)
+	args = append(args, pid, from, to)
+	memberClause := ""
+	if memberQuery != "" {
+		memberClause = ` AND e.distinct_id IN (` + memberQuery + `)`
+		args = append(args, memberArgs...)
+	}
+	q := `
+		WITH profile_dims AS (
+			SELECT distinct_id, JSONExtractRaw(properties, ?) AS dim
+			FROM users FINAL
+			WHERE project_id = ? AND dim != ''
+		)
+		SELECT dim, level, count()
+		FROM (
+			SELECT e.distinct_id, p.dim AS dim,
+			       windowFunnel(` + strconv.FormatInt(windowSeconds, 10) + `)(toDateTime(e.time), ` + joinStrs(conds, ", ") + `) AS level
+			FROM events AS e
+			INNER JOIN profile_dims AS p ON e.distinct_id = p.distinct_id
+			WHERE e.project_id = ? AND e.time BETWEEN fromUnixTimestamp64Milli(?) AND fromUnixTimestamp64Milli(?)` + memberClause + `
+			GROUP BY e.distinct_id, p.dim
+		)
+		GROUP BY dim, level
+		ORDER BY count() DESC`
+	rows, err := h.CH.Query(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanFunnelBreakdown(rows, steps), nil
+}
+
+func scanFunnelBreakdown(rows driver.Rows, steps []funnelInputStep) []conversionBreakdownRow {
+	type dimCounts map[uint8]uint64
+	byDim := map[string]dimCounts{}
+	for rows.Next() {
+		var dim string
+		var level uint8
+		var count uint64
+		if rows.Scan(&dim, &level, &count) != nil {
+			continue
+		}
+		if byDim[dim] == nil {
+			byDim[dim] = dimCounts{}
+		}
+		byDim[dim][level] += count
+	}
+	out := make([]conversionBreakdownRow, 0, len(byDim))
+	for raw, counts := range byDim {
+		stepResults := buildFunnelSteps(steps, counts)
+		value, label := parsePropertyValue(raw)
+		row := conversionBreakdownRow{Raw: raw, Value: value, Label: label, Steps: stepResults}
+		if len(stepResults) > 0 {
+			row.Users = stepResults[0].Users
+			row.Conversion = stepResults[len(stepResults)-1].Conversion
+		}
+		out = append(out, row)
+	}
+	return out
 }
 
 type funnelStep struct {
@@ -1406,7 +1483,13 @@ func (h *AnalyticsHandler) funnel(c *gin.Context) {
 		To                int64             `json:"to"`
 		WindowSeconds     int64             `json:"window_seconds"`
 		BreakdownProperty string            `json:"breakdown_property"`
+		BreakdownScope    string            `json:"breakdown_scope"`
 		SegmentID         int64             `json:"segment_id"`
+		ProfileProperty   string            `json:"profile_property"`
+		ProfileValue      string            `json:"profile_value"`
+		CohortEvent       string            `json:"cohort_event"`
+		CohortProperty    string            `json:"cohort_property"`
+		CohortValue       string            `json:"cohort_value"`
 	}
 	if err := c.BindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
@@ -1433,6 +1516,18 @@ func (h *AnalyticsHandler) funnel(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
 		return
 	}
+	profileQuery, profileArgs, err := analyticsProfileMemberQuery(uint32(pid), analyticsProfileFilter{Property: body.ProfileProperty, Value: body.ProfileValue})
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
+		return
+	}
+	memberQuery, memberArgs = intersectMemberQueries(memberQuery, memberArgs, profileQuery, profileArgs)
+	cohortQuery, cohortArgs, err := analyticsCohortMemberQuery(uint32(pid), body.From, body.To, analyticsCohortFilter{Event: body.CohortEvent, Property: body.CohortProperty, Value: body.CohortValue})
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
+		return
+	}
+	memberQuery, memberArgs = intersectMemberQueries(memberQuery, memberArgs, cohortQuery, cohortArgs)
 	steps, err := h.computeFunnelForMembers(ctx, uint32(pid), stepsInput, body.From, body.To, body.WindowSeconds, memberQuery, memberArgs)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
@@ -1441,7 +1536,11 @@ func (h *AnalyticsHandler) funnel(c *gin.Context) {
 	breakdown := []conversionBreakdownRow{}
 	breakdownTruncated := false
 	if body.BreakdownProperty != "" {
-		breakdown, err = h.computeFunnelBreakdownForMembers(ctx, uint32(pid), stepsInput, body.From, body.To, body.WindowSeconds, body.BreakdownProperty, memberQuery, memberArgs)
+		if body.BreakdownScope == "user" {
+			breakdown, err = h.computeFunnelProfileBreakdownForMembers(ctx, uint32(pid), stepsInput, body.From, body.To, body.WindowSeconds, body.BreakdownProperty, memberQuery, memberArgs)
+		} else {
+			breakdown, err = h.computeFunnelBreakdownForMembers(ctx, uint32(pid), stepsInput, body.From, body.To, body.WindowSeconds, body.BreakdownProperty, memberQuery, memberArgs)
+		}
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
 			return
@@ -1475,6 +1574,7 @@ func (h *AnalyticsHandler) retention(c *gin.Context) {
 		from = to - int64(days+7)*24*3600*1000
 	}
 	breakdownProp := c.Query("breakdown_property")
+	breakdownScope := c.DefaultQuery("breakdown_scope", "event")
 	cohortFilter := analyticsCohortFilter{
 		Event:    c.Query("cohort_event"),
 		Property: c.Query("cohort_property"),
@@ -1487,6 +1587,12 @@ func (h *AnalyticsHandler) retention(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
 		return
 	}
+	profileQuery, profileArgs, err := analyticsProfileMemberQuery(uint32(pid), analyticsProfileFilter{Property: c.Query("profile_property"), Value: c.Query("profile_value")})
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
+		return
+	}
+	memberQuery, memberArgs = intersectMemberQueries(memberQuery, memberArgs, profileQuery, profileArgs)
 	cohortQuery, cohortArgs, err := analyticsCohortMemberQuery(uint32(pid), from, to, cohortFilter)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
@@ -1501,13 +1607,94 @@ func (h *AnalyticsHandler) retention(c *gin.Context) {
 	}
 	breakdown := []retentionBreakdownRow{}
 	if breakdownProp != "" {
-		breakdown, err = h.computeRetentionBreakdownForMembers(ctx, uint32(pid), timezone, initEv, retEv, from, to, days, breakdownProp, memberQuery, memberArgs)
+		if breakdownScope == "user" {
+			breakdown, err = h.computeRetentionProfileBreakdownForMembers(ctx, uint32(pid), timezone, initEv, retEv, from, to, days, breakdownProp, memberQuery, memberArgs)
+		} else {
+			breakdown, err = h.computeRetentionBreakdownForMembers(ctx, uint32(pid), timezone, initEv, retEv, from, to, days, breakdownProp, memberQuery, memberArgs)
+		}
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
 			return
 		}
 	}
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{"overall": overall, "breakdown": breakdown}})
+}
+
+func (h *AnalyticsHandler) computeRetentionProfileBreakdownForMembers(ctx context.Context, pid uint32, timezone, initEv, retEv string, from, to int64, days int, property, memberQuery string, memberArgs []any) ([]retentionBreakdownRow, error) {
+	valueExprs := make([]string, 0, days)
+	for i := 0; i < days; i++ {
+		valueExprs = append(valueExprs, "uniqExactIf(c.distinct_id, dateDiff('day', c.d0, r.d) = "+strconv.Itoa(i)+")")
+	}
+	memberClause := ""
+	if memberQuery != "" {
+		memberClause = ` AND e.distinct_id IN (` + memberQuery + `)`
+	}
+	q := `
+	WITH profile_dims AS (
+		SELECT distinct_id, JSONExtractRaw(properties, ?) AS dim
+		FROM users FINAL
+		WHERE project_id = ? AND dim != ''
+	), cohort AS (
+		SELECT e.distinct_id, min(toDate(e.time, ` + timezone + `)) AS d0, p.dim AS dim
+		FROM events AS e
+		INNER JOIN profile_dims AS p ON e.distinct_id = p.distinct_id
+		WHERE e.project_id = ? AND e.event = ? AND e.time BETWEEN fromUnixTimestamp64Milli(?) AND fromUnixTimestamp64Milli(?)` + memberClause + `
+		GROUP BY e.distinct_id, p.dim
+	), ret AS (
+		SELECT distinct_id, toDate(time, ` + timezone + `) AS d
+		FROM events
+		WHERE project_id = ? AND event = ? AND time BETWEEN fromUnixTimestamp64Milli(?) AND fromUnixTimestamp64Milli(?)
+		GROUP BY distinct_id, d
+	)
+	SELECT c.dim, c.d0, count(DISTINCT c.distinct_id), [` + joinStrs(valueExprs, ", ") + `]
+	FROM cohort AS c
+	LEFT JOIN ret AS r ON c.distinct_id = r.distinct_id
+	GROUP BY c.dim, c.d0
+	ORDER BY c.dim, c.d0`
+	args := []any{property, pid, pid, initEv, from, to}
+	args = append(args, memberArgs...)
+	args = append(args, pid, retEv, from, to)
+	rows, err := h.CH.Query(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanRetentionBreakdown(rows), nil
+}
+
+func scanRetentionBreakdown(rows driver.Rows) []retentionBreakdownRow {
+	byDim := map[string][]retentionRow{}
+	order := []string{}
+	for rows.Next() {
+		var dim string
+		var row retentionRow
+		if rows.Scan(&dim, &row.Cohort, &row.Size, &row.Values) != nil {
+			continue
+		}
+		if _, exists := byDim[dim]; !exists {
+			order = append(order, dim)
+		}
+		byDim[dim] = append(byDim[dim], row)
+	}
+	out := make([]retentionBreakdownRow, 0, len(order))
+	for _, raw := range order {
+		list := byDim[raw]
+		var total, dayOneCount uint64
+		for _, row := range list {
+			total += row.Size
+			if len(row.Values) > 1 {
+				dayOneCount += row.Values[1]
+			}
+		}
+		value, label := parsePropertyValue(raw)
+		group := retentionBreakdownRow{Raw: raw, Value: value, Label: label, Rows: list, TotalSize: total}
+		if total > 0 {
+			group.DayOne = float64(dayOneCount) / float64(total)
+		}
+		out = append(out, group)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].TotalSize > out[j].TotalSize })
+	return out
 }
 
 type retentionRow struct {

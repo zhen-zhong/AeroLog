@@ -35,7 +35,10 @@ export default function RetentionPage() {
   const [retEvent, setRetEvent] = useState<string | undefined>();
   const [days, setDays] = useState<number>(7);
   const [breakdownProperty, setBreakdownProperty] = useState<string>("");
+  const [breakdownScope, setBreakdownScope] = useState<"event" | "user">("event");
   const [segmentId, setSegmentId] = useState<number | undefined>();
+  const [profileProperty, setProfileProperty] = useState("");
+  const [profileValue, setProfileValue] = useState("");
   const [cohortEvent, setCohortEvent] = useState("");
   const [cohortProperty, setCohortProperty] = useState("");
   const [cohortValue, setCohortValue] = useState("");
@@ -49,7 +52,10 @@ export default function RetentionPage() {
     setInitEvent(undefined);
     setRetEvent(undefined);
     setBreakdownProperty("");
+    setBreakdownScope("event");
     setSegmentId(undefined);
+    setProfileProperty("");
+    setProfileValue("");
     setCohortEvent("");
     setCohortProperty("");
     setCohortValue("");
@@ -82,6 +88,11 @@ export default function RetentionPage() {
     queryFn: () => api.listSegments(projectId!),
     enabled: !!projectId,
   });
+  const { data: profileProperties } = useQuery({
+    queryKey: ["retention_profile_properties", projectId],
+    queryFn: () => api.listProperties(projectId!, { scope: "user" }),
+    enabled: !!projectId,
+  });
   const { data: cohortProperties } = useQuery({
     queryKey: ["retention_cohort_properties", projectId, cohortEvent],
     queryFn: () => api.listProperties(projectId!, { scope: "event", event: cohortEvent, include_global: true }),
@@ -94,7 +105,7 @@ export default function RetentionPage() {
   }, [top, initEvent, retEvent]);
 
   const { data, isFetching } = useQuery({
-    queryKey: ["retention", projectId, initEvent, retEvent, days, range, breakdownProperty, segmentId, cohortEvent, cohortProperty, cohortValue],
+    queryKey: ["retention", projectId, initEvent, retEvent, days, range, breakdownScope, breakdownProperty, segmentId, profileProperty, profileValue, cohortEvent, cohortProperty, cohortValue],
     queryFn: () =>
       api.retention(projectId!, {
         initial_event: initEvent!,
@@ -103,10 +114,13 @@ export default function RetentionPage() {
         from: range[0].valueOf(),
         to: range[1].valueOf(),
         breakdown_property: breakdownProperty || undefined,
+        breakdown_scope: breakdownProperty ? breakdownScope : undefined,
         segment_id: segmentId,
         cohort_event: cohortEvent || undefined,
         cohort_property: cohortProperty || undefined,
         cohort_value: cohortProperty && cohortValue ? cohortValue : undefined,
+        profile_property: profileProperty || undefined,
+        profile_value: profileProperty && profileValue ? profileValue : undefined,
       }),
     enabled: !!projectId && !!initEvent && !!retEvent,
   });
@@ -136,6 +150,7 @@ export default function RetentionPage() {
           retEvent ? `return = ${retEvent}` : "选择返回事件",
           breakdownProperty ? `分组 = ${breakdownProperty}` : "未分组",
           segmentId ? `分群：${(segments?.data || []).find((segment) => segment.id === segmentId)?.name || segmentId}` : "全部用户",
+          profileProperty ? `用户属性：${profileProperty}${profileValue ? `=${profileValue}` : " 存在"}` : "未按用户属性筛选",
           cohortEvent ? `事件筛选：${cohortEvent}${cohortProperty ? ` · ${cohortProperty}${cohortValue ? `=${cohortValue}` : " 存在"}` : ""}` : "未按事件筛选",
         ]}
       />
@@ -161,8 +176,16 @@ export default function RetentionPage() {
           <div className="grid gap-1.5">
             <Label>分组参数（可选）</Label>
             <Select
-              value={breakdownProperty || NONE}
-              onValueChange={(v) => setBreakdownProperty(v === NONE ? "" : v)}
+              value={breakdownProperty ? `${breakdownScope}:${breakdownProperty}` : NONE}
+              onValueChange={(value) => {
+                if (value === NONE) {
+                  setBreakdownProperty("");
+                  return;
+                }
+                const separator = value.indexOf(":");
+                setBreakdownScope(value.slice(0, separator) as "event" | "user");
+                setBreakdownProperty(value.slice(separator + 1));
+              }}
             >
               <SelectTrigger>
                 <SelectValue placeholder="不分组" />
@@ -170,8 +193,13 @@ export default function RetentionPage() {
               <SelectContent>
                 <SelectItem value={NONE}>不分组</SelectItem>
                 {(properties?.data || []).map((p) => (
-                  <SelectItem key={p.name} value={p.name}>
-                    {p.display_name || p.name}
+                  <SelectItem key={`event:${p.name}`} value={`event:${p.name}`}>
+                    事件属性 · {p.display_name || p.name}
+                  </SelectItem>
+                ))}
+                {(profileProperties?.data || []).map((p) => (
+                  <SelectItem key={`user:${p.name}`} value={`user:${p.name}`}>
+                    用户属性 · {p.display_name || p.name}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -179,6 +207,8 @@ export default function RetentionPage() {
           </div>
         </div>
         <div className="mt-4 grid gap-4 border-t pt-4 sm:grid-cols-3">
+          <div className="grid gap-1.5"><Label>用户属性筛选（可选）</Label><Select value={profileProperty || NONE} onValueChange={(value) => { setProfileProperty(value === NONE ? "" : value); setProfileValue(""); }}><SelectTrigger><SelectValue placeholder="不按用户属性筛选" /></SelectTrigger><SelectContent><SelectItem value={NONE}>不按用户属性筛选</SelectItem>{(profileProperties?.data || []).map((property) => <SelectItem key={property.id} value={property.name}>{property.display_name || property.name}</SelectItem>)}</SelectContent></Select></div>
+          {profileProperty ? <div className="grid gap-1.5"><Label htmlFor="retention-profile-value">用户属性值（可选）</Label><Input id="retention-profile-value" value={profileValue} onChange={(event) => setProfileValue(event.target.value)} placeholder="留空表示属性存在" /></div> : null}
           <div className="grid gap-1.5"><Label>筛选用户事件（可选）</Label><Select value={cohortEvent || NONE} onValueChange={(value) => { setCohortEvent(value === NONE ? "" : value); setCohortProperty(""); setCohortValue(""); }}><SelectTrigger><SelectValue placeholder="不按事件筛选" /></SelectTrigger><SelectContent><SelectItem value={NONE}>不按事件筛选</SelectItem>{(top?.data || []).map((event) => <SelectItem key={event.event} value={event.event}>{event.event}</SelectItem>)}</SelectContent></Select></div>
           {cohortEvent ? <div className="grid gap-1.5"><Label>事件参数（可选）</Label><Select value={cohortProperty || NONE} onValueChange={(value) => { setCohortProperty(value === NONE ? "" : value); setCohortValue(""); }}><SelectTrigger><SelectValue placeholder="仅发生过该事件" /></SelectTrigger><SelectContent><SelectItem value={NONE}>仅发生过该事件</SelectItem>{(cohortProperties?.data || []).map((property) => <SelectItem key={property.name} value={property.name}>{property.display_name || property.name}</SelectItem>)}</SelectContent></Select></div> : null}
           {cohortProperty ? <div className="grid gap-1.5"><Label htmlFor="retention-cohort-value">参数值（可选）</Label><Input id="retention-cohort-value" value={cohortValue} onChange={(event) => setCohortValue(event.target.value)} placeholder="留空表示参数存在" /></div> : null}
@@ -215,7 +245,7 @@ export default function RetentionPage() {
       {breakdownProperty && breakdown.length > 0 ? (
         <div className="mt-5">
           <ChartPanel
-            title={`按 ${breakdownProperty} 分组对比`}
+            title={`按${breakdownScope === "user" ? "用户属性" : "事件属性"} ${breakdownProperty} 分组对比`}
             description="按维度取值聚合各同期日的总规模与 Day1 留存，颜色越深代表 DayN 平均留存越高。"
           >
             <BreakdownTable groups={breakdown} days={days} dimension={breakdownProperty} />

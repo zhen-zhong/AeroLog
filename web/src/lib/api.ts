@@ -1399,10 +1399,13 @@ export const api = {
             to?: number;
             window_seconds?: number;
             breakdown_property?: string;
+            breakdown_scope?: "event" | "user";
             segment_id?: number;
             cohort_event?: string;
             cohort_property?: string;
             cohort_value?: string;
+            profile_property?: string;
+            profile_value?: string;
         },
     ) =>
         req<
@@ -1424,10 +1427,13 @@ export const api = {
             to?: number;
             days?: number;
             breakdown_property?: string;
+            breakdown_scope?: "event" | "user";
             segment_id?: number;
             cohort_event?: string;
             cohort_property?: string;
             cohort_value?: string;
+            profile_property?: string;
+            profile_value?: string;
         },
     ) => {
         const q = new URLSearchParams({
@@ -1438,10 +1444,13 @@ export const api = {
         if (params.to) q.set("to", String(params.to));
         if (params.days) q.set("days", String(params.days));
         if (params.breakdown_property) q.set("breakdown_property", params.breakdown_property);
+        if (params.breakdown_scope) q.set("breakdown_scope", params.breakdown_scope);
         if (params.segment_id) q.set("segment_id", String(params.segment_id));
         if (params.cohort_event) q.set("cohort_event", params.cohort_event);
         if (params.cohort_property) q.set("cohort_property", params.cohort_property);
         if (params.cohort_value) q.set("cohort_value", params.cohort_value);
+        if (params.profile_property) q.set("profile_property", params.profile_property);
+        if (params.profile_value) q.set("profile_value", params.profile_value);
         return req<
             ApiOne<{
                 overall: RetentionCohort[];
