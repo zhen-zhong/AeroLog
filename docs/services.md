@@ -43,6 +43,8 @@ Prometheus ◄── API / Collector / Consumer / Node Exporter ──► Grafan
 
 控制台“数据健康”每 30 秒汇总神策接入状态：项目级订阅应用、订阅方、最后入库时间与项目 DLQ；共享链路级事件/用户属性 Topic、消费者组、各消费者运行状态、lag 与全局 DLQ。
 
+控制台“SDK Debugger”按 `$insert_id` 关联 Collector、Kafka、Consumer、ClickHouse 四阶段。调试事件保存设备、用户、session、SDK 版本、Kafka Topic/partition/offset 与各阶段时间；支持用 `$insert_id`、`$session_id` 或内部 `trace_id` 精确定位。缺少 `$insert_id` 的上游事件使用 Kafka 坐标生成内部 `trace_id`，不会修改原始业务参数。
+
 对账异常仅在完整覆盖且绝对差值、比例同时达到 `AEROLOG_SENSORS_RECONCILIATION_ALERT_MIN_COUNT`、`AEROLOG_SENSORS_RECONCILIATION_ALERT_MIN_RATE` 时创建告警；相同项目、日期、异常类型按 `AEROLOG_SENSORS_RECONCILIATION_ALERT_SILENCE_MINUTES` 静默。控制台可确认或关闭告警，并保存处理人、时间与关闭备注。
 
 ### 2.2 机器人与宿主机巡检
@@ -149,6 +151,7 @@ docker compose logs -f host-inspector --tail=100
 |---|---|
 | 网站 `502` | `api` 是否存活 → 重启 `aerolog-login-proxy` → 检查 `web` |
 | 自研埋点未入库 | `collector` → Redpanda Topic / consumer group → `consumer` → ClickHouse |
+| 单条 SDK 事件未入库 | SDK Debugger 搜索 `$insert_id` 或 `$session_id` → 查看最后成功阶段与 Kafka 坐标 → 再检查对应服务日志 |
 | 神策数据未入库 | Kafka `9092` 连通性 → 神策订阅应用状态 → `sensors-consumer` / `sensors-profile-consumer` → DLQ → ClickHouse |
 | 神策对账差异 | 先查看数据覆盖起点与“部分覆盖”标识，再检查项目时区、事件映射与订阅生效时间 |
 | 企业微信机器人无回复 | `wecom-aibot` 是否认证 → AI 规划/整理超时日志 → API 内部 Token → 对应 Skill 依赖 |

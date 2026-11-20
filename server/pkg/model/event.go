@@ -66,6 +66,20 @@ type EnvelopedEvent struct {
 	UserAgent  string `json:"ua,omitempty"`
 	ReceivedAt int64  `json:"received_at"`
 	Event      Event  `json:"event"`
+	Trace      Trace  `json:"trace,omitempty"`
+}
+
+// Trace 保存贯穿接收链路的稳定、非敏感定位信息。
+type Trace struct {
+	TraceID             string `json:"trace_id,omitempty"`
+	InsertID            string `json:"insert_id,omitempty"`
+	SessionID           string `json:"session_id,omitempty"`
+	DeviceID            string `json:"device_id,omitempty"`
+	CollectorReceivedAt int64  `json:"collector_received_at,omitempty"`
+	ConsumerReceivedAt  int64  `json:"consumer_received_at,omitempty"`
+	KafkaTopic          string `json:"kafka_topic,omitempty"`
+	KafkaPartition      int32  `json:"kafka_partition,omitempty"`
+	KafkaOffset         int64  `json:"kafka_offset,omitempty"`
 }
 
 // MarshalKafka 序列化 EnvelopedEvent 为 Kafka 消息体。

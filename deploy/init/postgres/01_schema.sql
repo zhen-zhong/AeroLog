@@ -292,10 +292,36 @@ CREATE TABLE IF NOT EXISTS debug_events (
     reason       TEXT,
     payload      JSONB         NOT NULL,
     received_at  TIMESTAMPTZ,
+    trace_id     VARCHAR(255) NOT NULL DEFAULT '',
+    insert_id    VARCHAR(255) NOT NULL DEFAULT '',
+    session_id   VARCHAR(255) NOT NULL DEFAULT '',
+    device_id    VARCHAR(255) NOT NULL DEFAULT '',
+    sdk_lib      VARCHAR(64)  NOT NULL DEFAULT '',
+    sdk_version  VARCHAR(64)  NOT NULL DEFAULT '',
+    kafka_topic  VARCHAR(255) NOT NULL DEFAULT '',
+    kafka_partition INTEGER,
+    kafka_offset BIGINT,
+    collector_received_at TIMESTAMPTZ,
+    consumer_received_at  TIMESTAMPTZ,
+    clickhouse_written_at TIMESTAMPTZ,
+    chain_status VARCHAR(32) NOT NULL DEFAULT 'unknown',
     created_at   TIMESTAMPTZ   NOT NULL DEFAULT now()
 );
 
 ALTER TABLE debug_events ALTER COLUMN project_id DROP NOT NULL;
+ALTER TABLE debug_events ADD COLUMN IF NOT EXISTS trace_id VARCHAR(255) NOT NULL DEFAULT '';
+ALTER TABLE debug_events ADD COLUMN IF NOT EXISTS insert_id VARCHAR(255) NOT NULL DEFAULT '';
+ALTER TABLE debug_events ADD COLUMN IF NOT EXISTS session_id VARCHAR(255) NOT NULL DEFAULT '';
+ALTER TABLE debug_events ADD COLUMN IF NOT EXISTS device_id VARCHAR(255) NOT NULL DEFAULT '';
+ALTER TABLE debug_events ADD COLUMN IF NOT EXISTS sdk_lib VARCHAR(64) NOT NULL DEFAULT '';
+ALTER TABLE debug_events ADD COLUMN IF NOT EXISTS sdk_version VARCHAR(64) NOT NULL DEFAULT '';
+ALTER TABLE debug_events ADD COLUMN IF NOT EXISTS kafka_topic VARCHAR(255) NOT NULL DEFAULT '';
+ALTER TABLE debug_events ADD COLUMN IF NOT EXISTS kafka_partition INTEGER;
+ALTER TABLE debug_events ADD COLUMN IF NOT EXISTS kafka_offset BIGINT;
+ALTER TABLE debug_events ADD COLUMN IF NOT EXISTS collector_received_at TIMESTAMPTZ;
+ALTER TABLE debug_events ADD COLUMN IF NOT EXISTS consumer_received_at TIMESTAMPTZ;
+ALTER TABLE debug_events ADD COLUMN IF NOT EXISTS clickhouse_written_at TIMESTAMPTZ;
+ALTER TABLE debug_events ADD COLUMN IF NOT EXISTS chain_status VARCHAR(32) NOT NULL DEFAULT 'unknown';
 
 CREATE INDEX IF NOT EXISTS idx_debug_events_project_created
     ON debug_events(project_id, created_at DESC);
@@ -305,6 +331,12 @@ CREATE INDEX IF NOT EXISTS idx_debug_events_project_event
 
 CREATE INDEX IF NOT EXISTS idx_debug_events_result_created
     ON debug_events(result, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_debug_events_project_trace
+    ON debug_events(project_id, trace_id) WHERE trace_id <> '';
+CREATE INDEX IF NOT EXISTS idx_debug_events_project_session
+    ON debug_events(project_id, session_id, created_at DESC) WHERE session_id <> '';
+CREATE UNIQUE INDEX IF NOT EXISTS uq_debug_events_project_trace
+    ON debug_events(project_id, trace_id) WHERE project_id IS NOT NULL AND trace_id <> '';
 
 CREATE TABLE IF NOT EXISTS schema_issues (
     id            BIGSERIAL PRIMARY KEY,

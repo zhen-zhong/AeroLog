@@ -20,6 +20,7 @@ import (
 	"github.com/aerolog/server/pkg/mq"
 	"github.com/aerolog/server/pkg/privacy"
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/aerolog/server/collector/internal/projectcache"
@@ -116,6 +117,7 @@ func (h *TrackHandler) handle(c *gin.Context) {
 	now := time.Now().UnixMilli()
 	accepted := 0
 	rejected := 0
+	acceptedEvents := make([]model.EnvelopedEvent, 0, len(events))
 
 	projectLabel := strconvUint32(pid)
 	for i := range events {
@@ -132,6 +134,13 @@ func (h *TrackHandler) handle(c *gin.Context) {
 			UserAgent:  ua,
 			ReceivedAt: now,
 			Event:      *e,
+			Trace: model.Trace{
+				TraceID:             eventPropertyString(e, "$insert_id"),
+				InsertID:            eventPropertyString(e, "$insert_id"),
+				SessionID:           eventPropertyString(e, "$session_id"),
+				DeviceID:            eventPropertyString(e, "$device_id"),
+				CollectorReceivedAt: now,
+			},
 		}
 		raw, err := env.MarshalKafka()
 		if err != nil {
@@ -146,14 +155,25 @@ func (h *TrackHandler) handle(c *gin.Context) {
 		cancel()
 		if err != nil {
 			mKafkaSendErrors.WithLabelValues().Inc()
+			h.recordAccepted(c.Request.Context(), acceptedEvents)
 			status = "queue_unavailable"
 			c.JSON(http.StatusServiceUnavailable, trackResp{Code: 5001, Message: "queue unavailable"})
 			return
 		}
 		accepted++
+		acceptedEvents = append(acceptedEvents, env)
 		mEventsReceived.WithLabelValues(projectLabel, "accepted").Inc()
 	}
+	h.recordAccepted(c.Request.Context(), acceptedEvents)
 	c.JSON(http.StatusOK, trackResp{Code: 0, Message: "ok", Data: trackRespData{Accepted: accepted, Rejected: rejected}})
+}
+
+func eventPropertyString(event *model.Event, key string) string {
+	if event == nil || event.Properties == nil {
+		return ""
+	}
+	value, _ := event.Properties[key].(string)
+	return strings.TrimSpace(value)
 }
 
 func validSignature(c *gin.Context, secret string, body []byte, required bool) (bool, string) {
@@ -217,11 +237,74 @@ func (h *TrackHandler) recordRejected(ctx context.Context, projectID *uint32, ev
 		userID = event.UserID
 		anonymousID = event.AnonymousID
 	}
+	insertID := eventPropertyString(event, "$insert_id")
+	sessionID := eventPropertyString(event, "$session_id")
+	deviceID := eventPropertyString(event, "$device_id")
+	sdkLib := ""
+	sdkVersion := ""
+	if event != nil {
+		sdkLib = event.Lib.Name
+		sdkVersion = event.Lib.Version
+	}
 	if _, err := h.PG.Exec(debugCtx, `
-		INSERT INTO debug_events(project_id, event, event_type, distinct_id, user_id, anonymous_id, result, reason, payload, received_at)
-		VALUES($1,$2,$3,$4,$5,$6,'rejected',$7,$8,now())
-	`, projectArg, eventName, eventType, distinctID, userID, anonymousID, reason, rawPayload); err != nil {
+		INSERT INTO debug_events(
+			project_id, event, event_type, distinct_id, user_id, anonymous_id,
+			result, reason, payload, received_at, trace_id, insert_id, session_id,
+			device_id, sdk_lib, sdk_version, collector_received_at, chain_status
+		)
+		VALUES($1,$2,$3,$4,$5,$6,'rejected',$7,$8,now(),$9,$9,$10,$11,$12,$13,now(),'collector_rejected')
+	`, projectArg, eventName, eventType, distinctID, userID, anonymousID, reason, rawPayload,
+		insertID, sessionID, deviceID, sdkLib, sdkVersion); err != nil {
 		log.Printf("debug rejected insert err: %v", err)
+	}
+}
+
+// recordAccepted 先记录 Collector 已接收阶段；Consumer 后续按 trace_id 补齐 Kafka 与入库状态。
+func (h *TrackHandler) recordAccepted(ctx context.Context, events []model.EnvelopedEvent) {
+	if h == nil || h.PG == nil || len(events) == 0 {
+		return
+	}
+	debugCtx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+
+	var batch pgx.Batch
+	for i := range events {
+		env := &events[i]
+		payload, _ := json.Marshal(privacy.RedactJSON(env))
+		batch.Queue(`
+			INSERT INTO debug_events(
+				project_id, event, event_type, distinct_id, user_id, anonymous_id,
+				result, reason, payload, received_at, trace_id, insert_id, session_id,
+				device_id, sdk_lib, sdk_version, collector_received_at, chain_status
+			)
+			VALUES($1,$2,$3,$4,$5,$6,'accepted','',$7,$8,$9,$10,$11,$12,$13,$14,$8,'collector_received')
+			ON CONFLICT(project_id, trace_id) WHERE project_id IS NOT NULL AND trace_id <> '' DO UPDATE SET
+				event=EXCLUDED.event,
+				event_type=EXCLUDED.event_type,
+				distinct_id=EXCLUDED.distinct_id,
+				user_id=EXCLUDED.user_id,
+				anonymous_id=EXCLUDED.anonymous_id,
+				payload=EXCLUDED.payload,
+				received_at=EXCLUDED.received_at,
+				insert_id=EXCLUDED.insert_id,
+				session_id=EXCLUDED.session_id,
+				device_id=EXCLUDED.device_id,
+				sdk_lib=EXCLUDED.sdk_lib,
+				sdk_version=EXCLUDED.sdk_version,
+				collector_received_at=EXCLUDED.collector_received_at,
+				chain_status=CASE WHEN debug_events.clickhouse_written_at IS NULL THEN EXCLUDED.chain_status ELSE debug_events.chain_status END
+		`, int64(env.ProjectID), env.Event.Event, string(env.Event.Type), env.Event.DistinctID, env.Event.UserID, env.Event.AnonymousID,
+			payload, time.UnixMilli(env.ReceivedAt).UTC(), env.Trace.TraceID, env.Trace.InsertID, env.Trace.SessionID,
+			env.Trace.DeviceID, env.Event.Lib.Name, env.Event.Lib.Version)
+	}
+
+	results := h.PG.SendBatch(debugCtx, &batch)
+	defer results.Close()
+	for range events {
+		if _, err := results.Exec(); err != nil {
+			log.Printf("debug accepted insert err: %v", err)
+			return
+		}
 	}
 }
 

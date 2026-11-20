@@ -299,6 +299,19 @@ export interface DebugEvent {
     payload: Record<string, unknown>;
     received_at?: string;
     created_at: string;
+    trace_id: string;
+    insert_id: string;
+    session_id: string;
+    device_id: string;
+    sdk_lib: string;
+    sdk_version: string;
+    kafka_topic: string;
+    kafka_partition?: number;
+    kafka_offset?: number;
+    collector_received_at?: string;
+    consumer_received_at?: string;
+    clickhouse_written_at?: string;
+    chain_status: "unknown" | "collector_received" | "collector_rejected" | "consumer_received" | "clickhouse_written";
 }
 export interface SchemaIssue {
     id: number;
@@ -959,12 +972,13 @@ export const api = {
     },
     debugEvents: (
         id: number | string,
-        params?: { event?: string; result?: string; distinct_id?: string; limit?: number; include_global?: boolean },
+        params?: { event?: string; result?: string; distinct_id?: string; trace?: string; limit?: number; include_global?: boolean },
     ) => {
         const q = new URLSearchParams();
         if (params?.event) q.set("event", params.event);
         if (params?.result) q.set("result", params.result);
         if (params?.distinct_id) q.set("distinct_id", params.distinct_id);
+        if (params?.trace) q.set("trace", params.trace);
         if (params?.limit) q.set("limit", String(params.limit));
         if (params?.include_global) q.set("include_global", "1");
         return req<ApiList<DebugEvent>>(`/projects/${id}/debug/events?${q}`);

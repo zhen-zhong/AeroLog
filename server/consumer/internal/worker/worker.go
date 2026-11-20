@@ -188,6 +188,7 @@ func (h *handler) ConsumeClaim(sess sarama.ConsumerGroupSession, claim sarama.Co
 				sess.MarkMessage(msg, "")
 				continue
 			}
+			attachKafkaTrace(env, msg)
 			mConsumed.WithLabelValues("ok").Inc()
 			batch = append(batch, env)
 			lastMsg = msg
@@ -261,8 +262,48 @@ func (w *Worker) flushBatch(ctx context.Context, batch []*model.EnvelopedEvent) 
 	if err := w.sink.WriteProfiles(ctx, profiles); err != nil {
 		return err
 	}
+	if w.meta != nil {
+		if err := w.meta.MarkStored(ctx, batch); err != nil {
+			// ClickHouse 已完成持久化。此处重试会造成 ClickHouse 重复写入，
+			// 因此仅记录调试链路状态失败，不阻断 Kafka offset 提交。
+			log.Printf("mark debug trace stored err: %v", err)
+		}
+	}
 	w.recordSensorsCoverage(ctx, tracks)
 	return nil
+}
+
+func attachKafkaTrace(env *model.EnvelopedEvent, msg *sarama.ConsumerMessage) {
+	if env == nil || msg == nil {
+		return
+	}
+	if env.Trace.InsertID == "" {
+		env.Trace.InsertID = stringProperty(env.Event.Properties, "$insert_id")
+	}
+	if env.Trace.SessionID == "" {
+		env.Trace.SessionID = stringProperty(env.Event.Properties, "$session_id")
+	}
+	if env.Trace.DeviceID == "" {
+		env.Trace.DeviceID = stringProperty(env.Event.Properties, "$device_id")
+	}
+	if env.Trace.TraceID == "" {
+		env.Trace.TraceID = env.Trace.InsertID
+	}
+	if env.Trace.TraceID == "" {
+		env.Trace.TraceID = fmt.Sprintf("kafka:%s:%d:%d", msg.Topic, msg.Partition, msg.Offset)
+	}
+	if env.Trace.CollectorReceivedAt == 0 {
+		env.Trace.CollectorReceivedAt = env.ReceivedAt
+	}
+	env.Trace.ConsumerReceivedAt = time.Now().UnixMilli()
+	env.Trace.KafkaTopic = msg.Topic
+	env.Trace.KafkaPartition = msg.Partition
+	env.Trace.KafkaOffset = msg.Offset
+}
+
+func stringProperty(properties map[string]interface{}, key string) string {
+	value, _ := properties[key].(string)
+	return value
 }
 
 // recordSensorsCoverage stores the first batch that completed every durable

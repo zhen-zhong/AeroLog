@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"testing"
 	"time"
+
+	"github.com/IBM/sarama"
+	"github.com/aerolog/server/pkg/model"
 )
 
 func TestRetryDelayCapsAtMaximum(t *testing.T) {
@@ -23,6 +26,37 @@ func TestRetryDelayCapsAtMaximum(t *testing.T) {
 		if got := retryDelay(tc.attempt, initial, maximum); got != tc.want {
 			t.Fatalf("retryDelay(%d) = %s, want %s", tc.attempt, got, tc.want)
 		}
+	}
+}
+
+func TestAttachKafkaTrace(t *testing.T) {
+	env := &model.EnvelopedEvent{
+		ReceivedAt: 123,
+		Event: model.Event{Properties: map[string]interface{}{
+			"$insert_id":  "insert-1",
+			"$session_id": "session-1",
+			"$device_id":  "device-1",
+		}},
+	}
+	msg := &sarama.ConsumerMessage{Topic: "events.raw", Partition: 2, Offset: 99}
+	attachKafkaTrace(env, msg)
+	if env.Trace.TraceID != "insert-1" || env.Trace.SessionID != "session-1" || env.Trace.DeviceID != "device-1" {
+		t.Fatalf("trace identity = %#v", env.Trace)
+	}
+	if env.Trace.KafkaTopic != "events.raw" || env.Trace.KafkaPartition != 2 || env.Trace.KafkaOffset != 99 {
+		t.Fatalf("kafka coordinates = %#v", env.Trace)
+	}
+	if env.Trace.CollectorReceivedAt != 123 || env.Trace.ConsumerReceivedAt == 0 {
+		t.Fatalf("trace timestamps = %#v", env.Trace)
+	}
+}
+
+func TestAttachKafkaTraceFallsBackToKafkaCoordinates(t *testing.T) {
+	env := &model.EnvelopedEvent{}
+	msg := &sarama.ConsumerMessage{Topic: "sensors.events", Partition: 0, Offset: 7}
+	attachKafkaTrace(env, msg)
+	if env.Trace.TraceID != "kafka:sensors.events:0:7" {
+		t.Fatalf("trace id = %q", env.Trace.TraceID)
 	}
 }
 

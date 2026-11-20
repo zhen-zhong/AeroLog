@@ -35,6 +35,7 @@ export default function DebuggerPage() {
   const [eventFilter, setEventFilter] = useState("__all__");
   const [resultFilter, setResultFilter] = useState("__all__");
   const [distinctId, setDistinctId] = useState("");
+  const [traceFilter, setTraceFilter] = useState("");
   const [selectedProperty, setSelectedProperty] = useState("");
   const [dataType, setDataType] = useState("string");
   const [required, setRequired] = useState(false);
@@ -63,12 +64,13 @@ export default function DebuggerPage() {
   });
 
   const debugEvents = useQuery({
-    queryKey: ["debug_events", projectId, eventFilter, resultFilter, distinctId],
+    queryKey: ["debug_events", projectId, eventFilter, resultFilter, distinctId, traceFilter],
     queryFn: () =>
       api.debugEvents(projectId!, {
         event: eventFilter === "__all__" ? undefined : eventFilter,
         result: resultFilter === "__all__" ? undefined : resultFilter,
         distinct_id: distinctId.trim() || undefined,
+        trace: traceFilter.trim() || undefined,
         limit: 120,
         include_global: true,
       }),
@@ -211,6 +213,14 @@ export default function DebuggerPage() {
                 <Label>distinct_id</Label>
                 <Input value={distinctId} onChange={(event) => setDistinctId(event.target.value)} placeholder="输入用户标识精确查询" />
               </div>
+              <div className="grid gap-1.5">
+                <Label>链路 ID</Label>
+                <Input
+                  value={traceFilter}
+                  onChange={(event) => setTraceFilter(event.target.value)}
+                  placeholder="$insert_id / $session_id / trace_id"
+                />
+              </div>
               <Button
                 type="button"
                 variant="outline"
@@ -352,7 +362,7 @@ export default function DebuggerPage() {
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <CardTitle>调试事件与 Schema 问题</CardTitle>
-                  <CardDescription>事件流用于确认 SDK 是否到达，问题表用于定位具体参数。</CardDescription>
+                  <CardDescription>事件流展示 Collector、Kafka、Consumer、ClickHouse 全链路，问题表用于定位具体参数。</CardDescription>
                 </div>
               </div>
             </CardHeader>
@@ -397,12 +407,14 @@ function DebugEventsTable({ projectId, rows, loading }: { projectId?: number; ro
   }
   return (
     <div className="max-w-full overflow-x-auto rounded-md border">
-      <Table className="min-w-[1060px]">
+      <Table className="min-w-[1540px]">
         <TableHeader>
           <TableRow>
             <TableHead className="w-40">时间</TableHead>
             <TableHead className="w-40">事件</TableHead>
             <TableHead className="w-32">结果</TableHead>
+            <TableHead className="w-[340px]">接收链路</TableHead>
+            <TableHead className="w-64">Insert / Session</TableHead>
             <TableHead className="w-52">用户</TableHead>
             <TableHead className="w-72">参数摘要</TableHead>
             <TableHead>原因</TableHead>
@@ -414,6 +426,11 @@ function DebugEventsTable({ projectId, rows, loading }: { projectId?: number; ro
               <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{formatTime(item.created_at)}</TableCell>
               <TableCell className="font-medium">{item.event || item.event_type}</TableCell>
               <TableCell><ResultBadge result={item.result} /></TableCell>
+              <TableCell><TraceStages item={item} /></TableCell>
+              <TableCell className="max-w-64 font-mono text-xs text-muted-foreground">
+                <div className="truncate" title={item.insert_id || item.trace_id || ""}>{item.insert_id || item.trace_id || "-"}</div>
+                <div className="mt-1 truncate" title={item.session_id || ""}>{item.session_id || "-"}</div>
+              </TableCell>
               <TableCell className="max-w-52 text-xs text-muted-foreground">
                 <UserTimelineLink projectId={projectId} item={item} />
               </TableCell>
@@ -425,6 +442,35 @@ function DebugEventsTable({ projectId, rows, loading }: { projectId?: number; ro
           ))}
         </TableBody>
       </Table>
+    </div>
+  );
+}
+
+function TraceStages({ item }: { item: DebugEvent }) {
+  const kafkaCoordinate = item.kafka_topic
+    ? `${item.kafka_topic}:${item.kafka_partition ?? "-"}:${item.kafka_offset ?? "-"}`
+    : "未到达 Kafka";
+  const stages = [
+    { label: "Collector", done: Boolean(item.collector_received_at), title: item.collector_received_at ? formatTime(item.collector_received_at) : "未记录" },
+    { label: "Kafka", done: Boolean(item.kafka_topic), title: kafkaCoordinate },
+    { label: "Consumer", done: Boolean(item.consumer_received_at), title: item.consumer_received_at ? formatTime(item.consumer_received_at) : "未消费" },
+    { label: "ClickHouse", done: Boolean(item.clickhouse_written_at), title: item.clickhouse_written_at ? formatTime(item.clickhouse_written_at) : "未写入" },
+  ];
+
+  return (
+    <div className="flex min-w-0 items-center gap-1">
+      {stages.map((stage, index) => (
+        <div key={stage.label} className="flex min-w-0 items-center gap-1">
+          {index > 0 ? <span className="text-muted-foreground/50">→</span> : null}
+          <Badge
+            variant={stage.done ? "success" : item.chain_status === "collector_rejected" && index > 0 ? "danger" : "secondary"}
+            className="whitespace-nowrap"
+            title={stage.title}
+          >
+            {stage.label}
+          </Badge>
+        </div>
+      ))}
     </div>
   );
 }

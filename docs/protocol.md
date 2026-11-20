@@ -135,6 +135,17 @@ SDK 应保证：
 4. **容量**：本地最多保留 7 天 / 10000 条，超限丢弃最旧；
 5. **去重**：每条事件由 SDK 生成 UUID 写入 `properties.$insert_id`，服务端可据此去重。
 
+### 全链路调试
+
+SDK Debugger 使用 `properties.$insert_id` 作为首选链路 ID，并同时记录 `properties.$session_id`、`properties.$device_id`、用户标识和 SDK 版本。服务端依次记录：
+
+1. Collector 接收时间；
+2. Kafka Topic、partition、offset；
+3. Consumer 消费时间；
+4. ClickHouse 完成写入时间。
+
+客户端必须保证同一项目内 `$insert_id` 唯一。未提供 `$insert_id` 的消息仍可消费，服务端会以 Kafka 坐标生成内部 `trace_id`，但客户端无法用自身 ID 精确检索该事件。
+
 ## 7. 用户身份
 
 - **anonymous_id**：SDK 首次启动生成 UUID，存本地；

@@ -384,9 +384,14 @@ func (h *GovernanceHandler) debugEvents(c *gin.Context) {
 	event := c.Query("event")
 	result := c.Query("result")
 	distinctID := c.Query("distinct_id")
+	trace := strings.TrimSpace(c.Query("trace"))
 	includeGlobal := c.Query("include_global") == "1" || c.Query("include_global") == "true"
 
-	q := `SELECT id, COALESCE(project_id,0), event, event_type, distinct_id, user_id, anonymous_id, result, COALESCE(reason,''), payload, received_at, created_at
+	q := `SELECT id, COALESCE(project_id,0), event, event_type, distinct_id, user_id, anonymous_id,
+	             result, COALESCE(reason,''), payload, received_at, created_at,
+	             trace_id, insert_id, session_id, device_id, sdk_lib, sdk_version,
+	             kafka_topic, kafka_partition, kafka_offset,
+	             collector_received_at, consumer_received_at, clickhouse_written_at, chain_status
 	      FROM debug_events WHERE `
 	args := []any{projectID}
 	if includeGlobal {
@@ -405,6 +410,11 @@ func (h *GovernanceHandler) debugEvents(c *gin.Context) {
 	if distinctID != "" {
 		args = append(args, distinctID)
 		q += ` AND distinct_id=$` + strconv.Itoa(len(args))
+	}
+	if trace != "" {
+		args = append(args, trace)
+		placeholder := `$` + strconv.Itoa(len(args))
+		q += ` AND (trace_id=` + placeholder + ` OR insert_id=` + placeholder + ` OR session_id=` + placeholder + `)`
 	}
 	args = append(args, limit)
 	q += ` ORDER BY created_at DESC LIMIT $` + strconv.Itoa(len(args))
@@ -429,12 +439,31 @@ func (h *GovernanceHandler) debugEvents(c *gin.Context) {
 		Payload     map[string]interface{} `json:"payload"`
 		ReceivedAt  *time.Time             `json:"received_at,omitempty"`
 		CreatedAt   time.Time              `json:"created_at"`
+		TraceID     string                 `json:"trace_id"`
+		InsertID    string                 `json:"insert_id"`
+		SessionID   string                 `json:"session_id"`
+		DeviceID    string                 `json:"device_id"`
+		SDKLib      string                 `json:"sdk_lib"`
+		SDKVersion  string                 `json:"sdk_version"`
+		KafkaTopic  string                 `json:"kafka_topic"`
+		KafkaPart   *int32                 `json:"kafka_partition,omitempty"`
+		KafkaOffset *int64                 `json:"kafka_offset,omitempty"`
+		CollectorAt *time.Time             `json:"collector_received_at,omitempty"`
+		ConsumerAt  *time.Time             `json:"consumer_received_at,omitempty"`
+		StoredAt    *time.Time             `json:"clickhouse_written_at,omitempty"`
+		ChainStatus string                 `json:"chain_status"`
 	}
 	out := []DebugEvent{}
 	for rows.Next() {
 		var it DebugEvent
 		var raw []byte
-		if err := rows.Scan(&it.ID, &it.ProjectID, &it.Event, &it.EventType, &it.DistinctID, &it.UserID, &it.AnonymousID, &it.Result, &it.Reason, &raw, &it.ReceivedAt, &it.CreatedAt); err != nil {
+		if err := rows.Scan(
+			&it.ID, &it.ProjectID, &it.Event, &it.EventType, &it.DistinctID, &it.UserID, &it.AnonymousID,
+			&it.Result, &it.Reason, &raw, &it.ReceivedAt, &it.CreatedAt,
+			&it.TraceID, &it.InsertID, &it.SessionID, &it.DeviceID, &it.SDKLib, &it.SDKVersion,
+			&it.KafkaTopic, &it.KafkaPart, &it.KafkaOffset,
+			&it.CollectorAt, &it.ConsumerAt, &it.StoredAt, &it.ChainStatus,
+		); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
 			return
 		}

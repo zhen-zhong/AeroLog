@@ -10,6 +10,8 @@ CREATE TABLE IF NOT EXISTS aerolog.events
     distinct_id   String,
     user_id       String DEFAULT '',
     anonymous_id  String DEFAULT '',
+    insert_id     String DEFAULT '',
+    session_id    String DEFAULT '',
     time          DateTime64(3, 'UTC'),
     date          Date DEFAULT toDate(time),
     -- 上下文（高频维度抽列，便于查询）
@@ -63,3 +65,5 @@ ORDER BY (project_id, distinct_id);
 
 ALTER TABLE aerolog.users ADD COLUMN IF NOT EXISTS user_id String DEFAULT '';
 ALTER TABLE aerolog.users ADD COLUMN IF NOT EXISTS anonymous_id String DEFAULT '';
+ALTER TABLE aerolog.events ADD COLUMN IF NOT EXISTS insert_id String DEFAULT '' AFTER anonymous_id;
+ALTER TABLE aerolog.events ADD COLUMN IF NOT EXISTS session_id String DEFAULT '' AFTER insert_id;

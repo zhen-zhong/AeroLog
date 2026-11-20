@@ -403,9 +403,38 @@ func (s *Syncer) insertDebugEvents(ctx context.Context, events []*model.Envelope
 			reason = summarizeIssues(issues)
 		}
 		batch.Queue(`
-			INSERT INTO debug_events(project_id, event, event_type, distinct_id, user_id, anonymous_id, result, reason, payload, received_at)
-			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-		`, int64(env.ProjectID), env.Event.Event, string(env.Event.Type), env.Event.DistinctID, env.Event.UserID, env.Event.AnonymousID, result, reason, payload, observedAt(env))
+			INSERT INTO debug_events(
+				project_id, event, event_type, distinct_id, user_id, anonymous_id,
+				result, reason, payload, received_at, trace_id, insert_id, session_id,
+				device_id, sdk_lib, sdk_version, kafka_topic, kafka_partition,
+				kafka_offset, collector_received_at, consumer_received_at, chain_status
+			)
+			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,'consumer_received')
+			ON CONFLICT(project_id, trace_id) WHERE project_id IS NOT NULL AND trace_id <> '' DO UPDATE SET
+				event=EXCLUDED.event,
+				event_type=EXCLUDED.event_type,
+				distinct_id=EXCLUDED.distinct_id,
+				user_id=EXCLUDED.user_id,
+				anonymous_id=EXCLUDED.anonymous_id,
+				result=EXCLUDED.result,
+				reason=EXCLUDED.reason,
+				payload=EXCLUDED.payload,
+				received_at=EXCLUDED.received_at,
+				insert_id=EXCLUDED.insert_id,
+				session_id=EXCLUDED.session_id,
+				device_id=EXCLUDED.device_id,
+				sdk_lib=EXCLUDED.sdk_lib,
+				sdk_version=EXCLUDED.sdk_version,
+				kafka_topic=EXCLUDED.kafka_topic,
+				kafka_partition=EXCLUDED.kafka_partition,
+				kafka_offset=EXCLUDED.kafka_offset,
+				collector_received_at=COALESCE(debug_events.collector_received_at, EXCLUDED.collector_received_at),
+				consumer_received_at=EXCLUDED.consumer_received_at,
+				chain_status=CASE WHEN debug_events.clickhouse_written_at IS NULL THEN EXCLUDED.chain_status ELSE debug_events.chain_status END
+		`, int64(env.ProjectID), env.Event.Event, string(env.Event.Type), env.Event.DistinctID, env.Event.UserID, env.Event.AnonymousID,
+			result, reason, payload, observedAt(env), env.Trace.TraceID, env.Trace.InsertID, env.Trace.SessionID,
+			env.Trace.DeviceID, env.Event.Lib.Name, env.Event.Lib.Version, env.Trace.KafkaTopic, env.Trace.KafkaPartition,
+			env.Trace.KafkaOffset, millisTime(env.Trace.CollectorReceivedAt), millisTime(env.Trace.ConsumerReceivedAt))
 		queued++
 	}
 	if queued == 0 {
@@ -419,6 +448,44 @@ func (s *Syncer) insertDebugEvents(ctx context.Context, events []*model.Envelope
 		}
 	}
 	return nil
+}
+
+// MarkStored 记录事件批次已完成持久化写入。
+func (s *Syncer) MarkStored(ctx context.Context, events []*model.EnvelopedEvent) error {
+	if s == nil || s.pg == nil || len(events) == 0 {
+		return nil
+	}
+	var batch pgx.Batch
+	queued := 0
+	for _, env := range events {
+		if env == nil || env.Trace.TraceID == "" {
+			continue
+		}
+		batch.Queue(`
+			UPDATE debug_events
+			SET clickhouse_written_at=now(), chain_status='clickhouse_written'
+			WHERE project_id=$1 AND trace_id=$2
+		`, int64(env.ProjectID), env.Trace.TraceID)
+		queued++
+	}
+	if queued == 0 {
+		return nil
+	}
+	results := s.pg.SendBatch(ctx, &batch)
+	defer results.Close()
+	for i := 0; i < queued; i++ {
+		if _, err := results.Exec(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func millisTime(value int64) interface{} {
+	if value <= 0 {
+		return nil
+	}
+	return time.UnixMilli(value).UTC()
 }
 
 func (s *Syncer) insertSchemaIssues(ctx context.Context, issues []schemaIssue) error {

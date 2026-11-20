@@ -39,6 +39,15 @@ func New(addr, db, user, password string) (*Sink, error) {
 	if err := conn.Ping(context.Background()); err != nil {
 		return nil, err
 	}
+	for _, query := range []string{
+		`ALTER TABLE events ADD COLUMN IF NOT EXISTS insert_id String DEFAULT '' AFTER anonymous_id`,
+		`ALTER TABLE events ADD COLUMN IF NOT EXISTS session_id String DEFAULT '' AFTER insert_id`,
+	} {
+		if err := conn.Exec(context.Background(), query); err != nil {
+			_ = conn.Close()
+			return nil, err
+		}
+	}
 	return &Sink{conn: conn}, nil
 }
 
@@ -49,7 +58,7 @@ func (s *Sink) WriteBatch(ctx context.Context, evts []*model.EnvelopedEvent) err
 		return nil
 	}
 	batch, err := s.conn.PrepareBatch(ctx, `INSERT INTO events (
-		project_id, event, distinct_id, user_id, anonymous_id,
+		project_id, event, distinct_id, user_id, anonymous_id, insert_id, session_id,
 		time, lib, lib_version, os, os_version, device_model,
 		app_version, network, screen_w, screen_h,
 		ip, country, province, city, browser, browser_ver,
@@ -77,6 +86,8 @@ func (s *Sink) WriteBatch(ctx context.Context, evts []*model.EnvelopedEvent) err
 			e.Event.DistinctID,
 			e.Event.UserID,
 			e.Event.AnonymousID,
+			e.Trace.InsertID,
+			e.Trace.SessionID,
 			time.UnixMilli(e.Event.Time).UTC(),
 			e.Event.Lib.Name,
 			e.Event.Lib.Version,
