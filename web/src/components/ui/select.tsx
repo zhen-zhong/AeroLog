@@ -48,6 +48,9 @@ const SelectContent = React.forwardRef<
         const text = item.textContent?.trim().toLocaleLowerCase() || "";
         const visible = !normalizedQuery || fuzzyMatch(text, normalizedQuery);
         item.hidden = !visible;
+        // SelectItem 自带 display:flex；作者样式会覆盖浏览器对 hidden
+        // 属性的默认 display:none，因此必须用内联样式真正隐藏选项。
+        item.style.display = visible ? "" : "none";
         item.setAttribute("aria-hidden", String(!visible));
         if (visible) matches += 1;
       });
