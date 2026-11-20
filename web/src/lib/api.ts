@@ -546,6 +546,43 @@ export interface DashboardWidgetInput {
     display_config?: Record<string, unknown>;
     layout_config?: Record<string, unknown>;
 }
+export interface DashboardSubscription {
+    dashboard_id: number;
+    project_id: number;
+    enabled: boolean;
+    cadence: "daily" | "weekly";
+    send_hour: number;
+    weekday: number;
+    last_sent_at?: string;
+    last_period_key: string;
+    updated_at?: string;
+}
+export interface DashboardAlertRule {
+    id: number;
+    dashboard_id: number;
+    project_id: number;
+    name: string;
+    metric: "event_count" | "unique_users";
+    event: string;
+    operator: "gt" | "gte" | "lt" | "lte";
+    threshold: number;
+    window_minutes: number;
+    cooldown_minutes: number;
+    enabled: boolean;
+    last_state: boolean;
+    last_value?: number;
+    last_evaluated_at?: string;
+    last_notified_at?: string;
+    created_at: string;
+    updated_at: string;
+}
+export interface DashboardMonitoring {
+    subscription: DashboardSubscription;
+    rules: DashboardAlertRule[];
+}
+export type DashboardAlertRuleInput = Pick<DashboardAlertRule,
+    "name" | "metric" | "event" | "operator" | "threshold" | "window_minutes" | "cooldown_minutes" | "enabled"
+>;
 export interface SegmentEventRule {
     event: string;
     condition?: "has" | "not_has";
@@ -1317,6 +1354,28 @@ export const api = {
         req<ApiOne<{ ok: boolean }>>(`/projects/${id}/dashboards/${dashboardId}/widgets/${widgetId}`, { method: "DELETE" }),
     copyDashboardWidget: (id: number | string, dashboardId: number | string, widgetId: number | string) =>
         req<ApiOne<DashboardWidget>>(`/projects/${id}/dashboards/${dashboardId}/widgets/${widgetId}/copy`, { method: "POST" }),
+    getDashboardMonitoring: (id: number | string, dashboardId: number | string) =>
+        req<ApiOne<DashboardMonitoring>>(`/projects/${id}/dashboards/${dashboardId}/monitoring`),
+    updateDashboardSubscription: (
+        id: number | string,
+        dashboardId: number | string,
+        body: Pick<DashboardSubscription, "enabled" | "cadence" | "send_hour" | "weekday">,
+    ) => req<ApiOne<DashboardSubscription>>(`/projects/${id}/dashboards/${dashboardId}/subscription`, {
+        method: "PUT",
+        body: JSON.stringify(body),
+    }),
+    createDashboardAlertRule: (id: number | string, dashboardId: number | string, body: DashboardAlertRuleInput) =>
+        req<ApiOne<DashboardAlertRule>>(`/projects/${id}/dashboards/${dashboardId}/alert_rules`, {
+            method: "POST",
+            body: JSON.stringify(body),
+        }),
+    updateDashboardAlertRule: (id: number | string, dashboardId: number | string, ruleId: number | string, body: DashboardAlertRuleInput) =>
+        req<ApiOne<DashboardAlertRule>>(`/projects/${id}/dashboards/${dashboardId}/alert_rules/${ruleId}`, {
+            method: "PATCH",
+            body: JSON.stringify(body),
+        }),
+    deleteDashboardAlertRule: (id: number | string, dashboardId: number | string, ruleId: number | string) =>
+        req<ApiOne<{ ok: boolean }>>(`/projects/${id}/dashboards/${dashboardId}/alert_rules/${ruleId}`, { method: "DELETE" }),
     createAnalyticsJob: (
         id: number | string,
         body: { type: "query_export"; input: Record<string, unknown> },

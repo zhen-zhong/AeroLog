@@ -47,6 +47,8 @@ Prometheus ◄── API / Collector / Consumer / Node Exporter ──► Grafan
 
 对账异常仅在完整覆盖且绝对差值、比例同时达到 `AEROLOG_SENSORS_RECONCILIATION_ALERT_MIN_COUNT`、`AEROLOG_SENSORS_RECONCILIATION_ALERT_MIN_RATE` 时创建告警；相同项目、日期、异常类型按 `AEROLOG_SENSORS_RECONCILIATION_ALERT_SILENCE_MINUTES` 静默。控制台可确认或关闭告警，并保存处理人、时间与关闭备注。
 
+数据看板支持显式启用企业微信日报/周报，以及项目级核心指标阈值。订阅按项目时区统计上一完整自然日或此前 7 个完整自然日；异常检测每 5 分钟执行，只允许 `event_count`、`unique_users`、项目内已登记事件、固定比较运算符和固定时间窗口。规则支持静默期、恢复通知、最后检测值与状态反显；未配置时不发送任何消息。
+
 ### 2.2 机器人与宿主机巡检
 
 | 服务 | 角色 | 权限边界 |
@@ -91,7 +93,7 @@ Redpanda 对容器使用 `redpanda:9092`。神策订阅使用专用外部 listen
 | `node-exporter` | 宿主机 CPU、内存、磁盘等指标 |
 | `grafana` | Prometheus 可视化仪表盘 |
 
-企业微信告警由 API 运行期监控发送，可覆盖神策消费者、Kafka lag、DLQ、ClickHouse 写入与神策对账异常。告警 Webhook 不写入仓库。
+企业微信告警由 API 运行期监控发送，可覆盖神策消费者、Kafka lag、DLQ、ClickHouse 写入、神策对账异常和看板指标阈值；用户显式启用的看板摘要也复用同一受控 Webhook。告警 Webhook 不写入仓库。
 
 ## 3. 启动方式
 

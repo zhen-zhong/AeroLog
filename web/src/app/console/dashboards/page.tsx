@@ -7,6 +7,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Responsive, WidthProvider, type Layout } from "react-grid-layout";
 import {
   BarChart3,
+  Bell,
   Copy,
   Gauge,
   GitBranch,
@@ -34,6 +35,8 @@ import {
   CohortTableRow,
   ConversionStep,
   Dashboard,
+  DashboardAlertRule,
+  DashboardAlertRuleInput,
   DashboardWidget,
   DashboardWidgetInput,
   DashboardWidgetType,
@@ -233,6 +236,26 @@ function defaultWidgetTitle(type: DashboardWidgetType) {
   return "说明";
 }
 
+function dashboardRuleOperator(operator: DashboardAlertRule["operator"]) {
+  if (operator === "gt") return ">";
+  if (operator === "gte") return "≥";
+  if (operator === "lt") return "<";
+  return "≤";
+}
+
+function dashboardRuleInput(rule: DashboardAlertRule, enabled: boolean): DashboardAlertRuleInput {
+  return {
+    name: rule.name,
+    metric: rule.metric,
+    event: rule.event,
+    operator: rule.operator,
+    threshold: rule.threshold,
+    window_minutes: rule.window_minutes,
+    cooldown_minutes: rule.cooldown_minutes,
+    enabled,
+  };
+}
+
 export default function DashboardsPage() {
   const projectId = useProjectStore((state) => state.projectId);
   const queryClient = useQueryClient();
@@ -243,6 +266,18 @@ export default function DashboardsPage() {
   const [dashboardName, setDashboardName] = useState("");
   const [dashboardDescription, setDashboardDescription] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [monitoringOpen, setMonitoringOpen] = useState(false);
+  const [subscriptionEnabled, setSubscriptionEnabled] = useState(false);
+  const [subscriptionCadence, setSubscriptionCadence] = useState<"daily" | "weekly">("daily");
+  const [subscriptionHour, setSubscriptionHour] = useState("9");
+  const [subscriptionWeekday, setSubscriptionWeekday] = useState("1");
+  const [ruleName, setRuleName] = useState("");
+  const [ruleMetric, setRuleMetric] = useState<DashboardAlertRule["metric"]>("event_count");
+  const [ruleEvent, setRuleEvent] = useState("__all__");
+  const [ruleOperator, setRuleOperator] = useState<DashboardAlertRule["operator"]>("lt");
+  const [ruleThreshold, setRuleThreshold] = useState("0");
+  const [ruleWindow, setRuleWindow] = useState("60");
+  const [ruleCooldown, setRuleCooldown] = useState("360");
   const [addOpen, setAddOpen] = useState(false);
   const [addMode, setAddMode] = useState<"report" | "funnel">("report");
   const [templateId, setTemplateId] = useState("");
@@ -276,6 +311,11 @@ export default function DashboardsPage() {
     queryKey: ["dashboard_events", projectId],
     queryFn: () => api.listEvents(projectId!),
     enabled: !!projectId,
+  });
+  const monitoring = useQuery({
+    queryKey: ["dashboard_monitoring", projectId, selectedId],
+    queryFn: () => api.getDashboardMonitoring(projectId!, selectedId!),
+    enabled: !!projectId && !!selectedId,
   });
 
   const dashboardRows = dashboards.data?.data || [];
@@ -319,7 +359,17 @@ export default function DashboardsPage() {
   useEffect(() => {
     setSelectedId(undefined);
     setEditing(false);
+    setMonitoringOpen(false);
   }, [projectId]);
+
+  useEffect(() => {
+    if (!monitoringOpen || !monitoring.data?.data.subscription) return;
+    const item = monitoring.data.data.subscription;
+    setSubscriptionEnabled(item.enabled);
+    setSubscriptionCadence(item.cadence);
+    setSubscriptionHour(String(item.send_hour));
+    setSubscriptionWeekday(String(item.weekday));
+  }, [monitoringOpen, monitoring.data]);
 
   useEffect(() => {
     if (!dashboardRows.length) {
@@ -402,6 +452,49 @@ export default function DashboardsPage() {
   const copyWidget = useMutation({
     mutationFn: (id: number) => api.copyDashboardWidget(projectId!, selectedId!, id),
     onSuccess: refresh,
+  });
+
+  const refreshMonitoring = () => {
+    void queryClient.invalidateQueries({ queryKey: ["dashboard_monitoring", projectId, selectedId] });
+  };
+
+  const saveSubscription = useMutation({
+    mutationFn: () => api.updateDashboardSubscription(projectId!, selectedId!, {
+      enabled: subscriptionEnabled,
+      cadence: subscriptionCadence,
+      send_hour: Number(subscriptionHour),
+      weekday: Number(subscriptionWeekday),
+    }),
+    onSuccess: refreshMonitoring,
+  });
+
+  const createAlertRule = useMutation({
+    mutationFn: () => api.createDashboardAlertRule(projectId!, selectedId!, {
+      name: ruleName.trim(),
+      metric: ruleMetric,
+      event: ruleEvent === "__all__" ? "" : ruleEvent,
+      operator: ruleOperator,
+      threshold: Number(ruleThreshold),
+      window_minutes: Number(ruleWindow),
+      cooldown_minutes: Number(ruleCooldown),
+      enabled: true,
+    }),
+    onSuccess: () => {
+      setRuleName("");
+      setRuleThreshold("0");
+      refreshMonitoring();
+    },
+  });
+
+  const updateAlertRule = useMutation({
+    mutationFn: ({ rule, body }: { rule: DashboardAlertRule; body: DashboardAlertRuleInput }) =>
+      api.updateDashboardAlertRule(projectId!, selectedId!, rule.id, body),
+    onSuccess: refreshMonitoring,
+  });
+
+  const deleteAlertRule = useMutation({
+    mutationFn: (ruleId: number) => api.deleteDashboardAlertRule(projectId!, selectedId!, ruleId),
+    onSuccess: refreshMonitoring,
   });
 
   const saveLayouts = useMutation({
@@ -494,6 +587,13 @@ export default function DashboardsPage() {
                     {selected.description ? <p className="mt-1 truncate text-xs text-muted-foreground">{selected.description}</p> : null}
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
+                    <Button size="sm" variant="outline" onClick={() => setMonitoringOpen(true)}>
+                      <Bell className="h-3.5 w-3.5" />
+                      订阅与告警
+                      {(monitoring.data?.data.rules || []).filter((item) => item.enabled).length ? (
+                        <Badge variant="warning" className="ml-1">{(monitoring.data?.data.rules || []).filter((item) => item.enabled).length}</Badge>
+                      ) : null}
+                    </Button>
                     <Button size="sm" variant="outline" onClick={openSettings}><Pencil className="h-3.5 w-3.5" />设置</Button>
                     <Button size="sm" variant={editing ? "secondary" : "outline"} onClick={() => setEditing((value) => !value)}>{editing ? "完成编辑" : "编辑布局"}</Button>
                     {editing ? <Button size="sm" onClick={() => { setAddMode("report"); setNewWidgetType("line"); setNewWidgetTitle(""); setNewMetric("count"); setAddOpen(true); }}><Plus className="h-3.5 w-3.5" />添加组件</Button> : null}
@@ -565,6 +665,104 @@ export default function DashboardsPage() {
           <DialogHeader><DialogTitle>看板设置</DialogTitle><DialogDescription>修改名称和说明，不影响现有组件。</DialogDescription></DialogHeader>
           <div className="grid gap-3"><div className="grid gap-1.5"><Label>看板名称</Label><Input value={dashboardName} onChange={(event) => setDashboardName(event.target.value)} /></div><div className="grid gap-1.5"><Label>说明</Label><Input value={dashboardDescription} onChange={(event) => setDashboardDescription(event.target.value)} /></div></div>
           <DialogFooter><Button variant="outline" onClick={() => setSettingsOpen(false)}>取消</Button><Button disabled={!dashboardName.trim() || updateDashboard.isPending} onClick={() => updateDashboard.mutate()}>保存</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={monitoringOpen} onOpenChange={setMonitoringOpen}>
+        <DialogContent className="max-h-[88vh] max-w-4xl overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>看板订阅与异常检测</DialogTitle>
+            <DialogDescription>企业微信定时发送完整周期摘要；阈值规则每 5 分钟检测一次。新配置默认不会自动创建。</DialogDescription>
+          </DialogHeader>
+
+          <div className="grid gap-4 rounded-lg border p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <div className="font-medium">企业微信摘要订阅</div>
+                <div className="mt-1 text-xs text-muted-foreground">日报统计上一完整自然日，周报统计此前 7 个完整自然日；时区使用项目配置。</div>
+              </div>
+              <Button
+                type="button"
+                variant={subscriptionEnabled ? "default" : "outline"}
+                onClick={() => setSubscriptionEnabled((value) => !value)}
+              >
+                {subscriptionEnabled ? "已启用" : "已关闭"}
+              </Button>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="grid gap-1.5">
+                <Label>频率</Label>
+                <Select value={subscriptionCadence} onValueChange={(value) => setSubscriptionCadence(value as "daily" | "weekly")}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent><SelectItem value="daily">每日</SelectItem><SelectItem value="weekly">每周</SelectItem></SelectContent>
+                </Select>
+              </div>
+              {subscriptionCadence === "weekly" ? (
+                <div className="grid gap-1.5">
+                  <Label>发送日</Label>
+                  <Select value={subscriptionWeekday} onValueChange={setSubscriptionWeekday}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>{["周一", "周二", "周三", "周四", "周五", "周六", "周日"].map((label, index) => <SelectItem key={label} value={String(index + 1)}>{label}</SelectItem>)}</SelectContent>
+                  </Select>
+                </div>
+              ) : <div />}
+              <div className="grid gap-1.5">
+                <Label>发送时间</Label>
+                <Select value={subscriptionHour} onValueChange={setSubscriptionHour}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>{Array.from({ length: 24 }, (_, hour) => <SelectItem key={hour} value={String(hour)}>{String(hour).padStart(2, "0")}:00</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-xs text-muted-foreground">
+                {monitoring.data?.data.subscription.last_sent_at ? `上次发送：${dayjs(monitoring.data.data.subscription.last_sent_at).format("YYYY-MM-DD HH:mm:ss")}` : "尚未发送"}
+              </span>
+              <Button type="button" disabled={saveSubscription.isPending} onClick={() => saveSubscription.mutate()}>
+                {saveSubscription.isPending ? "保存中…" : "保存订阅"}
+              </Button>
+            </div>
+            {saveSubscription.error ? <Badge variant="danger">{String(saveSubscription.error)}</Badge> : null}
+          </div>
+
+          <div className="grid gap-4 rounded-lg border p-4">
+            <div>
+              <div className="font-medium">项目级指标阈值</div>
+              <div className="mt-1 text-xs text-muted-foreground">仅支持固定指标和已登记事件；通知进入静默期后，恢复时再推送恢复消息。</div>
+            </div>
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+              <div className="grid gap-1.5 md:col-span-2"><Label>规则名称</Label><Input value={ruleName} onChange={(event) => setRuleName(event.target.value)} placeholder="例如 ad_show 一小时低于 100" /></div>
+              <div className="grid gap-1.5"><Label>事件</Label><Select value={ruleEvent} onValueChange={setRuleEvent}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="__all__">全部事件</SelectItem>{eventNames.map((event) => <SelectItem key={event} value={event}>{event}</SelectItem>)}</SelectContent></Select></div>
+              <div className="grid gap-1.5"><Label>指标</Label><Select value={ruleMetric} onValueChange={(value) => setRuleMetric(value as DashboardAlertRule["metric"])}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="event_count">事件次数</SelectItem><SelectItem value="unique_users">去重用户数</SelectItem></SelectContent></Select></div>
+              <div className="grid gap-1.5"><Label>条件</Label><Select value={ruleOperator} onValueChange={(value) => setRuleOperator(value as DashboardAlertRule["operator"])}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="lt">小于</SelectItem><SelectItem value="lte">小于等于</SelectItem><SelectItem value="gt">大于</SelectItem><SelectItem value="gte">大于等于</SelectItem></SelectContent></Select></div>
+              <div className="grid gap-1.5"><Label>阈值</Label><Input type="number" min="0" value={ruleThreshold} onChange={(event) => setRuleThreshold(event.target.value)} /></div>
+              <div className="grid gap-1.5"><Label>检测窗口</Label><Select value={ruleWindow} onValueChange={setRuleWindow}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="5">近 5 分钟</SelectItem><SelectItem value="15">近 15 分钟</SelectItem><SelectItem value="60">近 1 小时</SelectItem><SelectItem value="360">近 6 小时</SelectItem><SelectItem value="1440">近 24 小时</SelectItem><SelectItem value="10080">近 7 天</SelectItem></SelectContent></Select></div>
+              <div className="grid gap-1.5"><Label>重复通知静默期</Label><Select value={ruleCooldown} onValueChange={setRuleCooldown}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="60">1 小时</SelectItem><SelectItem value="360">6 小时</SelectItem><SelectItem value="720">12 小时</SelectItem><SelectItem value="1440">24 小时</SelectItem><SelectItem value="10080">7 天</SelectItem></SelectContent></Select></div>
+            </div>
+            <div className="flex justify-end"><Button disabled={!ruleName.trim() || !Number.isFinite(Number(ruleThreshold)) || createAlertRule.isPending} onClick={() => createAlertRule.mutate()}>{createAlertRule.isPending ? "创建中…" : "创建规则"}</Button></div>
+            {createAlertRule.error ? <Badge variant="danger">{String(createAlertRule.error)}</Badge> : null}
+
+            {(monitoring.data?.data.rules || []).length ? (
+              <div className="overflow-x-auto rounded-md border">
+                <Table className="min-w-[900px]">
+                  <TableHeader><TableRow><TableHead>规则</TableHead><TableHead>指标</TableHead><TableHead>窗口 / 静默</TableHead><TableHead>当前状态</TableHead><TableHead>最后检测</TableHead><TableHead className="text-right">操作</TableHead></TableRow></TableHeader>
+                  <TableBody>{(monitoring.data?.data.rules || []).map((rule) => (
+                    <TableRow key={rule.id}>
+                      <TableCell><div className="font-medium">{rule.name}</div><div className="text-xs text-muted-foreground">{rule.event || "全部事件"}</div></TableCell>
+                      <TableCell className="text-sm">{rule.metric === "event_count" ? "事件次数" : "去重用户数"} {dashboardRuleOperator(rule.operator)} {rule.threshold.toLocaleString()}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground">{rule.window_minutes} 分钟 / {rule.cooldown_minutes} 分钟</TableCell>
+                      <TableCell><Badge variant={!rule.enabled ? "secondary" : rule.last_state ? "danger" : "success"}>{!rule.enabled ? "已停用" : rule.last_state ? "异常" : "正常"}</Badge>{typeof rule.last_value === "number" ? <div className="mt-1 text-xs text-muted-foreground">值：{rule.last_value.toLocaleString()}</div> : null}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground">{rule.last_evaluated_at ? dayjs(rule.last_evaluated_at).format("YYYY-MM-DD HH:mm:ss") : "尚未检测"}</TableCell>
+                      <TableCell className="text-right"><div className="flex justify-end gap-2"><Button size="sm" variant="outline" disabled={updateAlertRule.isPending} onClick={() => updateAlertRule.mutate({ rule, body: dashboardRuleInput(rule, !rule.enabled) })}>{rule.enabled ? "停用" : "启用"}</Button><Button size="sm" variant="outline" disabled={deleteAlertRule.isPending} onClick={() => { if (window.confirm(`确定删除规则“${rule.name}”？`)) deleteAlertRule.mutate(rule.id); }}>删除</Button></div></TableCell>
+                    </TableRow>
+                  ))}</TableBody>
+                </Table>
+              </div>
+            ) : <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">暂无阈值规则。</div>}
+            {updateAlertRule.error || deleteAlertRule.error ? <Badge variant="danger">{String(updateAlertRule.error || deleteAlertRule.error)}</Badge> : null}
+          </div>
+
+          <DialogFooter><Button variant="outline" onClick={() => setMonitoringOpen(false)}>关闭</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 

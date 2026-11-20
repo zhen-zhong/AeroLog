@@ -28,6 +28,11 @@ func (h *DashboardHandler) Register(r *gin.RouterGroup) {
 	r.PATCH("/projects/:id/dashboards/:dashboard_id/widgets/:widget_id", h.updateWidget)
 	r.DELETE("/projects/:id/dashboards/:dashboard_id/widgets/:widget_id", h.removeWidget)
 	r.POST("/projects/:id/dashboards/:dashboard_id/widgets/:widget_id/copy", h.copyWidget)
+	r.GET("/projects/:id/dashboards/:dashboard_id/monitoring", h.getMonitoring)
+	r.PUT("/projects/:id/dashboards/:dashboard_id/subscription", h.updateSubscription)
+	r.POST("/projects/:id/dashboards/:dashboard_id/alert_rules", h.createAlertRule)
+	r.PATCH("/projects/:id/dashboards/:dashboard_id/alert_rules/:rule_id", h.updateAlertRule)
+	r.DELETE("/projects/:id/dashboards/:dashboard_id/alert_rules/:rule_id", h.deleteAlertRule)
 }
 
 type Dashboard struct {
