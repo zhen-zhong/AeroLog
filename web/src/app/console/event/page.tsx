@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import dynamic from "next/dynamic";
 import dayjs, { Dayjs } from "dayjs";
-import { Plus, Trash2 } from "lucide-react";
+import { Filter, Plus, Trash2, X } from "lucide-react";
 import {
   AnalyticsHeader,
   ChartPanel,
@@ -18,7 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { api, QueryTableRow } from "@/lib/api";
+import { api, QueryFilter, QueryTableRow } from "@/lib/api";
 import { useProjectStore } from "@/stores/project-store";
 
 const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
@@ -26,7 +26,32 @@ const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
 type MetricKind = "count" | "users" | "sum" | "avg";
 type ChartKind = "line" | "bar";
 type EventMetric = { id: string; event: string; kind: MetricKind; property: string };
+type DraftFilter = {
+  id: string;
+  property: string;
+  scope: "event" | "user";
+  op: "eq" | "neq" | "exists" | "in";
+  value: string;
+};
 type MetricSeries = { metric: EventMetric; name: string; points: Map<string, number>; total: number };
+
+function createFilterId() {
+  return `filter_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+}
+
+function isBooleanFilter(property: { data_type?: string } | undefined) {
+  return property?.data_type === "bool";
+}
+
+function isMultiValueFilter(property: string) {
+  return property === "$ip" || property === "$country" || property === "$province" || property === "$city";
+}
+
+function buildFilterValue(filter: DraftFilter) {
+  if (filter.op === "exists") return undefined;
+  if (filter.op === "in") return filter.value.split(",").map((value) => value.trim()).filter(Boolean);
+  return filter.value;
+}
 
 const metricLabel: Record<MetricKind, string> = {
   count: "总次数",
@@ -62,6 +87,7 @@ export default function EventAnalysisPage() {
   const [interval, setInterval] = useState<"hour" | "day">("day");
   const [chartKind, setChartKind] = useState<ChartKind>("line");
   const [segmentId, setSegmentId] = useState<number | undefined>();
+  const [globalFilters, setGlobalFilters] = useState<DraftFilter[]>([]);
   const [range, setRange] = useState<[Dayjs, Dayjs]>([
     dayjs().subtract(7, "day").startOf("day"),
     dayjs().endOf("day"),
@@ -73,17 +99,27 @@ export default function EventAnalysisPage() {
     setPropertySearch("");
     setPropertyType("all");
     setSegmentId(undefined);
+    setGlobalFilters([]);
   }, [projectId]);
 
   const tsRange = useMemo(() => ({ from: range[0].valueOf(), to: range[1].valueOf() }), [range]);
+  const queryFilters = useMemo<QueryFilter[]>(
+    () => globalFilters.filter((filter) => filter.property).map((filter) => ({
+      scope: filter.scope,
+      property: filter.property,
+      op: filter.op,
+      value: buildFilterValue(filter),
+    })),
+    [globalFilters],
+  );
   const events = useQuery({
     queryKey: ["all_events_for_analysis", projectId],
     queryFn: () => api.listEvents(projectId!),
     enabled: !!projectId,
   });
   const eventStats = useQuery({
-    queryKey: ["all_event_stats_for_analysis", projectId, tsRange, segmentId],
-    queryFn: () => api.queryTable(projectId!, { ...tsRange, limit: 500, segment_id: segmentId, dimensions: [{ type: "event", key: "event" }] }),
+    queryKey: ["all_event_stats_for_analysis", projectId, tsRange, segmentId, queryFilters],
+    queryFn: () => api.queryTable(projectId!, { ...tsRange, limit: 500, segment_id: segmentId, filters: queryFilters, dimensions: [{ type: "event", key: "event" }] }),
     enabled: !!projectId,
   });
   const segments = useQuery({
@@ -92,8 +128,8 @@ export default function EventAnalysisPage() {
     enabled: !!projectId,
   });
   const properties = useQuery({
-    queryKey: ["event_properties_for_analysis", projectId],
-    queryFn: () => api.listProperties(projectId!, { scope: "event" }),
+    queryKey: ["analysis_properties", projectId],
+    queryFn: () => api.listProperties(projectId!, { include_global: true, include_unobserved: true }),
     enabled: !!projectId,
   });
   const parameterEvents = useMemo(
@@ -108,10 +144,13 @@ export default function EventAnalysisPage() {
     })),
   });
   const numericProperties = useMemo(
-    () => (properties.data?.data || []).filter((property) => /number|int|float|double|decimal/i.test(property.data_type)),
+    () => (properties.data?.data || []).filter((property) => property.scope === "event" && /number|int|float|double|decimal/i.test(property.data_type)),
     [properties.data],
   );
   const propertyRows = properties.data?.data || [];
+  const eventFilterProperties = useMemo(() => propertyRows.filter((property) => property.scope === "event"), [propertyRows]);
+  const userFilterProperties = useMemo(() => propertyRows.filter((property) => property.scope === "user"), [propertyRows]);
+  const selectedFilterProperty = (property: string) => propertyRows.find((item) => item.name === property);
   const allEvents = useMemo(
     () => [...(events.data?.data || [])].sort((a, b) => a.name.localeCompare(b.name)),
     [events.data],
@@ -136,7 +175,7 @@ export default function EventAnalysisPage() {
     [metrics],
   );
   const analysis = useQuery({
-    queryKey: ["multi_event_analysis", projectId, tsRange, interval, activeMetrics, segmentId],
+    queryKey: ["multi_event_analysis", projectId, tsRange, interval, activeMetrics, segmentId, queryFilters],
     queryFn: async () => {
       const results = await Promise.all(activeMetrics.map(async (metric) => {
         const result = await api.queryTable(projectId!, {
@@ -144,6 +183,7 @@ export default function EventAnalysisPage() {
           ...tsRange,
           limit: 500,
           segment_id: segmentId,
+          filters: queryFilters,
           dimensions: [{ type: "time", key: interval }],
           sum_properties: metric.kind === "sum" || metric.kind === "avg" ? [metric.property] : [],
         });
@@ -270,6 +310,42 @@ export default function EventAnalysisPage() {
                 <Button type="button" variant="ghost" size="icon" disabled={metrics.length <= 1} onClick={() => removeMetric(metric.id)} aria-label={`删除指标 ${index + 1}`}><Trash2 className="h-4 w-4" /></Button>
               </div>
             ))}
+          </div>
+          <div className="grid gap-3 rounded-lg border bg-background p-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-2 text-sm font-medium"><Filter className="h-4 w-4" />全局筛选</div>
+                <p className="mt-1 text-xs text-muted-foreground">统一作用于全部事件统计和趋势指标，可按事件属性或用户属性筛选。</p>
+              </div>
+              <Button type="button" variant="outline" size="sm" onClick={() => setGlobalFilters((current) => [...current, { id: createFilterId(), property: "", scope: "event", op: "eq", value: "" }])}>
+                <Plus className="h-4 w-4" />添加条件
+              </Button>
+            </div>
+            {globalFilters.map((filter) => {
+              const selected = selectedFilterProperty(filter.property);
+              const boolean = isBooleanFilter(selected);
+              return <div key={filter.id} className="grid min-w-0 gap-2 rounded-md border p-3">
+                <div className="grid min-w-0 gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_36px]">
+                  <Select value={filter.scope} onValueChange={(scope) => setGlobalFilters((current) => current.map((item) => item.id === filter.id ? { ...item, scope: scope as DraftFilter["scope"], property: "", op: "eq", value: "" } : item))}>
+                    <SelectTrigger className="min-w-0"><SelectValue /></SelectTrigger>
+                    <SelectContent><SelectItem value="event">事件属性</SelectItem><SelectItem value="user">用户属性</SelectItem></SelectContent>
+                  </Select>
+                  <Select value={filter.property || undefined} onValueChange={(property) => {
+                    const item = propertyRows.find((row) => row.name === property);
+                    setGlobalFilters((current) => current.map((entry) => entry.id === filter.id ? { ...entry, property, scope: item?.scope === "user" ? "user" : "event", op: "eq", value: item?.data_type === "bool" ? "true" : "" } : entry));
+                  }}>
+                    <SelectTrigger className="min-w-0"><SelectValue placeholder="筛选字段" /></SelectTrigger>
+                    <SelectContent>{(filter.scope === "event" ? eventFilterProperties : userFilterProperties).map((property) => <SelectItem key={property.id} value={property.name}>{property.display_name || property.name}</SelectItem>)}</SelectContent>
+                  </Select>
+                  <Button type="button" variant="ghost" size="icon" onClick={() => setGlobalFilters((current) => current.filter((item) => item.id !== filter.id))} aria-label="删除全局筛选"><X className="h-4 w-4" /></Button>
+                </div>
+                <div className="grid min-w-0 gap-2 sm:grid-cols-[112px_minmax(0,1fr)]">
+                  {boolean ? <Select value={filter.value || "true"} onValueChange={(value) => setGlobalFilters((current) => current.map((item) => item.id === filter.id ? { ...item, op: "eq", value } : item))}><SelectTrigger className="min-w-0"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="true">为真</SelectItem><SelectItem value="false">为假</SelectItem></SelectContent></Select> : <Select value={filter.op} onValueChange={(op) => setGlobalFilters((current) => current.map((item) => item.id === filter.id ? { ...item, op: op as DraftFilter["op"], value: op === "exists" ? "" : item.value } : item))}><SelectTrigger className="min-w-0"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="eq">等于</SelectItem><SelectItem value="neq">不等于</SelectItem>{isMultiValueFilter(filter.property) ? <SelectItem value="in">属于多个值</SelectItem> : null}<SelectItem value="exists">存在</SelectItem></SelectContent></Select>}
+                  {boolean ? <div className="flex items-center text-sm text-muted-foreground">布尔值</div> : <Input className="min-w-0" value={filter.value} disabled={filter.op === "exists"} onChange={(event) => setGlobalFilters((current) => current.map((item) => item.id === filter.id ? { ...item, value: event.target.value } : item))} placeholder={filter.op === "in" ? "多个值用逗号分隔，例如 上海，北京，深圳" : "属性值，例如 上海 / 99 / true"} />}
+                </div>
+              </div>;
+            })}
+            {!globalFilters.length ? <div className="rounded-md border border-dashed px-3 py-3 text-xs text-muted-foreground">未设置全局筛选，当前分析覆盖全部用户和事件。</div> : null}
           </div>
           <div className="grid gap-3 sm:grid-cols-2 lg:max-w-4xl lg:grid-cols-3">
             <div className="grid gap-1.5"><span className="text-sm font-medium">时间粒度</span><div className="grid grid-cols-2 rounded-md border bg-background p-1">{(["hour", "day"] as const).map((item) => <Button key={item} type="button" variant={interval === item ? "default" : "ghost"} size="sm" onClick={() => setInterval(item)}>{item === "hour" ? "按小时" : "按天"}</Button>)}</div></div>

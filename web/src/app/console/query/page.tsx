@@ -350,8 +350,8 @@ export default function QueryBuilderPage() {
 
       <div className="grid min-w-0 items-start gap-5 xl:grid-cols-[minmax(0,390px)_minmax(0,1fr)]">
         <div className="grid min-w-0 auto-rows-max content-start gap-5 self-start">
-          <Card className="min-w-0 overflow-hidden">
-            <CardContent className="grid gap-4 pt-4 sm:pt-4">
+          <Card className="relative z-20 min-w-0 overflow-visible">
+            <CardContent className="grid gap-4 overflow-visible pt-4 sm:pt-4">
               <DateTimeRange value={range} onChange={setRange} stacked />
               <div className="min-w-0">
                 <div className="mb-2 flex items-center justify-between gap-3">
