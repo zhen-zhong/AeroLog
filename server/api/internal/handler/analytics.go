@@ -1032,6 +1032,7 @@ type QueryTableBody struct {
 	} `json:"dimensions"`
 	Filters []struct {
 		Event    string `json:"event"`
+		Scope    string `json:"scope"`
 		Property string `json:"property"`
 		Op       string `json:"op"`
 		Value    any    `json:"value"`
@@ -1177,6 +1178,65 @@ func (h *AnalyticsHandler) executeQueryTable(ctx context.Context, pid uint32, bo
 		if op == "" {
 			op = "eq"
 		}
+		if filter.Scope == "user" {
+			if op == "in" {
+				values, ok := stringValues(filter.Value)
+				if !ok || len(values) == 0 {
+					return nil, nil, &queryTableError{Status: http.StatusBadRequest, Msg: "user filter in value must be a non-empty array"}
+				}
+				holders := make([]string, len(values))
+				profileArgs := []any{pid, filter.Property}
+				for i, value := range values {
+					holders[i] = "?"
+					profileArgs = append(profileArgs, rawJSONValue(value))
+				}
+				where += ` AND distinct_id IN (SELECT distinct_id FROM users FINAL WHERE project_id = ? AND JSONExtractRaw(properties, ?) IN (` + joinStrs(holders, ", ") + `))`
+				whereArgs = append(whereArgs, profileArgs...)
+				continue
+			}
+			profileWhere := `project_id = ? AND JSONExtractRaw(properties, ?) != ''`
+			profileArgs := []any{pid, filter.Property}
+			if op == "eq" || op == "neq" {
+				operator := "="
+				if op == "neq" {
+					operator = "!="
+				}
+				profileWhere += ` AND JSONExtractRaw(properties, ?) ` + operator + ` ?`
+				profileArgs = append(profileArgs, filter.Property, rawJSONValue(filter.Value))
+			} else if op != "exists" {
+				return nil, nil, &queryTableError{Status: http.StatusBadRequest, Msg: "unsupported user filter op"}
+			}
+			where += ` AND distinct_id IN (SELECT distinct_id FROM users FINAL WHERE ` + profileWhere + `)`
+			whereArgs = append(whereArgs, profileArgs...)
+			continue
+		}
+		if expression, ok := querySystemFieldExpression(filter.Property); ok {
+			switch op {
+			case "eq", "neq":
+				operator := "="
+				if op == "neq" {
+					operator = "!="
+				}
+				where += ` AND ` + expression + " " + operator + " ?"
+				whereArgs = append(whereArgs, querySystemFieldValue(filter.Property, filter.Value))
+			case "in":
+				values, ok := stringValues(filter.Value)
+				if !ok || len(values) == 0 {
+					return nil, nil, &queryTableError{Status: http.StatusBadRequest, Msg: "filter in value must be a non-empty array"}
+				}
+				holders := make([]string, len(values))
+				for i, value := range values {
+					holders[i] = "?"
+					whereArgs = append(whereArgs, querySystemFieldValue(filter.Property, value))
+				}
+				where += ` AND ` + expression + " IN (" + joinStrs(holders, ", ") + ")"
+			case "exists":
+				where += ` AND ` + expression + ` != ''`
+			default:
+				return nil, nil, &queryTableError{Status: http.StatusBadRequest, Msg: "unsupported filter op"}
+			}
+			continue
+		}
 		switch op {
 		case "eq":
 			where += ` AND JSONExtractRaw(properties, ?) = ?`
@@ -1290,6 +1350,48 @@ func parseDimensionValue(dimType, raw string) (any, string) {
 		return nil, "(未设置)"
 	}
 	return parsePropertyValue(raw)
+}
+
+func querySystemFieldExpression(property string) (string, bool) {
+	switch property {
+	case "$ip":
+		return "toString(ip)", true
+	case "$country":
+		return "country", true
+	case "$province":
+		return "province", true
+	case "$city":
+		return "city", true
+	default:
+		return "", false
+	}
+}
+
+func querySystemFieldValue(property string, value any) any {
+	if property == "$ip" {
+		return fmt.Sprint(value)
+	}
+	return value
+}
+
+func stringValues(value any) ([]string, bool) {
+	values, ok := value.([]any)
+	if !ok {
+		return nil, false
+	}
+	out := make([]string, 0, len(values))
+	for _, item := range values {
+		text, ok := item.(string)
+		if !ok {
+			return nil, false
+		}
+		text = strings.TrimSpace(text)
+		if text == "" {
+			return nil, false
+		}
+		out = append(out, text)
+	}
+	return out, true
 }
 
 func rawJSONValue(value any) string {

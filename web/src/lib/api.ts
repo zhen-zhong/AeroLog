@@ -381,9 +381,10 @@ export interface QueryDimension {
     key: string;
 }
 export interface QueryFilter {
+    scope?: "event" | "user";
     event?: string;
     property?: string;
-    op?: "eq" | "neq" | "exists";
+    op?: "eq" | "neq" | "exists" | "in";
     value?: unknown;
 }
 export interface QueryTableRow {

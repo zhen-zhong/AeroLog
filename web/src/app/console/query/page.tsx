@@ -45,9 +45,26 @@ type DraftFilter = {
   id: string;
   event: string;
   property: string;
-  op: "eq" | "neq" | "exists";
+  scope: "event" | "user";
+  op: "eq" | "neq" | "exists" | "in";
   value: string;
 };
+
+function isBooleanFilter(property: { data_type?: string } | undefined) {
+  return property?.data_type === "bool";
+}
+
+function isMultiValueFilter(property: string) {
+  return property === "$ip" || property === "$country" || property === "$province" || property === "$city";
+}
+
+function buildFilterValue(filter: DraftFilter) {
+  if (filter.op === "exists") return undefined;
+  if (filter.op === "in") {
+    return filter.value.split(",").map((value) => value.trim()).filter(Boolean);
+  }
+  return filter.value;
+}
 
 const DRAFT_STORAGE_KEY = "aerolog:query-builder:draft";
 
@@ -67,7 +84,7 @@ export default function QueryBuilderPage() {
   const [events, setEvents] = useState<string[]>([]);
   const [dimensions, setDimensions] = useState<QueryDimension[]>([{ type: "event", key: "event" }]);
   const [filters, setFilters] = useState<DraftFilter[]>([
-    { id: createFilterId(), event: "", property: "", op: "eq", value: "" },
+    { id: createFilterId(), event: "", property: "", scope: "event", op: "eq", value: "" },
   ]);
   const [draftReady, setDraftReady] = useState(false);
   const [tplName, setTplName] = useState("");
@@ -95,7 +112,7 @@ export default function QueryBuilderPage() {
       if (Array.isArray(draft.events)) setEvents(draft.events);
       if (Array.isArray(draft.dimensions) && draft.dimensions.length) setDimensions(draft.dimensions);
       if (Array.isArray(draft.filters) && draft.filters.length) {
-        setFilters(draft.filters.map((item) => ({ ...item, id: item.id || createFilterId() })));
+        setFilters(draft.filters.map((item) => ({ ...item, id: item.id || createFilterId(), scope: item.scope === "user" ? "user" : "event" })));
       }
     } catch {
       // ignore broken local draft
@@ -136,7 +153,7 @@ export default function QueryBuilderPage() {
 
   const props = useQuery({
     queryKey: ["query_properties", projectId],
-    queryFn: () => api.listProperties(projectId!, { scope: "event" }),
+    queryFn: () => api.listProperties(projectId!, { include_global: true, include_unobserved: true }),
     enabled: !!projectId,
     placeholderData: (previousData) => previousData,
   });
@@ -148,6 +165,9 @@ export default function QueryBuilderPage() {
   }, [allEvents.data, eventRows]);
   const eventLabels = useMemo(() => Object.fromEntries((allEvents.data?.data || []).map((item) => [item.name, item.display_name])), [allEvents.data]);
   const propertyRows = props.data?.data || [];
+  const selectedProperty = (property: string) => propertyRows.find((item) => item.name === property);
+  const eventPropertyRows = propertyRows.filter((item) => item.scope === "event");
+  const userPropertyRows = propertyRows.filter((item) => item.scope === "user");
   const dimensionOptions = useMemo(() => [
     { value: "time:day", label: "按天", dimension: { type: "time", key: "day" } as QueryDimension },
     { value: "time:hour", label: "按小时", dimension: { type: "time", key: "hour" } as QueryDimension },
@@ -165,10 +185,11 @@ export default function QueryBuilderPage() {
         filters: filters
           .filter((item) => item.property || item.event)
           .map<QueryFilter>((item) => ({
+            scope: item.scope,
             event: item.event || undefined,
             property: item.property || undefined,
             op: item.op,
-            value: item.op === "exists" ? undefined : item.value,
+            value: buildFilterValue(item),
           })),
       }),
   });
@@ -181,11 +202,12 @@ export default function QueryBuilderPage() {
     filters: filters
       .filter((item) => item.property || item.event)
       .map<QueryFilter>((item) => ({
+        scope: item.scope,
         event: item.event || undefined,
         property: item.property || undefined,
         op: item.op,
-        value: item.op === "exists" ? undefined : item.value,
-      })),
+        value: buildFilterValue(item),
+          })),
   });
 
   const exportCsv = useMutation({
@@ -269,10 +291,11 @@ export default function QueryBuilderPage() {
               id: createFilterId(),
               event: it.event || "",
               property: it.property || "",
+              scope: it.scope === "user" ? "user" : "event",
               op: (it.op as DraftFilter["op"]) || "eq",
               value: typeof it.value === "string" ? it.value : "",
             }))
-          : [{ id: createFilterId(), event: "", property: "", op: "eq", value: "" }],
+          : [{ id: createFilterId(), event: "", property: "", scope: "event", op: "eq", value: "" }],
       );
     }
   }
@@ -348,7 +371,7 @@ export default function QueryBuilderPage() {
                   type="button"
                   size="sm"
                   variant="outline"
-                  onClick={() => setFilters((current) => [...current, { id: createFilterId(), event: "", property: "", op: "eq", value: "" }])}
+                  onClick={() => setFilters((current) => [...current, { id: createFilterId(), event: "", property: "", scope: "event", op: "eq", value: "" }])}
                 >
                   <Plus className="h-4 w-4" />
                   条件
@@ -365,29 +388,50 @@ export default function QueryBuilderPage() {
                         {eventOptions.map((event) => <SelectItem key={event} value={event}>{event}</SelectItem>)}
                       </SelectContent>
                     </Select>
-                    <Select value={filter.property || undefined} onValueChange={(value) => updateFilter(filter.id, { property: value })}>
-                      <SelectTrigger className="min-w-0"><SelectValue placeholder="参数 key" /></SelectTrigger>
+                    <Select value={filter.property || undefined} onValueChange={(value) => {
+                        const property = propertyRows.find((item) => item.name === value);
+                        updateFilter(filter.id, { property: value, scope: property?.scope === "user" ? "user" : "event", op: "eq", value: property?.data_type === "bool" ? "true" : "" });
+                      }}>
+                      <SelectTrigger className="min-w-0"><SelectValue placeholder="筛选字段" /></SelectTrigger>
                       <SelectContent>
-                        {propertyRows.map((item) => <SelectItem key={item.id} value={item.name}>{item.name}</SelectItem>)}
+                        {eventPropertyRows.length ? <div className="px-2 py-1 text-xs font-medium text-muted-foreground">事件属性</div> : null}
+                        {eventPropertyRows.map((item) => <SelectItem key={`event:${item.id}`} value={item.name} searchText={`${item.display_name} ${item.name}`}>{item.display_name || item.name}</SelectItem>)}
+                        {userPropertyRows.length ? <div className="px-2 py-1 text-xs font-medium text-muted-foreground">用户属性</div> : null}
+                        {userPropertyRows.map((item) => <SelectItem key={`user:${item.id}`} value={item.name} searchText={`${item.display_name} ${item.name}`}>{item.display_name || item.name}</SelectItem>)}
                       </SelectContent>
                     </Select>
                   </div>
                   <div className="grid min-w-0 gap-2 sm:grid-cols-[112px_minmax(0,1fr)_36px]">
-                    <Select value={filter.op} onValueChange={(value) => updateFilter(filter.id, { op: value as DraftFilter["op"] })}>
-                      <SelectTrigger className="min-w-0"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="eq">等于</SelectItem>
-                        <SelectItem value="neq">不等于</SelectItem>
-                        <SelectItem value="exists">存在</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <Input
-                      className="min-w-0"
-                      value={filter.value}
-                      disabled={filter.op === "exists"}
-                      onChange={(event) => updateFilter(filter.id, { value: event.target.value })}
-                      placeholder="参数 value，例如 上海 / 99 / true"
-                    />
+                    {isBooleanFilter(selectedProperty(filter.property)) ? (
+                      <Select value={filter.value || "true"} onValueChange={(value) => updateFilter(filter.id, { op: "eq", value })}>
+                        <SelectTrigger className="min-w-0"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="true">为真</SelectItem>
+                          <SelectItem value="false">为假</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <Select value={filter.op} onValueChange={(value) => updateFilter(filter.id, { op: value as DraftFilter["op"], value: value === "exists" ? "" : filter.value })}>
+                        <SelectTrigger className="min-w-0"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="eq">等于</SelectItem>
+                          <SelectItem value="neq">不等于</SelectItem>
+                          {isMultiValueFilter(filter.property) ? <SelectItem value="in">属于多个值</SelectItem> : null}
+                          <SelectItem value="exists">存在</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    )}
+                    {isBooleanFilter(selectedProperty(filter.property)) ? (
+                      <div className="flex items-center text-sm text-muted-foreground">布尔值</div>
+                    ) : (
+                      <Input
+                        className="min-w-0"
+                        value={filter.value}
+                        disabled={filter.op === "exists"}
+                        onChange={(event) => updateFilter(filter.id, { value: event.target.value })}
+                        placeholder={filter.op === "in" ? "多个值用逗号分隔，例如 上海，北京，深圳" : "参数 value，例如 上海 / 99 / true"}
+                      />
+                    )}
                     <Button
                       type="button"
                       size="icon"
@@ -452,7 +496,7 @@ export default function QueryBuilderPage() {
                   onClick={() => {
                     setEvents([]);
                     setDimensions([{ type: "event", key: "event" }]);
-                    setFilters([{ id: createFilterId(), event: "", property: "", op: "eq", value: "" }]);
+                    setFilters([{ id: createFilterId(), event: "", property: "", scope: "event", op: "eq", value: "" }]);
                     window.localStorage.removeItem(DRAFT_STORAGE_KEY);
                     query.reset();
                   }}

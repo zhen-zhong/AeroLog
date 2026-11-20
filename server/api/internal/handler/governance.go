@@ -109,8 +109,12 @@ func (h *GovernanceHandler) properties(c *gin.Context) {
 			out = append(out, p)
 		}
 	}
-	if includeUnobserved && scope == "event" && event != "" {
-		for _, preset := range sensorspreset.PropertiesForEvent(event) {
+	if includeUnobserved && scope == "event" {
+		presets := sensorspreset.PropertiesForEvent(event)
+		if event == "" {
+			presets = sensorspreset.Properties()
+		}
+		for _, preset := range presets {
 			if _, ok := observedNames[preset.Name]; ok {
 				continue
 			}
