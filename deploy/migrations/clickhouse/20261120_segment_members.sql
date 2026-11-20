@@ -8,4 +8,4 @@ CREATE TABLE IF NOT EXISTS aerolog.segment_members
 )
 ENGINE = MergeTree
 ORDER BY (project_id, segment_id, segment_version, computed_at, distinct_id)
-TTL computed_at + INTERVAL 2 HOUR DELETE;
+TTL toDateTime(computed_at) + INTERVAL 2 HOUR DELETE;
