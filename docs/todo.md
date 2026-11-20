@@ -75,7 +75,7 @@
 
 ## P1：产品完善
 
-- [ ] SDK Debugger 全链路关联：`$insert_id`、设备、用户、session、Collector、Schema、Consumer、ClickHouse。
+- [x] SDK Debugger 全链路关联：支持按 `$insert_id` / `$session_id` / `trace_id` 查询设备、用户、SDK、Collector、Kafka、Consumer、ClickHouse 阶段与坐标；生产真实事件冒烟通过。
 - [x] 数据生命周期：事件、Kafka 原始消息、调试记录、错误/DLQ、Schema 问题、异步任务、过期会话与生产备份均有明确保留策略和自动清理；API 单实例调度并分批删除。
 - [ ] 指标看板保存、订阅与异常检测；支持项目级阈值配置。
 
