@@ -65,5 +65,17 @@ ORDER BY (project_id, distinct_id);
 
 ALTER TABLE aerolog.users ADD COLUMN IF NOT EXISTS user_id String DEFAULT '';
 ALTER TABLE aerolog.users ADD COLUMN IF NOT EXISTS anonymous_id String DEFAULT '';
+
+CREATE TABLE IF NOT EXISTS aerolog.segment_members
+(
+    project_id      UInt32,
+    segment_id      UInt64,
+    segment_version UInt32,
+    distinct_id     String,
+    computed_at     DateTime64(3, 'UTC')
+)
+ENGINE = MergeTree
+ORDER BY (project_id, segment_id, segment_version, computed_at, distinct_id)
+TTL computed_at + INTERVAL 2 HOUR DELETE;
 ALTER TABLE aerolog.events ADD COLUMN IF NOT EXISTS insert_id String DEFAULT '' AFTER anonymous_id;
 ALTER TABLE aerolog.events ADD COLUMN IF NOT EXISTS session_id String DEFAULT '' AFTER insert_id;

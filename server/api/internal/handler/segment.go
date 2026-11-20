@@ -14,7 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// SegmentHandler 管理可保存的动态用户分群。成员在查询时根据规则实时计算，不复制用户数据。
+// SegmentHandler 管理可保存的动态用户分群、规则版本和短期成员缓存。
 type SegmentHandler struct {
 	PG *pgxpool.Pool
 	CH driver.Conn
@@ -23,9 +23,14 @@ type SegmentHandler struct {
 func (h *SegmentHandler) Register(r *gin.RouterGroup) {
 	r.GET("/projects/:id/segments", h.list)
 	r.POST("/projects/:id/segments", h.create)
+	r.PATCH("/projects/:id/segments/:segment_id", h.update)
 	r.DELETE("/projects/:id/segments/:segment_id", h.remove)
+	r.GET("/projects/:id/segments/:segment_id/versions", h.versions)
+	r.POST("/projects/:id/segments/:segment_id/refresh", h.refresh)
 	r.POST("/projects/:id/segments/preview", h.preview)
 }
+
+const segmentCacheTTL = 15 * time.Minute
 
 type SegmentRules struct {
 	ProfileProperty string             `json:"profile_property,omitempty"`
@@ -53,15 +58,31 @@ type UserSegment struct {
 	Name        string       `json:"name"`
 	Description string       `json:"description"`
 	Rules       SegmentRules `json:"rules"`
+	Version     int          `json:"version"`
+	CachedUsers *int64       `json:"cached_users,omitempty"`
+	CachedAt    *time.Time   `json:"cached_at,omitempty"`
+	CacheExpiry *time.Time   `json:"cache_expires_at,omitempty"`
 	Status      int16        `json:"status"`
 	CreatedAt   time.Time    `json:"created_at"`
 	UpdatedAt   time.Time    `json:"updated_at"`
 }
 
+type UserSegmentVersion struct {
+	ID          int64        `json:"id"`
+	SegmentID   int64        `json:"segment_id"`
+	ProjectID   int64        `json:"project_id"`
+	Version     int          `json:"version"`
+	Name        string       `json:"name"`
+	Description string       `json:"description"`
+	Rules       SegmentRules `json:"rules"`
+	CreatedAt   time.Time    `json:"created_at"`
+}
+
 func (h *SegmentHandler) list(c *gin.Context) {
 	projectID, _ := strconv.ParseInt(c.Param("id"), 10, 64)
 	rows, err := h.PG.Query(c, `
-		SELECT id, project_id, name, COALESCE(description,''), rules, status, created_at, updated_at
+		SELECT id, project_id, name, COALESCE(description,''), rules, version,
+		       cached_users, cached_at, cache_expires_at, status, created_at, updated_at
 		FROM user_segments
 		WHERE project_id=$1 AND status=1
 		ORDER BY updated_at DESC, id DESC
@@ -117,14 +138,22 @@ func (h *SegmentHandler) create(c *gin.Context) {
 	}
 	rawRules, _ := json.Marshal(rules)
 
+	tx, err := h.PG.Begin(c)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
+		return
+	}
+	defer tx.Rollback(c)
 	var segment UserSegment
 	var raw []byte
-	err = h.PG.QueryRow(c, `
+	err = tx.QueryRow(c, `
 		INSERT INTO user_segments(project_id, name, description, rules, created_by)
 		VALUES($1,$2,$3,$4,$5)
-		RETURNING id, project_id, name, COALESCE(description,''), rules, status, created_at, updated_at
+		RETURNING id, project_id, name, COALESCE(description,''), rules, version,
+		          cached_users, cached_at, cache_expires_at, status, created_at, updated_at
 	`, projectID, body.Name, body.Description, rawRules, CurrentUserID(c)).
-		Scan(&segment.ID, &segment.ProjectID, &segment.Name, &segment.Description, &raw, &segment.Status, &segment.CreatedAt, &segment.UpdatedAt)
+		Scan(&segment.ID, &segment.ProjectID, &segment.Name, &segment.Description, &raw, &segment.Version,
+			&segment.CachedUsers, &segment.CachedAt, &segment.CacheExpiry, &segment.Status, &segment.CreatedAt, &segment.UpdatedAt)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
 		return
@@ -133,7 +162,122 @@ func (h *SegmentHandler) create(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
 		return
 	}
+	if _, err = tx.Exec(c, `
+		INSERT INTO user_segment_versions(segment_id, project_id, version, name, description, rules, created_by)
+		VALUES($1,$2,$3,$4,$5,$6,$7)
+	`, segment.ID, segment.ProjectID, segment.Version, segment.Name, segment.Description, rawRules, CurrentUserID(c)); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
+		return
+	}
+	if err = tx.Commit(c); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"data": segment})
+}
+
+func (h *SegmentHandler) update(c *gin.Context) {
+	projectID, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	segmentID, _ := strconv.ParseInt(c.Param("segment_id"), 10, 64)
+	var body struct {
+		Name        string       `json:"name"`
+		Description string       `json:"description"`
+		Rules       SegmentRules `json:"rules"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
+		return
+	}
+	body.Name = strings.TrimSpace(body.Name)
+	body.Description = strings.TrimSpace(body.Description)
+	if body.Name == "" || len(body.Name) > 128 || len(body.Description) > 1000 {
+		c.JSON(http.StatusBadRequest, gin.H{"err": "invalid name or description"})
+		return
+	}
+	rules, err := normalizeSegmentRules(body.Rules)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
+		return
+	}
+	rawRules, _ := json.Marshal(rules)
+	tx, err := h.PG.Begin(c)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
+		return
+	}
+	defer tx.Rollback(c)
+	var segment UserSegment
+	var raw []byte
+	err = tx.QueryRow(c, `
+		UPDATE user_segments
+		SET name=$1, description=$2, rules=$3, version=version+1,
+		    cached_users=NULL, cached_at=NULL, cache_expires_at=NULL, updated_at=now()
+		WHERE id=$4 AND project_id=$5 AND status=1
+		RETURNING id, project_id, name, COALESCE(description,''), rules, version,
+		          cached_users, cached_at, cache_expires_at, status, created_at, updated_at
+	`, body.Name, body.Description, rawRules, segmentID, projectID).
+		Scan(&segment.ID, &segment.ProjectID, &segment.Name, &segment.Description, &raw, &segment.Version,
+			&segment.CachedUsers, &segment.CachedAt, &segment.CacheExpiry, &segment.Status, &segment.CreatedAt, &segment.UpdatedAt)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"err": "segment not found"})
+		return
+	}
+	if err := json.Unmarshal(raw, &segment.Rules); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
+		return
+	}
+	if _, err = tx.Exec(c, `
+		INSERT INTO user_segment_versions(segment_id, project_id, version, name, description, rules, created_by)
+		VALUES($1,$2,$3,$4,$5,$6,$7)
+	`, segment.ID, segment.ProjectID, segment.Version, segment.Name, segment.Description, rawRules, CurrentUserID(c)); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
+		return
+	}
+	if err = tx.Commit(c); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": segment})
+}
+
+func (h *SegmentHandler) versions(c *gin.Context) {
+	projectID, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	segmentID, _ := strconv.ParseInt(c.Param("segment_id"), 10, 64)
+	rows, err := h.PG.Query(c, `
+		SELECT id, segment_id, project_id, version, name, COALESCE(description,''), rules, created_at
+		FROM user_segment_versions WHERE segment_id=$1 AND project_id=$2 ORDER BY version DESC LIMIT 100
+	`, segmentID, projectID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
+		return
+	}
+	defer rows.Close()
+	out := make([]UserSegmentVersion, 0)
+	for rows.Next() {
+		var item UserSegmentVersion
+		var raw []byte
+		if err := rows.Scan(&item.ID, &item.SegmentID, &item.ProjectID, &item.Version, &item.Name, &item.Description, &raw, &item.CreatedAt); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
+			return
+		}
+		if err := json.Unmarshal(raw, &item.Rules); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
+			return
+		}
+		out = append(out, item)
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out})
+}
+
+func (h *SegmentHandler) refresh(c *gin.Context) {
+	projectID, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	segmentID, _ := strconv.ParseInt(c.Param("segment_id"), 10, 64)
+	_, _, users, cachedAt, err := h.refreshMemberCache(c, projectID, segmentID, true)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"users": users, "cached_at": cachedAt, "cache_expires_at": cachedAt.Add(segmentCacheTTL)}})
 }
 
 func (h *SegmentHandler) remove(c *gin.Context) {
@@ -224,7 +368,70 @@ func (h *AnalyticsHandler) analyticsSegmentMembers(ctx context.Context, projectI
 	if segmentID == 0 {
 		return "", nil, nil
 	}
-	return segmentMembershipQuery(ctx, h.PG, projectID, segmentID)
+	segmentHandler := SegmentHandler{PG: h.PG, CH: h.CH}
+	query, args, _, _, err := segmentHandler.refreshMemberCache(ctx, projectID, segmentID, false)
+	return query, args, err
+}
+
+// refreshMemberCache 返回可嵌入分析 SQL 的分群成员查询。
+// 缓存过期时将固定版本的 distinct_id 写入 ClickHouse；规则更新会递增版本并立即失效旧缓存。
+func (h *SegmentHandler) refreshMemberCache(ctx context.Context, projectID, segmentID int64, force bool) (string, []any, int64, time.Time, error) {
+	if segmentID <= 0 {
+		return "", nil, 0, time.Time{}, errors.New("segment_id must be positive")
+	}
+	var raw []byte
+	var version int
+	var cachedUsers *int64
+	var cachedAt, cacheExpiry *time.Time
+	err := h.PG.QueryRow(ctx, `
+		SELECT rules, version, cached_users, cached_at, cache_expires_at
+		FROM user_segments WHERE id=$1 AND project_id=$2 AND status=1
+	`, segmentID, projectID).Scan(&raw, &version, &cachedUsers, &cachedAt, &cacheExpiry)
+	if err != nil {
+		return "", nil, 0, time.Time{}, errors.New("segment not found")
+	}
+	cacheQuery := `SELECT distinct_id FROM segment_members WHERE project_id=? AND segment_id=? AND segment_version=? AND computed_at=fromUnixTimestamp64Milli(?)`
+	if !force && cachedAt != nil && cacheExpiry != nil && cacheExpiry.After(time.Now()) {
+		users := int64(0)
+		if cachedUsers != nil {
+			users = *cachedUsers
+		}
+		return cacheQuery, []any{uint32(projectID), uint64(segmentID), uint32(version), cachedAt.UnixMilli()}, users, *cachedAt, nil
+	}
+	var rules SegmentRules
+	if json.Unmarshal(raw, &rules) != nil {
+		return "", nil, 0, time.Time{}, errors.New("segment rules are invalid")
+	}
+	rules, err = normalizeSegmentRules(rules)
+	if err != nil {
+		return "", nil, 0, time.Time{}, err
+	}
+	dynamicQuery, dynamicArgs := segmentMembershipQueryForRules(projectID, rules)
+	computedAt := time.Now().UTC().Truncate(time.Millisecond)
+	insert := `INSERT INTO segment_members(project_id, segment_id, segment_version, distinct_id, computed_at)
+		SELECT ?, ?, ?, distinct_id, fromUnixTimestamp64Milli(?) FROM (` + dynamicQuery + `)`
+	insertArgs := []any{uint32(projectID), uint64(segmentID), uint32(version), computedAt.UnixMilli()}
+	insertArgs = append(insertArgs, dynamicArgs...)
+	if err := h.CH.Exec(ctx, insert, insertArgs...); err != nil {
+		return "", nil, 0, time.Time{}, err
+	}
+	var count uint64
+	cacheArgs := []any{uint32(projectID), uint64(segmentID), uint32(version), computedAt.UnixMilli()}
+	if err := h.CH.QueryRow(ctx, `SELECT count() FROM (`+cacheQuery+`)`, cacheArgs...).Scan(&count); err != nil {
+		return "", nil, 0, time.Time{}, err
+	}
+	expiresAt := computedAt.Add(segmentCacheTTL)
+	result, err := h.PG.Exec(ctx, `
+		UPDATE user_segments SET cached_users=$1, cached_at=$2, cache_expires_at=$3
+		WHERE id=$4 AND project_id=$5 AND version=$6 AND status=1
+	`, int64(count), computedAt, expiresAt, segmentID, projectID, version)
+	if err != nil {
+		return "", nil, 0, time.Time{}, err
+	}
+	if result.RowsAffected() == 0 {
+		return "", nil, 0, time.Time{}, errors.New("segment changed while refreshing cache")
+	}
+	return cacheQuery, cacheArgs, int64(count), computedAt, nil
 }
 
 func segmentMembershipQueryForRules(projectID int64, rules SegmentRules) (string, []any) {
@@ -374,7 +581,8 @@ type segmentRow interface {
 func scanSegment(row segmentRow) (UserSegment, error) {
 	var segment UserSegment
 	var raw []byte
-	if err := row.Scan(&segment.ID, &segment.ProjectID, &segment.Name, &segment.Description, &raw, &segment.Status, &segment.CreatedAt, &segment.UpdatedAt); err != nil {
+	if err := row.Scan(&segment.ID, &segment.ProjectID, &segment.Name, &segment.Description, &raw, &segment.Version,
+		&segment.CachedUsers, &segment.CachedAt, &segment.CacheExpiry, &segment.Status, &segment.CreatedAt, &segment.UpdatedAt); err != nil {
 		return UserSegment{}, err
 	}
 	if err := json.Unmarshal(raw, &segment.Rules); err != nil {

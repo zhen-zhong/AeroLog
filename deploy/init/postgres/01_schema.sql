@@ -535,6 +535,10 @@ CREATE TABLE IF NOT EXISTS user_segments (
     name        VARCHAR(128) NOT NULL,
     description TEXT         NOT NULL DEFAULT '',
     rules       JSONB        NOT NULL DEFAULT '{}'::jsonb,
+    version     INTEGER      NOT NULL DEFAULT 1,
+    cached_users BIGINT,
+    cached_at   TIMESTAMPTZ,
+    cache_expires_at TIMESTAMPTZ,
     status      SMALLINT     NOT NULL DEFAULT 1,
     created_by  BIGINT       REFERENCES users(id),
     created_at  TIMESTAMPTZ  NOT NULL DEFAULT now(),
@@ -542,6 +546,19 @@ CREATE TABLE IF NOT EXISTS user_segments (
 );
 CREATE INDEX IF NOT EXISTS idx_user_segments_project
     ON user_segments(project_id, status, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS user_segment_versions (
+    id          BIGSERIAL PRIMARY KEY,
+    segment_id  BIGINT       NOT NULL REFERENCES user_segments(id) ON DELETE CASCADE,
+    project_id  BIGINT       NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    version     INTEGER      NOT NULL,
+    name        VARCHAR(128) NOT NULL,
+    description TEXT         NOT NULL DEFAULT '',
+    rules       JSONB        NOT NULL,
+    created_by  BIGINT       REFERENCES users(id),
+    created_at  TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    UNIQUE(segment_id, version)
+);
 
 -- 大结果异步任务
 CREATE TABLE IF NOT EXISTS analytics_jobs (

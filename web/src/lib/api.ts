@@ -606,9 +606,23 @@ export interface UserSegment {
     name: string;
     description: string;
     rules: SegmentRules;
+    version: number;
+    cached_users?: number;
+    cached_at?: string;
+    cache_expires_at?: string;
     status: number;
     created_at: string;
     updated_at: string;
+}
+export interface UserSegmentVersion {
+    id: number;
+    segment_id: number;
+    project_id: number;
+    version: number;
+    name: string;
+    description: string;
+    rules: SegmentRules;
+    created_at: string;
 }
 export interface AnalyticsJob {
     id: number;
@@ -1098,6 +1112,18 @@ export const api = {
             method: "POST",
             body: JSON.stringify(body),
         }),
+    updateSegment: (
+        id: number | string,
+        segmentId: number | string,
+        body: { name: string; description?: string; rules: SegmentRules },
+    ) => req<ApiOne<UserSegment>>(`/projects/${id}/segments/${segmentId}`, {
+        method: "PATCH",
+        body: JSON.stringify(body),
+    }),
+    listSegmentVersions: (id: number | string, segmentId: number | string) =>
+        req<ApiList<UserSegmentVersion>>(`/projects/${id}/segments/${segmentId}/versions`),
+    refreshSegment: (id: number | string, segmentId: number | string) =>
+        req<ApiOne<{ users: number; cached_at: string; cache_expires_at: string }>>(`/projects/${id}/segments/${segmentId}/refresh`, { method: "POST" }),
     deleteSegment: (id: number | string, segmentId: number | string) =>
         req<ApiOne<{ ok: boolean }>>(`/projects/${id}/segments/${segmentId}`, {
             method: "DELETE",

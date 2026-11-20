@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { LoaderCircle, Plus, Trash2, Users, X } from "lucide-react";
+import { History, LoaderCircle, Plus, RefreshCw, Trash2, Users, X } from "lucide-react";
 import { PageHeader } from "@/components/layout/page-header";
 import { EmptyState } from "@/components/data/empty-state";
 import { AnimatedContent } from "@/components/react-bits/animated-content";
@@ -31,6 +31,8 @@ export function SegmentsPage() {
   const [eventValue, setEventValue] = useState("");
   const [lookbackDays, setLookbackDays] = useState("30");
   const [extraEventRules, setExtraEventRules] = useState<SegmentEventRule[]>([]);
+  const [editingSegmentId, setEditingSegmentId] = useState<number>();
+  const [versionSegmentId, setVersionSegmentId] = useState<number>();
   const [formError, setFormError] = useState("");
 
   useEffect(() => {
@@ -44,6 +46,8 @@ export function SegmentsPage() {
     setEventValue("");
     setLookbackDays("30");
     setExtraEventRules([]);
+    setEditingSegmentId(undefined);
+    setVersionSegmentId(undefined);
     setFormError("");
   }, [projectId]);
 
@@ -66,6 +70,11 @@ export function SegmentsPage() {
     queryKey: ["segment-event-properties", projectId, event],
     queryFn: () => api.listProperties(projectId!, { scope: "event", event, include_global: true }),
     enabled: !!projectId && !!event,
+  });
+  const versions = useQuery({
+    queryKey: ["segment-versions", projectId, versionSegmentId],
+    queryFn: () => api.listSegmentVersions(projectId!, versionSegmentId!),
+    enabled: !!projectId && !!versionSegmentId,
   });
 
   const rules = useMemo<SegmentRules>(() => {
@@ -99,16 +108,37 @@ export function SegmentsPage() {
       queryClient.invalidateQueries({ queryKey: ["segments", projectId] });
       setName("");
       setDescription("");
+      setEditingSegmentId(undefined);
       setFormError("");
     },
     onError: (error: Error) => setFormError(error.message),
   });
+  const update = useMutation({
+    mutationFn: () => api.updateSegment(projectId!, editingSegmentId!, { name: name.trim(), description: description.trim(), rules }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["segments", projectId] });
+      queryClient.invalidateQueries({ queryKey: ["segment-versions", projectId, editingSegmentId] });
+      cancelEditing();
+    },
+    onError: (error: Error) => setFormError(error.message),
+  });
+  const refresh = useMutation({
+    mutationFn: (segmentId: number) => api.refreshSegment(projectId!, segmentId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["segments", projectId] }),
+    onError: (error: Error) => setFormError(error.message),
+  });
   const remove = useMutation({
     mutationFn: (segmentId: number) => api.deleteSegment(projectId!, segmentId),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["segments", projectId] }),
+    onSuccess: (_, segmentId) => {
+      queryClient.invalidateQueries({ queryKey: ["segments", projectId] });
+      if (editingSegmentId === segmentId) cancelEditing();
+      if (versionSegmentId === segmentId) setVersionSegmentId(undefined);
+    },
   });
 
   function loadSegment(segment: UserSegment) {
+    preview.reset();
+    setEditingSegmentId(segment.id);
     setName(segment.name);
     setDescription(segment.description);
     setProfileProperty(segment.rules.profile_property || "");
@@ -121,6 +151,21 @@ export function SegmentsPage() {
     setExtraEventRules(segment.rules.event_rules || []);
     setFormError("");
     window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function cancelEditing() {
+    setEditingSegmentId(undefined);
+    setName("");
+    setDescription("");
+    setProfileProperty("");
+    setProfileValue("");
+    setEvent("");
+    setEventCondition("has");
+    setEventProperty("");
+    setEventValue("");
+    setLookbackDays("30");
+    setExtraEventRules([]);
+    setFormError("");
   }
 
   const canPreview = !!projectId && (!!profileProperty || !!event || extraEventRules.some((rule) => rule.event));
@@ -136,8 +181,8 @@ export function SegmentsPage() {
         <div className="grid gap-5 xl:grid-cols-[minmax(0,1.1fr)_minmax(360px,0.9fr)]">
           <Card>
             <CardHeader>
-              <CardTitle>新建分群</CardTitle>
-              <CardDescription>全部条件按 AND 合并；最多 6 个事件条件。“未触发”以已有用户画像为基数。</CardDescription>
+              <CardTitle>{editingSegmentId ? "编辑分群" : "新建分群"}</CardTitle>
+              <CardDescription>全部条件按 AND 合并；最多 6 个事件条件。更新会生成新版本并立即失效旧缓存。</CardDescription>
             </CardHeader>
             <CardContent className="space-y-5">
               <div className="grid gap-4 sm:grid-cols-2">
@@ -219,9 +264,10 @@ export function SegmentsPage() {
                 <Button type="button" variant="outline" disabled={!canPreview || preview.isPending} onClick={() => { setFormError(""); preview.mutate(); }}>
                   {preview.isPending && <LoaderCircle className="mr-2 h-4 w-4 animate-spin" />}预览人数
                 </Button>
-                <Button type="button" disabled={!canSave || create.isPending} onClick={() => { setFormError(""); create.mutate(); }}>
-                  {create.isPending && <LoaderCircle className="mr-2 h-4 w-4 animate-spin" />}保存分群
+                <Button type="button" disabled={!canSave || create.isPending || update.isPending} onClick={() => { setFormError(""); editingSegmentId ? update.mutate() : create.mutate(); }}>
+                  {(create.isPending || update.isPending) && <LoaderCircle className="mr-2 h-4 w-4 animate-spin" />}{editingSegmentId ? "保存新版本" : "保存分群"}
                 </Button>
+                {editingSegmentId ? <Button type="button" variant="ghost" onClick={cancelEditing}>取消编辑</Button> : null}
               </div>
             </CardContent>
           </Card>
@@ -229,7 +275,7 @@ export function SegmentsPage() {
           <Card>
             <CardHeader>
               <CardTitle>已保存分群</CardTitle>
-              <CardDescription>成员数随数据更新实时变化。</CardDescription>
+              <CardDescription>分析查询复用 15 分钟成员缓存；规则更新自动生成版本并失效缓存。</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
               {segments.isLoading ? <p className="text-sm text-muted-foreground">加载中…</p> : (segments.data?.data || []).length ? (segments.data?.data || []).map((segment) => (
@@ -242,15 +288,26 @@ export function SegmentsPage() {
                     <Button type="button" size="icon" variant="ghost" aria-label={`删除 ${segment.name}`} disabled={remove.isPending} onClick={() => remove.mutate(segment.id)}><Trash2 className="h-4 w-4" /></Button>
                   </div>
                   <div className="mt-3 flex flex-wrap gap-2">
+                    <Badge variant="outline">v{segment.version}</Badge>
                     {segment.rules.profile_property && <Badge variant="secondary">{segment.rules.profile_property} = {segment.rules.profile_value || '""'}</Badge>}
                     {segment.rules.event && <Badge variant="info">近 {segment.rules.lookback_days} 天{segment.rules.event_condition === "not_has" ? "未触发" : "触发"} {segment.rules.event}</Badge>}
                     {segment.rules.event_property && <Badge variant="secondary">{segment.rules.event_property}{segment.rules.event_value ? ` = ${segment.rules.event_value}` : " 存在"}</Badge>}
                     {(segment.rules.event_rules || []).map((rule, index) => <Badge key={`${rule.event}:${index}`} variant="info">近 {rule.lookback_days} 天{rule.condition === "not_has" ? "未触发" : "触发"} {rule.event}</Badge>)}
                   </div>
+                  <div className="mt-3 rounded-md bg-muted/60 px-2.5 py-2 text-xs text-muted-foreground">
+                    {segment.cached_at ? `缓存成员 ${Number(segment.cached_users || 0).toLocaleString()} 人 · ${formatDateTime(segment.cached_at)}` : "成员缓存尚未生成"}
+                  </div>
                   <div className="mt-3 flex items-center justify-between gap-2 text-xs text-muted-foreground">
                     <span>更新于 {formatDateTime(segment.updated_at)}</span>
-                    <Button type="button" variant="link" size="sm" onClick={() => loadSegment(segment)}>载入规则</Button>
+                    <div className="flex items-center gap-1">
+                      <Button type="button" variant="ghost" size="sm" disabled={refresh.isPending} onClick={() => refresh.mutate(segment.id)}><RefreshCw className="mr-1 h-3.5 w-3.5" />刷新缓存</Button>
+                      <Button type="button" variant="ghost" size="sm" onClick={() => setVersionSegmentId((current) => current === segment.id ? undefined : segment.id)}><History className="mr-1 h-3.5 w-3.5" />版本</Button>
+                      <Button type="button" variant="link" size="sm" onClick={() => loadSegment(segment)}>编辑</Button>
+                    </div>
                   </div>
+                  {versionSegmentId === segment.id ? <div className="mt-3 space-y-2 border-t pt-3">
+                    {versions.isLoading ? <p className="text-xs text-muted-foreground">加载版本…</p> : (versions.data?.data || []).map((version) => <div key={version.id} className="flex items-center justify-between gap-3 rounded border bg-background px-2.5 py-2 text-xs"><span className="font-medium">v{version.version} · {version.name}</span><span className="text-muted-foreground">{formatDateTime(version.created_at)}</span></div>)}
+                  </div> : null}
                 </div>
               )) : <EmptyState title="尚未保存分群" description="配置左侧规则后保存。" />}
             </CardContent>
